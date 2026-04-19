@@ -4,17 +4,31 @@ import client from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import type { LeaderboardEntry } from '../types';
 
-type SortMode = 'points' | 'medals';
+type SortKey = 'points' | 'gold' | 'silver' | 'bronze' | 'total' | 'balance';
+type SortDir = 'asc' | 'desc';
 
-function medalScore(e: LeaderboardEntry) {
-  return e.gold * 10000 + e.silver * 100 + e.bronze;
+function totalMedals(e: LeaderboardEntry) {
+  return (e.gold || 0) + (e.silver || 0) + (e.bronze || 0);
 }
+
+function getSortValue(e: LeaderboardEntry, key: SortKey): number {
+  if (key === 'total') return totalMedals(e);
+  return e[key] || 0;
+}
+
+const SortArrow = ({ active, dir }: { active: boolean; dir: SortDir }) => (
+  <span className={`inline-flex flex-col ml-0.5 leading-none ${active ? 'text-blue-400' : 'text-white/15'}`}>
+    <span className={`text-[8px] ${active && dir === 'asc' ? 'text-blue-400' : active ? 'text-white/20' : ''}`}>&#9650;</span>
+    <span className={`text-[8px] -mt-1 ${active && dir === 'desc' ? 'text-blue-400' : active ? 'text-white/20' : ''}`}>&#9660;</span>
+  </span>
+);
 
 export default function LeaderboardPage() {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [sortMode, setSortMode] = useState<SortMode>('points');
+  const [sortKey, setSortKey] = useState<SortKey>('points');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const { profile } = useAuth();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -38,27 +52,45 @@ export default function LeaderboardPage() {
     setRefreshing(false);
   };
 
-  const sorted = [...entries].sort((a, b) => {
-    if (sortMode === 'medals') {
-      const ms = medalScore(b) - medalScore(a);
-      if (ms !== 0) return ms;
-      return b.points - a.points;
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    } else {
+      setSortKey(key);
+      setSortDir('desc');
     }
-    return b.points - a.points;
+  };
+
+  const sorted = [...entries].sort((a, b) => {
+    const va = getSortValue(a, sortKey);
+    const vb = getSortValue(b, sortKey);
+    const diff = sortDir === 'desc' ? vb - va : va - vb;
+    if (diff !== 0) return diff;
+    return b.points - a.points; // tiebreak by points
   });
 
   const ranked: (LeaderboardEntry & { rank: number })[] = [];
   sorted.forEach((entry, i) => {
-    const key = sortMode === 'medals' ? medalScore(entry) : entry.points;
-    const prevKey = i > 0 ? (sortMode === 'medals' ? medalScore(sorted[i - 1]) : sorted[i - 1].points) : null;
+    const val = getSortValue(entry, sortKey);
+    const prevVal = i > 0 ? getSortValue(sorted[i - 1], sortKey) : null;
     let rank = i + 1;
-    if (i > 0 && key === prevKey) {
+    if (i > 0 && val === prevVal) {
       rank = ranked[i - 1].rank;
     }
     ranked.push({ ...entry, rank });
   });
 
   const top3 = ranked.slice(0, 3);
+
+  const colHeader = (key: SortKey, label: string | JSX.Element, className: string) => (
+    <div
+      className={`${className} cursor-pointer select-none hover:text-white/50 transition-colors flex items-center justify-center gap-0`}
+      onClick={() => handleSort(key)}
+    >
+      {label}
+      <SortArrow active={sortKey === key} dir={sortDir} />
+    </div>
+  );
 
   return (
     <div>
@@ -87,28 +119,9 @@ export default function LeaderboardPage() {
         <div className="text-center py-16 text-white/40">No leaderboard data yet.</div>
       ) : (
         <>
-          {/* Sort Toggle */}
-          <div className="flex items-center justify-center gap-1 mb-6">
-            <div className="bg-white/5 border border-white/10 rounded-xl p-1 flex">
-              <button
-                onClick={() => setSortMode('points')}
-                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${sortMode === 'points' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-white/40 hover:text-white/60'}`}
-              >
-                Points
-              </button>
-              <button
-                onClick={() => setSortMode('medals')}
-                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${sortMode === 'medals' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'text-white/40 hover:text-white/60'}`}
-              >
-                Medals
-              </button>
-            </div>
-          </div>
-
           {/* F1-Style Podium */}
           {top3.length >= 3 && (
             <div className="mb-8">
-              {/* Driver names + info above podium blocks */}
               <div className="flex items-end justify-center gap-0 px-2">
                 {/* P2 - Left */}
                 <div className="flex flex-col items-center w-[30%] max-w-[7.5rem]">
@@ -120,7 +133,6 @@ export default function LeaderboardPage() {
                     {top3[1].silver > 0 && <span className="text-[10px]">&#x1F948;{top3[1].silver}</span>}
                     {top3[1].bronze > 0 && <span className="text-[10px]">&#x1F949;{top3[1].bronze}</span>}
                   </div>
-                  {/* P2 Block */}
                   <div className="w-full h-20 sm:h-24 rounded-tl-xl bg-gradient-to-b from-slate-400/30 to-slate-500/10 border border-white/10 border-b-0 flex items-center justify-center">
                     <span className="text-3xl sm:text-4xl font-black text-white/20">2</span>
                   </div>
@@ -135,7 +147,6 @@ export default function LeaderboardPage() {
                     {top3[0].silver > 0 && <span className="text-[10px]">&#x1F948;{top3[0].silver}</span>}
                     {top3[0].bronze > 0 && <span className="text-[10px]">&#x1F949;{top3[0].bronze}</span>}
                   </div>
-                  {/* P1 Block - tallest */}
                   <div className="w-full h-28 sm:h-36 rounded-t-xl bg-gradient-to-b from-amber-400/30 to-amber-600/10 border border-amber-400/20 border-b-0 flex items-center justify-center shadow-lg shadow-amber-500/10">
                     <span className="text-4xl sm:text-5xl font-black text-amber-400/25">1</span>
                   </div>
@@ -150,13 +161,11 @@ export default function LeaderboardPage() {
                     {top3[2].silver > 0 && <span className="text-[10px]">&#x1F948;{top3[2].silver}</span>}
                     {top3[2].bronze > 0 && <span className="text-[10px]">&#x1F949;{top3[2].bronze}</span>}
                   </div>
-                  {/* P3 Block - shortest */}
                   <div className="w-full h-14 sm:h-18 rounded-tr-xl bg-gradient-to-b from-orange-400/25 to-orange-600/10 border border-orange-400/15 border-b-0 flex items-center justify-center">
                     <span className="text-3xl sm:text-4xl font-black text-white/15">3</span>
                   </div>
                 </div>
               </div>
-              {/* Podium base line */}
               <div className="mx-2 h-[2px] bg-gradient-to-r from-transparent via-white/20 to-transparent" />
             </div>
           )}
@@ -173,11 +182,12 @@ export default function LeaderboardPage() {
             <div className="flex items-center px-3 py-2.5 border-b border-white/5 text-xs text-white/30 uppercase tracking-wider">
               <div className="w-8 text-center">#</div>
               <div className="flex-1 ml-2">Player</div>
-              <div className="w-14 text-right">Pts</div>
-              <div className="w-8 text-center">&#x1F947;</div>
-              <div className="w-8 text-center">&#x1F948;</div>
-              <div className="w-8 text-center">&#x1F949;</div>
-              <div className="w-[4.5rem] text-right">Balance</div>
+              {colHeader('points', <span>Pts</span>, 'w-14')}
+              {colHeader('gold', <span>&#x1F947;</span>, 'w-8')}
+              {colHeader('silver', <span>&#x1F948;</span>, 'w-8')}
+              {colHeader('bronze', <span>&#x1F949;</span>, 'w-8')}
+              {colHeader('total', <span>Tot</span>, 'w-8')}
+              {colHeader('balance', <span>Bal</span>, 'w-[4.5rem]')}
             </div>
             <div className="divide-y divide-white/5">
               {ranked.map((entry, i) => {
@@ -198,7 +208,7 @@ export default function LeaderboardPage() {
                         {isMe && <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-bold bg-white/20 text-white rounded-md border border-white/20">YOU</span>}
                       </div>
                     </div>
-                    <div className="w-14 text-right">
+                    <div className="w-14 text-center">
                       <span className="text-blue-400 text-sm font-semibold">{entry.points}</span>
                     </div>
                     <div className="w-8 text-center">
@@ -209,6 +219,9 @@ export default function LeaderboardPage() {
                     </div>
                     <div className="w-8 text-center">
                       <span className={`text-xs font-semibold ${entry.bronze ? 'text-orange-400' : 'text-white/15'}`}>{entry.bronze || '-'}</span>
+                    </div>
+                    <div className="w-8 text-center">
+                      <span className={`text-xs font-bold ${totalMedals(entry) > 0 ? 'text-white/70' : 'text-white/15'}`}>{totalMedals(entry) || '-'}</span>
                     </div>
                     <div className="w-[4.5rem] text-right">
                       <span className={`font-bold text-sm ${bal > 0 ? 'text-green-400' : bal < 0 ? 'text-red-400' : 'text-white/40'}`}>
