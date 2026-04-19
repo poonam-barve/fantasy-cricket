@@ -1,14 +1,17 @@
 import { Link } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import client from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { getTeamTheme } from '../utils/teamTheme';
 import type { PointsTableEntry, Match } from '../types';
 
+const PAGE_SIZE = 10;
+
 export default function PointsTablePage() {
   const [data, setData] = useState<(PointsTableEntry & { net?: number })[]>([]);
   const [matchInfo, setMatchInfo] = useState<Record<string, { team1: string; team2: string }>>({});
   const [loading, setLoading] = useState(true);
+  const [matchPage, setMatchPage] = useState(0);
   const { profile } = useAuth();
 
   useEffect(() => {
@@ -46,6 +49,15 @@ export default function PointsTablePage() {
 
   const contestants = Array.from(contestantSet);
   const matchIds = Array.from(matchMap.keys());
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(matchIds.length / PAGE_SIZE));
+  const visibleMatchIds = useMemo(
+    () => matchIds.slice(matchPage * PAGE_SIZE, (matchPage + 1) * PAGE_SIZE),
+    [matchIds.length, matchPage]
+  );
+  const rangeStart = matchPage * PAGE_SIZE + 1;
+  const rangeEnd = Math.min((matchPage + 1) * PAGE_SIZE, matchIds.length);
 
   // Compute per-match ranks
   const matchRanks = new Map<string, Record<string, number>>();
@@ -106,6 +118,32 @@ export default function PointsTablePage() {
       ) : data.length === 0 ? (
         <div className="text-center py-16 text-white/30">No points data available yet.</div>
       ) : (
+        <>
+        {/* Match pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between mb-3">
+            <button
+              onClick={() => setMatchPage(p => Math.max(0, p - 1))}
+              disabled={matchPage === 0}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white/50 hover:bg-white/10 hover:text-white transition-all disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-white/50"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+              Prev
+            </button>
+            <span className="text-xs text-white/40">
+              Matches {rangeStart}-{rangeEnd} of {matchIds.length}
+            </span>
+            <button
+              onClick={() => setMatchPage(p => Math.min(totalPages - 1, p + 1))}
+              disabled={matchPage >= totalPages - 1}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white/50 hover:bg-white/10 hover:text-white transition-all disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-white/50"
+            >
+              Next
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+            </button>
+          </div>
+        )}
+
         <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -120,7 +158,7 @@ export default function PointsTablePage() {
                   <th className="sticky left-[11.5rem] z-20 bg-black px-2 py-3 text-center text-xs font-medium text-white/30 uppercase tracking-wider whitespace-nowrap border-r border-white/5 min-w-[4.5rem]">
                     ₹
                   </th>
-                  {matchIds.map((mid) => {
+                  {visibleMatchIds.map((mid) => {
                     const mi = matchInfo[mid];
                     const t1 = mi ? getTeamTheme(mi.team1).label : '';
                     const t2 = mi ? getTeamTheme(mi.team2).label : '';
@@ -159,7 +197,7 @@ export default function PointsTablePage() {
                       }`}>
                         {bal > 0 ? '+' : ''}{bal}
                       </td>
-                      {matchIds.map((mid) => {
+                      {visibleMatchIds.map((mid) => {
                         const pts = matchMap.get(mid)?.[c] || 0;
                         const net = netMap.get(mid)?.[c] || 0;
                         const rank = matchRanks.get(mid)?.[c];
@@ -193,6 +231,26 @@ export default function PointsTablePage() {
             </table>
           </div>
         </div>
+
+        {/* Bottom pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-1 mt-3">
+            {Array.from({ length: totalPages }, (_, i) => (
+              <button
+                key={i}
+                onClick={() => setMatchPage(i)}
+                className={`w-8 h-8 rounded-lg text-xs font-semibold transition-all ${
+                  matchPage === i
+                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                    : 'text-white/40 hover:bg-white/10 hover:text-white/60'
+                }`}
+              >
+                {i + 1}
+              </button>
+            ))}
+          </div>
+        )}
+        </>
       )}
     </div>
   );

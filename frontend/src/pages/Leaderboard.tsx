@@ -121,8 +121,11 @@ export default function LeaderboardPage() {
         <>
           {/* F1-Style Podium */}
           {top3.length >= 3 && (
-            <div className="mb-8">
-              <div className="flex items-end justify-center gap-0 px-2">
+            <div className="mb-8 relative rounded-2xl overflow-hidden">
+              {/* Background image */}
+              <img src={sortDir === 'asc' ? '/loserclub.jpg' : '/podium.jpeg'} alt="" className="absolute inset-0 w-full h-full object-cover opacity-15" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/70 to-black/40" />
+              <div className="relative flex items-end justify-center gap-0 px-2 pt-6 pb-0">
                 {/* P2 - Left */}
                 <div className="flex flex-col items-center w-[30%] max-w-[7.5rem]">
                   <span className="text-2xl mb-1">&#x1F948;</span>
@@ -166,7 +169,7 @@ export default function LeaderboardPage() {
                   </div>
                 </div>
               </div>
-              <div className="mx-2 h-[2px] bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+              <div className="relative mx-2 h-[2px] bg-gradient-to-r from-transparent via-white/20 to-transparent" />
             </div>
           )}
 
