@@ -295,6 +295,12 @@ def on_match_completed(match_id: int):
     """Called when any match is finalized. Checks if it triggers tournament actions."""
     db = get_db()
 
+    # Always try to detect new tournaments (picks up new weekends automatically)
+    try:
+        detect_and_create_tournaments()
+    except Exception as exc:
+        print(f"[WEEKEND] Auto-detection failed: {exc}")
+
     # Check if this match is a qualifier for a pending tournament
     tournament = db.execute(
         "SELECT * FROM weekend_tournaments WHERE qualifying_match_id = ? AND status IN ('pending', 'qualifying')",
