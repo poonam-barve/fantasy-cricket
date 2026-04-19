@@ -82,7 +82,7 @@ export default function LeaderboardPage() {
 
   const top3 = ranked.slice(0, 3);
 
-  const colHeader = (key: SortKey, label: string | JSX.Element, className: string) => (
+  const colHeader = (key: SortKey, label: React.ReactNode, className: string) => (
     <div
       className={`${className} cursor-pointer select-none hover:text-white/50 transition-colors flex items-center justify-center gap-0`}
       onClick={() => handleSort(key)}
