@@ -4,7 +4,7 @@ import client from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import type { LeaderboardEntry } from '../types';
 
-type SortKey = 'points' | 'gold' | 'silver' | 'bronze' | 'total' | 'balance';
+type SortKey = 'points' | 'gold' | 'silver' | 'bronze' | 'total' | 'weekend_wins' | 'balance';
 type SortDir = 'asc' | 'desc';
 
 function totalMedals(e: LeaderboardEntry) {
@@ -190,6 +190,7 @@ export default function LeaderboardPage() {
               {colHeader('silver', <span>&#x1F948;</span>, 'w-6 sm:w-8')}
               {colHeader('bronze', <span>&#x1F949;</span>, 'w-6 sm:w-8')}
               {colHeader('total', <span>T</span>, 'w-5 sm:w-8')}
+              {colHeader('weekend_wins', <span>&#x1F3C6;</span>, 'w-6 sm:w-8')}
               {colHeader('balance', <span>Bal</span>, 'w-12 sm:w-[4.5rem]')}
             </div>
             <div className="divide-y divide-white/5">
@@ -225,6 +226,9 @@ export default function LeaderboardPage() {
                     </div>
                     <div className="w-5 sm:w-8 text-center">
                       <span className={`text-[10px] sm:text-xs font-bold ${totalMedals(entry) > 0 ? 'text-white/70' : 'text-white/15'}`}>{totalMedals(entry) || '-'}</span>
+                    </div>
+                    <div className="w-6 sm:w-8 text-center">
+                      <span className={`text-[10px] sm:text-xs font-semibold ${entry.weekend_wins ? 'text-purple-400' : 'text-white/15'}`}>{entry.weekend_wins || '-'}</span>
                     </div>
                     <div className="w-12 sm:w-[4.5rem] text-right">
                       <span className={`font-bold text-[10px] sm:text-sm ${bal > 0 ? 'text-green-400' : bal < 0 ? 'text-red-400' : 'text-white/40'}`}>

@@ -470,6 +470,38 @@ def init_db():
         """)
         _ensure_team_backups_postgres(cursor)
 
+        # Weekend tournament tables
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS weekend_tournaments (
+                id SERIAL PRIMARY KEY,
+                qualifying_match_id INTEGER NOT NULL REFERENCES matches(id),
+                weekend_match_1_id INTEGER NOT NULL REFERENCES matches(id),
+                weekend_match_2_id INTEGER NOT NULL REFERENCES matches(id),
+                weekend_match_3_id INTEGER NOT NULL REFERENCES matches(id),
+                weekend_match_4_id INTEGER NOT NULL REFERENCES matches(id),
+                status TEXT NOT NULL DEFAULT 'pending',
+                winner_user_id INTEGER REFERENCES users(id),
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE(qualifying_match_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS weekend_tournament_brackets (
+                id SERIAL PRIMARY KEY,
+                tournament_id INTEGER NOT NULL REFERENCES weekend_tournaments(id),
+                round INTEGER NOT NULL,
+                match_position INTEGER NOT NULL,
+                match_id INTEGER NOT NULL REFERENCES matches(id),
+                user1_id INTEGER REFERENCES users(id),
+                user2_id INTEGER REFERENCES users(id),
+                user1_points REAL DEFAULT 0,
+                user2_points REAL DEFAULT 0,
+                winner_user_id INTEGER REFERENCES users(id),
+                status TEXT NOT NULL DEFAULT 'pending',
+                UNIQUE(tournament_id, round, match_position)
+            )
+        """)
+
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_user_match ON user_teams(user_id, match_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_match ON user_teams(match_id)")
@@ -580,6 +612,32 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid);
             CREATE INDEX IF NOT EXISTS idx_team_backups_user_match ON team_backups(user_id, match_id);
             CREATE INDEX IF NOT EXISTS idx_team_backups_match ON team_backups(match_id);
+            CREATE TABLE IF NOT EXISTS weekend_tournaments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                qualifying_match_id INTEGER NOT NULL REFERENCES matches(id),
+                weekend_match_1_id INTEGER NOT NULL REFERENCES matches(id),
+                weekend_match_2_id INTEGER NOT NULL REFERENCES matches(id),
+                weekend_match_3_id INTEGER NOT NULL REFERENCES matches(id),
+                weekend_match_4_id INTEGER NOT NULL REFERENCES matches(id),
+                status TEXT NOT NULL DEFAULT 'pending',
+                winner_user_id INTEGER REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(qualifying_match_id)
+            );
+            CREATE TABLE IF NOT EXISTS weekend_tournament_brackets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tournament_id INTEGER NOT NULL REFERENCES weekend_tournaments(id),
+                round INTEGER NOT NULL,
+                match_position INTEGER NOT NULL,
+                match_id INTEGER NOT NULL REFERENCES matches(id),
+                user1_id INTEGER REFERENCES users(id),
+                user2_id INTEGER REFERENCES users(id),
+                user1_points REAL DEFAULT 0,
+                user2_points REAL DEFAULT 0,
+                winner_user_id INTEGER REFERENCES users(id),
+                status TEXT NOT NULL DEFAULT 'pending',
+                UNIQUE(tournament_id, round, match_position)
+            );
         """)
         _ensure_user_teams_updated_at_sqlite(conn)
         _ensure_user_teams_audit_sqlite(conn)

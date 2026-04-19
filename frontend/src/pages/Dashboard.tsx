@@ -372,7 +372,7 @@ export default function DashboardPage() {
           <p className="text-white/40 text-sm mt-1">Hippies Mahasangram</p>
 
           {/* Quick Actions */}
-          <div className="grid grid-cols-3 gap-3 mt-6">
+          <div className="grid grid-cols-4 gap-2 sm:gap-3 mt-6">
           <Link to="/leaderboard"
             className="flex flex-col items-center gap-2 p-3 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 rounded-2xl transition-all group">
             <div className="w-9 h-9 bg-amber-500/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -399,6 +399,15 @@ export default function DashboardPage() {
               </svg>
             </div>
             <span className="text-blue-300 text-xs font-medium">Rules</span>
+          </Link>
+          <Link to="/weekend"
+            className="flex flex-col items-center gap-2 p-3 bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/20 rounded-2xl transition-all group">
+            <div className="w-9 h-9 bg-purple-500/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+              <svg className="w-4 h-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </div>
+            <span className="text-purple-300 text-xs font-medium">Battle</span>
           </Link>
           </div>
         </div>

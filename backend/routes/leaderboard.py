@@ -301,6 +301,17 @@ def _build_leaderboard(db):
 
     medals_by_user = _compute_medals(effective_match_points)
 
+    # Weekend battle wins
+    weekend_wins: dict[int, int] = {}
+    try:
+        wt_rows = db.execute(
+            "SELECT winner_user_id, COUNT(*) AS wins FROM weekend_tournaments WHERE status = 'completed' AND winner_user_id IS NOT NULL GROUP BY winner_user_id"
+        ).fetchall()
+        for r in wt_rows:
+            weekend_wins[r["winner_user_id"]] = r["wins"]
+    except Exception:
+        pass
+
     users = db.execute(
         """
         SELECT u.id, u.name
@@ -335,6 +346,7 @@ def _build_leaderboard(db):
             "gold": user_medals["gold"],
             "silver": user_medals["silver"],
             "bronze": user_medals["bronze"],
+            "weekend_wins": weekend_wins.get(uid, 0),
             "balance": round(balances.get(uid, 0), 2),
         })
 

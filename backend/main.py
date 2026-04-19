@@ -18,7 +18,7 @@ from backend.services import data_service
 from backend.services.scraper import compute_toss_time, sync_match_metadata_from_schedule
 from backend.services.venue_stats import prime_today_venue_cache
 from backend.models.tournament import Tournament
-from backend.routes import auth, matches, players, teams, scores, leaderboard, admin
+from backend.routes import auth, matches, players, teams, scores, leaderboard, admin, weekend_tournament
 
 app = FastAPI(title="Fantasy Cricket API")
 
@@ -42,6 +42,7 @@ app.include_router(teams.router)
 app.include_router(scores.router)
 app.include_router(leaderboard.router)
 app.include_router(admin.router)
+app.include_router(weekend_tournament.router)
 
 # Tournament singleton
 tournament = Tournament()
@@ -213,6 +214,17 @@ def _run_background_warmup():
                 print(f"[BOOT] Leaderboard cache prime failed: {exc}")
 
             start_completed_match_recompute_if_needed()
+
+            # Detect weekend tournaments
+            try:
+                from backend.services.weekend_tournament_service import detect_and_create_tournaments
+                created = detect_and_create_tournaments()
+                if created:
+                    print(f"[BOOT] Weekend tournaments created: {created}")
+                else:
+                    print("[BOOT] No new weekend tournaments detected")
+            except Exception as exc:
+                print(f"[BOOT] Weekend tournament detection failed: {exc}")
 
             bootstrap_warmup_complete = True
             bootstrap_warmup_error = None

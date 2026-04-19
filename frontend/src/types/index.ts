@@ -135,6 +135,7 @@ export type LeaderboardEntry = {
   gold: number;
   silver: number;
   bronze: number;
+  weekend_wins: number;
   balance: number;
 };
 
@@ -146,6 +147,51 @@ export type PointsTableEntry = {
   last_updated: string;
   adjusted?: boolean;
   participated?: boolean;
+};
+
+// Weekend Tournament
+export type WeekendTournamentMatchup = {
+  position: number;
+  user1: { id: number; name: string } | null;
+  user2: { id: number; name: string } | null;
+  user1_points: number;
+  user2_points: number;
+  winner_user_id: number | null;
+  status: 'pending' | 'live' | 'completed';
+};
+
+export type WeekendTournamentRound = {
+  round: number;
+  round_label: string;
+  match_id: number;
+  matchups: WeekendTournamentMatchup[];
+};
+
+export type WeekendTournamentQualifier = {
+  user_id: number;
+  name: string;
+  qualifying_points: number;
+  seed: number;
+  backfilled?: boolean;
+};
+
+export type WeekendTournament = {
+  id: number | null;
+  status: 'none' | 'pending' | 'qualifying' | 'active' | 'completed';
+  message?: string;
+  qualifying_match_id?: number;
+  weekend_match_ids?: number[];
+  winner?: { user_id: number; name: string } | null;
+  matches?: Record<string, { team1: string; team2: string; match_date: string; match_time: string; status: string }>;
+  qualifiers?: WeekendTournamentQualifier[];
+  brackets?: WeekendTournamentRound[];
+};
+
+export type WeekendTournamentHistory = {
+  id: number;
+  status: string;
+  qualifier_date: string;
+  winner: { user_id: number; name: string } | null;
 };
 
 export type AdminMatchWithTeamCount = {

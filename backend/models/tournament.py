@@ -210,6 +210,13 @@ class Tournament:
             self._scheduler_log("SCORE", f"leaderboard refresh after completion failed for match {match_id}: {exc}")
             traceback.print_exc()
 
+        # Weekend tournament hook
+        try:
+            from backend.services.weekend_tournament_service import on_match_completed
+            on_match_completed(int(match_id))
+        except Exception as exc:
+            self._scheduler_log("SCORE", f"weekend tournament hook failed for match {match_id}: {exc}")
+
         return True
 
     def sync_persistent_match_statuses(self, match_rows=None):
