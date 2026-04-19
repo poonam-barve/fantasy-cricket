@@ -182,15 +182,15 @@ export default function LeaderboardPage() {
           {/* Table */}
           <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden backdrop-blur-sm">
             {/* Header */}
-            <div className="flex items-center px-3 py-2.5 border-b border-white/5 text-xs text-white/30 uppercase tracking-wider">
-              <div className="w-8 text-center">#</div>
-              <div className="flex-1 ml-2">Player</div>
-              {colHeader('points', <span>Pts</span>, 'w-14')}
-              {colHeader('gold', <span>&#x1F947;</span>, 'w-8')}
-              {colHeader('silver', <span>&#x1F948;</span>, 'w-8')}
-              {colHeader('bronze', <span>&#x1F949;</span>, 'w-8')}
-              {colHeader('total', <span>Tot</span>, 'w-8')}
-              {colHeader('balance', <span>Bal</span>, 'w-[4.5rem]')}
+            <div className="flex items-center px-2 sm:px-3 py-2.5 border-b border-white/5 text-[10px] sm:text-xs text-white/30 uppercase tracking-wider">
+              <div className="w-6 sm:w-8 text-center">#</div>
+              <div className="flex-1 ml-1 sm:ml-2">Player</div>
+              {colHeader('points', <span>Pts</span>, 'w-10 sm:w-14')}
+              {colHeader('gold', <span>&#x1F947;</span>, 'w-6 sm:w-8')}
+              {colHeader('silver', <span>&#x1F948;</span>, 'w-6 sm:w-8')}
+              {colHeader('bronze', <span>&#x1F949;</span>, 'w-6 sm:w-8')}
+              {colHeader('total', <span>T</span>, 'w-5 sm:w-8')}
+              {colHeader('balance', <span>Bal</span>, 'w-12 sm:w-[4.5rem]')}
             </div>
             <div className="divide-y divide-white/5">
               {ranked.map((entry, i) => {
@@ -198,36 +198,36 @@ export default function LeaderboardPage() {
                 const bal = entry.balance || 0;
                 return (
                   <div key={i}
-                    className={`flex items-center px-3 py-3 transition-colors ${isMe ? 'bg-white/10' : 'hover:bg-white/5'}`}>
-                    <div className="w-8 text-center flex-shrink-0">
-                      {entry.rank === 1 ? <span className="text-lg">&#x1F947;</span>
-                        : entry.rank === 2 ? <span className="text-lg">&#x1F948;</span>
-                        : entry.rank === 3 ? <span className="text-lg">&#x1F949;</span>
-                        : <span className="text-white/50 font-semibold text-sm">{entry.rank}</span>}
+                    className={`flex items-center px-2 sm:px-3 py-2.5 sm:py-3 transition-colors ${isMe ? 'bg-white/10' : 'hover:bg-white/5'}`}>
+                    <div className="w-6 sm:w-8 text-center flex-shrink-0">
+                      {entry.rank === 1 ? <span className="text-base sm:text-lg">&#x1F947;</span>
+                        : entry.rank === 2 ? <span className="text-base sm:text-lg">&#x1F948;</span>
+                        : entry.rank === 3 ? <span className="text-base sm:text-lg">&#x1F949;</span>
+                        : <span className="text-white/50 font-semibold text-xs sm:text-sm">{entry.rank}</span>}
                     </div>
-                    <div className="flex-1 min-w-0 ml-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium truncate text-white">{entry.name}</span>
-                        {isMe && <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-bold bg-white/20 text-white rounded-md border border-white/20">YOU</span>}
+                    <div className="flex-1 min-w-0 ml-1 sm:ml-2">
+                      <div className="flex items-center gap-1 sm:gap-2">
+                        <span className="text-xs sm:text-sm font-medium truncate text-white">{entry.name}</span>
+                        {isMe && <span className="flex-shrink-0 px-1 py-0.5 text-[8px] sm:text-[10px] font-bold bg-white/20 text-white rounded-md border border-white/20">YOU</span>}
                       </div>
                     </div>
-                    <div className="w-14 text-center">
-                      <span className="text-blue-400 text-sm font-semibold">{entry.points}</span>
+                    <div className="w-10 sm:w-14 text-center">
+                      <span className="text-blue-400 text-xs sm:text-sm font-semibold">{entry.points}</span>
                     </div>
-                    <div className="w-8 text-center">
-                      <span className={`text-xs font-semibold ${entry.gold ? 'text-amber-400' : 'text-white/15'}`}>{entry.gold || '-'}</span>
+                    <div className="w-6 sm:w-8 text-center">
+                      <span className={`text-[10px] sm:text-xs font-semibold ${entry.gold ? 'text-amber-400' : 'text-white/15'}`}>{entry.gold || '-'}</span>
                     </div>
-                    <div className="w-8 text-center">
-                      <span className={`text-xs font-semibold ${entry.silver ? 'text-slate-300' : 'text-white/15'}`}>{entry.silver || '-'}</span>
+                    <div className="w-6 sm:w-8 text-center">
+                      <span className={`text-[10px] sm:text-xs font-semibold ${entry.silver ? 'text-slate-300' : 'text-white/15'}`}>{entry.silver || '-'}</span>
                     </div>
-                    <div className="w-8 text-center">
-                      <span className={`text-xs font-semibold ${entry.bronze ? 'text-orange-400' : 'text-white/15'}`}>{entry.bronze || '-'}</span>
+                    <div className="w-6 sm:w-8 text-center">
+                      <span className={`text-[10px] sm:text-xs font-semibold ${entry.bronze ? 'text-orange-400' : 'text-white/15'}`}>{entry.bronze || '-'}</span>
                     </div>
-                    <div className="w-8 text-center">
-                      <span className={`text-xs font-bold ${totalMedals(entry) > 0 ? 'text-white/70' : 'text-white/15'}`}>{totalMedals(entry) || '-'}</span>
+                    <div className="w-5 sm:w-8 text-center">
+                      <span className={`text-[10px] sm:text-xs font-bold ${totalMedals(entry) > 0 ? 'text-white/70' : 'text-white/15'}`}>{totalMedals(entry) || '-'}</span>
                     </div>
-                    <div className="w-[4.5rem] text-right">
-                      <span className={`font-bold text-sm ${bal > 0 ? 'text-green-400' : bal < 0 ? 'text-red-400' : 'text-white/40'}`}>
+                    <div className="w-12 sm:w-[4.5rem] text-right">
+                      <span className={`font-bold text-[10px] sm:text-sm ${bal > 0 ? 'text-green-400' : bal < 0 ? 'text-red-400' : 'text-white/40'}`}>
                         {bal > 0 ? '+' : ''}₹{bal}
                       </span>
                     </div>
