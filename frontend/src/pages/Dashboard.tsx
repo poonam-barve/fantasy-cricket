@@ -407,7 +407,7 @@ export default function DashboardPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
-            <span className="text-purple-300 text-xs font-medium">Battle</span>
+            <span className="text-purple-300 text-xs font-medium">Weekend Battle</span>
           </Link>
           </div>
         </div>
