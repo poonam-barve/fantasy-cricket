@@ -132,6 +132,9 @@ export type LeaderboardEntry = {
   name: string;
   user_id: number;
   points: number;
+  gold: number;
+  silver: number;
+  bronze: number;
   balance: number;
 };
 

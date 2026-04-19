@@ -262,6 +262,35 @@ def _calculate_balances(db):
 
     return balances, match_results
 
+def _compute_medals(effective_match_points: dict) -> dict[int, dict[str, int]]:
+    """Compute gold/silver/bronze medal counts per user across all matches."""
+    medals: dict[int, dict[str, int]] = defaultdict(lambda: {"gold": 0, "silver": 0, "bronze": 0})
+
+    for match_id, contestants in effective_match_points.items():
+        if not contestants:
+            continue
+        sorted_c = sorted(contestants, key=lambda x: (-x["points"], x["name"]))
+        # Assign ranks handling ties
+        ranks: list[tuple[int, dict]] = []
+        for i, c in enumerate(sorted_c):
+            if i > 0 and c["points"] == sorted_c[i - 1]["points"]:
+                rank = ranks[i - 1][0]
+            else:
+                rank = i + 1
+            ranks.append((rank, c))
+
+        for rank, c in ranks:
+            uid = c["user_id"]
+            if rank == 1:
+                medals[uid]["gold"] += 1
+            elif rank == 2:
+                medals[uid]["silver"] += 1
+            elif rank == 3:
+                medals[uid]["bronze"] += 1
+
+    return dict(medals)
+
+
 def _build_leaderboard(db):
     balances, _ = _calculate_balances(db)
     effective_match_points = _load_effective_match_points(db)
@@ -269,6 +298,8 @@ def _build_leaderboard(db):
     for contestants in effective_match_points.values():
         for contestant in contestants:
             totals_by_user[contestant["user_id"]] += float(contestant["points"])
+
+    medals_by_user = _compute_medals(effective_match_points)
 
     users = db.execute(
         """
@@ -289,6 +320,7 @@ def _build_leaderboard(db):
     for i, row in enumerate(sorted_users):
         uid = row["id"]
         pts = round(float(totals_by_user.get(uid, 0)), 2)
+        user_medals = medals_by_user.get(uid, {"gold": 0, "silver": 0, "bronze": 0})
 
         if i > 0 and pts == result[i - 1]["points"]:
             rank = result[i - 1]["rank"]
@@ -300,6 +332,9 @@ def _build_leaderboard(db):
             "name": row["name"],
             "user_id": uid,
             "points": pts,
+            "gold": user_medals["gold"],
+            "silver": user_medals["silver"],
+            "bronze": user_medals["bronze"],
             "balance": round(balances.get(uid, 0), 2),
         })
 
