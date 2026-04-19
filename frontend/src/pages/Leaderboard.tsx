@@ -105,48 +105,59 @@ export default function LeaderboardPage() {
             </div>
           </div>
 
-          {/* Podium */}
+          {/* F1-Style Podium */}
           {top3.length >= 3 && (
-            <div className="flex items-end justify-center gap-3 sm:gap-5 mb-8 pt-4">
-              {/* 2nd Place */}
-              <div className="flex flex-col items-center">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 bg-slate-500/10 border-2 border-slate-400/20 rounded-2xl flex items-center justify-center mb-2">
-                  <span className="text-2xl sm:text-3xl">&#x1F948;</span>
+            <div className="mb-8">
+              {/* Driver names + info above podium blocks */}
+              <div className="flex items-end justify-center gap-0 px-2">
+                {/* P2 - Left */}
+                <div className="flex flex-col items-center w-[30%] max-w-[7.5rem]">
+                  <span className="text-2xl mb-1">&#x1F948;</span>
+                  <p className="text-white text-xs sm:text-sm font-semibold text-center truncate w-full">{top3[1].name}</p>
+                  <p className="text-blue-400 text-[11px] font-bold">{top3[1].points} pts</p>
+                  <div className="flex items-center gap-1 mt-0.5 mb-2">
+                    {top3[1].gold > 0 && <span className="text-[10px]">&#x1F947;{top3[1].gold}</span>}
+                    {top3[1].silver > 0 && <span className="text-[10px]">&#x1F948;{top3[1].silver}</span>}
+                    {top3[1].bronze > 0 && <span className="text-[10px]">&#x1F949;{top3[1].bronze}</span>}
+                  </div>
+                  {/* P2 Block */}
+                  <div className="w-full h-20 sm:h-24 rounded-tl-xl bg-gradient-to-b from-slate-400/30 to-slate-500/10 border border-white/10 border-b-0 flex items-center justify-center">
+                    <span className="text-3xl sm:text-4xl font-black text-white/20">2</span>
+                  </div>
                 </div>
-                <p className="text-white text-sm font-medium text-center truncate max-w-[5rem]">{top3[1].name}</p>
-                <p className="text-blue-400 text-xs font-bold">{top3[1].points} pts</p>
-                <div className="flex items-center gap-1 mt-1">
-                  {top3[1].gold > 0 && <span className="text-[10px]">&#x1F947;{top3[1].gold}</span>}
-                  {top3[1].silver > 0 && <span className="text-[10px]">&#x1F948;{top3[1].silver}</span>}
-                  {top3[1].bronze > 0 && <span className="text-[10px]">&#x1F949;{top3[1].bronze}</span>}
+                {/* P1 - Center */}
+                <div className="flex flex-col items-center w-[34%] max-w-[8.5rem] -mx-[1px]">
+                  <span className="text-3xl mb-1">&#x1F947;</span>
+                  <p className="text-white text-xs sm:text-sm font-bold text-center truncate w-full">{top3[0].name}</p>
+                  <p className="text-blue-400 text-[11px] font-bold">{top3[0].points} pts</p>
+                  <div className="flex items-center gap-1 mt-0.5 mb-2">
+                    {top3[0].gold > 0 && <span className="text-[10px]">&#x1F947;{top3[0].gold}</span>}
+                    {top3[0].silver > 0 && <span className="text-[10px]">&#x1F948;{top3[0].silver}</span>}
+                    {top3[0].bronze > 0 && <span className="text-[10px]">&#x1F949;{top3[0].bronze}</span>}
+                  </div>
+                  {/* P1 Block - tallest */}
+                  <div className="w-full h-28 sm:h-36 rounded-t-xl bg-gradient-to-b from-amber-400/30 to-amber-600/10 border border-amber-400/20 border-b-0 flex items-center justify-center shadow-lg shadow-amber-500/10">
+                    <span className="text-4xl sm:text-5xl font-black text-amber-400/25">1</span>
+                  </div>
+                </div>
+                {/* P3 - Right */}
+                <div className="flex flex-col items-center w-[30%] max-w-[7.5rem]">
+                  <span className="text-2xl mb-1">&#x1F949;</span>
+                  <p className="text-white text-xs sm:text-sm font-semibold text-center truncate w-full">{top3[2].name}</p>
+                  <p className="text-blue-400 text-[11px] font-bold">{top3[2].points} pts</p>
+                  <div className="flex items-center gap-1 mt-0.5 mb-2">
+                    {top3[2].gold > 0 && <span className="text-[10px]">&#x1F947;{top3[2].gold}</span>}
+                    {top3[2].silver > 0 && <span className="text-[10px]">&#x1F948;{top3[2].silver}</span>}
+                    {top3[2].bronze > 0 && <span className="text-[10px]">&#x1F949;{top3[2].bronze}</span>}
+                  </div>
+                  {/* P3 Block - shortest */}
+                  <div className="w-full h-14 sm:h-18 rounded-tr-xl bg-gradient-to-b from-orange-400/25 to-orange-600/10 border border-orange-400/15 border-b-0 flex items-center justify-center">
+                    <span className="text-3xl sm:text-4xl font-black text-white/15">3</span>
+                  </div>
                 </div>
               </div>
-              {/* 1st Place */}
-              <div className="flex flex-col items-center -mt-4">
-                <div className="w-20 h-20 sm:w-24 sm:h-24 bg-amber-500/15 border-2 border-amber-400/30 rounded-2xl flex items-center justify-center mb-2 shadow-lg shadow-amber-500/10">
-                  <span className="text-3xl sm:text-4xl">&#x1F947;</span>
-                </div>
-                <p className="text-white text-sm font-bold text-center truncate max-w-[5rem]">{top3[0].name}</p>
-                <p className="text-blue-400 text-xs font-bold">{top3[0].points} pts</p>
-                <div className="flex items-center gap-1 mt-1">
-                  {top3[0].gold > 0 && <span className="text-[10px]">&#x1F947;{top3[0].gold}</span>}
-                  {top3[0].silver > 0 && <span className="text-[10px]">&#x1F948;{top3[0].silver}</span>}
-                  {top3[0].bronze > 0 && <span className="text-[10px]">&#x1F949;{top3[0].bronze}</span>}
-                </div>
-              </div>
-              {/* 3rd Place */}
-              <div className="flex flex-col items-center mt-2">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 bg-orange-500/10 border-2 border-orange-500/20 rounded-2xl flex items-center justify-center mb-2">
-                  <span className="text-2xl sm:text-3xl">&#x1F949;</span>
-                </div>
-                <p className="text-white text-sm font-medium text-center truncate max-w-[5rem]">{top3[2].name}</p>
-                <p className="text-blue-400 text-xs font-bold">{top3[2].points} pts</p>
-                <div className="flex items-center gap-1 mt-1">
-                  {top3[2].gold > 0 && <span className="text-[10px]">&#x1F947;{top3[2].gold}</span>}
-                  {top3[2].silver > 0 && <span className="text-[10px]">&#x1F948;{top3[2].silver}</span>}
-                  {top3[2].bronze > 0 && <span className="text-[10px]">&#x1F949;{top3[2].bronze}</span>}
-                </div>
-              </div>
+              {/* Podium base line */}
+              <div className="mx-2 h-[2px] bg-gradient-to-r from-transparent via-white/20 to-transparent" />
             </div>
           )}
 
@@ -162,15 +173,16 @@ export default function LeaderboardPage() {
             <div className="flex items-center px-3 py-2.5 border-b border-white/5 text-xs text-white/30 uppercase tracking-wider">
               <div className="w-8 text-center">#</div>
               <div className="flex-1 ml-2">Player</div>
-              <div className="w-16 text-right">Pts</div>
-              <div className="w-[4.5rem] text-center">Medals</div>
-              <div className="w-20 text-right">Balance</div>
+              <div className="w-14 text-right">Pts</div>
+              <div className="w-8 text-center">&#x1F947;</div>
+              <div className="w-8 text-center">&#x1F948;</div>
+              <div className="w-8 text-center">&#x1F949;</div>
+              <div className="w-[4.5rem] text-right">Balance</div>
             </div>
             <div className="divide-y divide-white/5">
               {ranked.map((entry, i) => {
                 const isMe = profile?.name === entry.name;
                 const bal = entry.balance || 0;
-                const totalMedals = (entry.gold || 0) + (entry.silver || 0) + (entry.bronze || 0);
                 return (
                   <div key={i}
                     className={`flex items-center px-3 py-3 transition-colors ${isMe ? 'bg-white/10' : 'hover:bg-white/5'}`}>
@@ -186,21 +198,19 @@ export default function LeaderboardPage() {
                         {isMe && <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-bold bg-white/20 text-white rounded-md border border-white/20">YOU</span>}
                       </div>
                     </div>
-                    <div className="w-16 text-right">
+                    <div className="w-14 text-right">
                       <span className="text-blue-400 text-sm font-semibold">{entry.points}</span>
                     </div>
-                    <div className="w-[4.5rem] flex items-center justify-center gap-0.5">
-                      {totalMedals === 0 ? (
-                        <span className="text-white/20 text-xs">-</span>
-                      ) : (
-                        <>
-                          {entry.gold > 0 && <span className="text-[11px]" title="Gold">&#x1F947;{entry.gold}</span>}
-                          {entry.silver > 0 && <span className="text-[11px]" title="Silver">&#x1F948;{entry.silver}</span>}
-                          {entry.bronze > 0 && <span className="text-[11px]" title="Bronze">&#x1F949;{entry.bronze}</span>}
-                        </>
-                      )}
+                    <div className="w-8 text-center">
+                      <span className={`text-xs font-semibold ${entry.gold ? 'text-amber-400' : 'text-white/15'}`}>{entry.gold || '-'}</span>
                     </div>
-                    <div className="w-20 text-right">
+                    <div className="w-8 text-center">
+                      <span className={`text-xs font-semibold ${entry.silver ? 'text-slate-300' : 'text-white/15'}`}>{entry.silver || '-'}</span>
+                    </div>
+                    <div className="w-8 text-center">
+                      <span className={`text-xs font-semibold ${entry.bronze ? 'text-orange-400' : 'text-white/15'}`}>{entry.bronze || '-'}</span>
+                    </div>
+                    <div className="w-[4.5rem] text-right">
                       <span className={`font-bold text-sm ${bal > 0 ? 'text-green-400' : bal < 0 ? 'text-red-400' : 'text-white/40'}`}>
                         {bal > 0 ? '+' : ''}₹{bal}
                       </span>
