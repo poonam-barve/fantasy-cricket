@@ -123,8 +123,8 @@ export default function LeaderboardPage() {
           {top3.length >= 3 && (
             <div className="mb-8 relative rounded-2xl overflow-hidden">
               {/* Background image */}
-              <img src={sortDir === 'asc' ? '/loserclub.jpg' : '/podium.jpeg'} alt="" className="absolute inset-0 w-full h-full object-cover opacity-40" />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/50 to-transparent" />
+              <img src={sortDir === 'asc' ? '/loserclub.jpg' : '/podium.jpeg'} alt="" className="absolute inset-0 w-full h-full object-cover object-top opacity-60" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/40 to-black/20" />
               <div className="relative flex items-end justify-center gap-0 px-2 pt-6 pb-0">
                 {/* P2 - Left */}
                 <div className="flex flex-col items-center w-[30%] max-w-[7.5rem]">
