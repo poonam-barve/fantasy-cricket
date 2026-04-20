@@ -107,7 +107,7 @@ function PlayerHistoryToggle({ player, isOpen, isSelected, onToggle }: PlayerHis
   const recentHistory = player.recent_history || [];
 
   return (
-    <div className="relative flex-shrink-0 self-start">
+    <div className="relative z-40 flex-shrink-0 self-start">
       <button
         type="button"
         onClick={(e) => {
@@ -135,7 +135,7 @@ function PlayerHistoryToggle({ player, isOpen, isSelected, onToggle }: PlayerHis
 
       {isOpen && (
         <div
-          className="mobile-safe-blur absolute left-0 top-full z-20 mt-2 w-48 overflow-hidden rounded-2xl border border-white/10 bg-[#07130d]/95 shadow-2xl shadow-black/40 backdrop-blur"
+          className="mobile-safe-blur absolute left-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-2xl border border-white/10 bg-[#07130d]/95 shadow-2xl shadow-black/40 backdrop-blur"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="border-b border-white/10 px-3 py-2">
@@ -1332,7 +1332,7 @@ export default function SelectTeamPage() {
                 </div>
               </div>
             ) : (
-            <div className="mt-4 bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+              <div className="mt-4 overflow-visible rounded-2xl border border-white/10 bg-white/5">
               <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
                 <div className="flex items-center gap-2">
                   <span
