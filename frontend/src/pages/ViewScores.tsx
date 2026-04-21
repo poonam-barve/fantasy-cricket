@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../auth/AuthContext';
@@ -312,7 +312,7 @@ export default function ViewScoresPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-black">
-        <header id="view-scores-sticky-header" className="mobile-safe-blur sticky top-0 z-30 bg-black/80 border-b border-white/10 md:backdrop-blur-lg">
+        <header id="view-scores-sticky-header" className="mobile-safe-blur sticky top-[56px] z-30 bg-black/80 border-b border-white/10 md:backdrop-blur-lg">
           <div className="max-w-6xl mx-auto flex items-center justify-between gap-3 px-4 py-4">
             <div className="flex min-w-0 items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-white/10 animate-pulse" />
@@ -345,6 +345,26 @@ export default function ViewScoresPage() {
     }
     rankedContestants.push({ ...entry, rank });
   });
+
+  const selectedContestantSummary = useMemo(() => {
+    if (selectedContestantId == null) return null;
+    const selectedIndex = rankedContestants.findIndex((contestant) => contestant.id === selectedContestantId);
+    if (selectedIndex < 0) return null;
+
+    const selected = rankedContestants[selectedIndex];
+    if (selectedIndex === 0) {
+      return { rank: selected.rank, diffToAbove: null, diffToFirst: null };
+    }
+
+    const above = rankedContestants[selectedIndex - 1];
+    const first = rankedContestants[0];
+
+    return {
+      rank: selected.rank,
+      diffToAbove: selected.points - above.points,
+      diffToFirst: selected.points - first.points,
+    };
+  }, [rankedContestants, selectedContestantId]);
 
   const renderPlayerEntry = (entry: TeamDiffEntry | null, side: 'left' | 'right') => {
     if (!entry) return <div className="flex-1 p-3 bg-white/5 rounded-xl text-center text-white/30 text-xs">—</div>;
@@ -649,7 +669,7 @@ export default function ViewScoresPage() {
   return (
     <div className="min-h-screen bg-black">
       {/* Header */}
-      <header id="view-scores-sticky-header" className="mobile-safe-blur sticky top-0 z-30 bg-black/80 border-b border-white/10 md:backdrop-blur-lg">
+        <header id="view-scores-sticky-header" className="mobile-safe-blur sticky top-[56px] z-30 bg-black/80 border-b border-white/10 md:backdrop-blur-lg">
         <div className="max-w-6xl mx-auto flex items-center justify-between gap-3 px-4 py-4">
           <div className="flex min-w-0 items-center gap-3">
             <Link to="/dashboard" className="p-2 hover:bg-white/10 rounded-xl transition-all">
@@ -746,13 +766,51 @@ export default function ViewScoresPage() {
                               <p className="text-sm text-white/40">{selectedContestantBreakdown.error}</p>
                             ) : selectedContestantBreakdown ? (
                               <div className="space-y-3">
-                                <div className="flex items-center justify-between gap-3">
-                                  <div>
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
                                     <p className="text-xs uppercase tracking-[0.2em] text-white/35">Team View</p>
-                                    <h3 className="text-sm font-semibold text-white">{selectedContestantBreakdown.user_name}</h3>
+                                    <div className="flex items-center gap-2">
+                                      <h3 className="truncate text-sm font-semibold text-white">{selectedContestantBreakdown.user_name}</h3>
+                                      {selectedContestantSummary && (
+                                        <span className="inline-flex items-center rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/70">
+                                          #{selectedContestantSummary.rank}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
-                                  <p className="text-sm font-bold text-blue-400">{selectedContestantBreakdown.total} pts</p>
+                                  <div className="text-right">
+                                    <p className="text-sm font-bold text-blue-400">{selectedContestantBreakdown.total} pts</p>
+                                    {selectedContestantSummary?.rank === 1 && (
+                                      <p className="text-[10px] uppercase tracking-[0.2em] text-white/30">Top rank</p>
+                                    )}
+                                  </div>
                                 </div>
+                                {selectedContestantSummary?.rank && selectedContestantSummary.rank > 1 && (
+                                  <div className="grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-2">
+                                    <div className="rounded-lg bg-black/30 px-2 py-1.5">
+                                      <p className="text-[9px] uppercase tracking-[0.16em] text-white/30">Vs Above</p>
+                                      {(() => {
+                                        const diffToAbove = selectedContestantSummary.diffToAbove ?? 0;
+                                        return (
+                                          <p className={`text-xs font-bold ${diffToAbove < 0 ? 'text-red-300' : 'text-green-300'}`}>
+                                            {diffToAbove > 0 ? '+' : ''}{diffToAbove.toFixed(2)}
+                                          </p>
+                                        );
+                                      })()}
+                                    </div>
+                                    <div className="rounded-lg bg-black/30 px-2 py-1.5">
+                                      <p className="text-[9px] uppercase tracking-[0.16em] text-white/30">Vs #1</p>
+                                      {(() => {
+                                        const diffToFirst = selectedContestantSummary.diffToFirst ?? 0;
+                                        return (
+                                          <p className={`text-xs font-bold ${diffToFirst < 0 ? 'text-red-300' : 'text-green-300'}`}>
+                                            {diffToFirst > 0 ? '+' : ''}{diffToFirst.toFixed(2)}
+                                          </p>
+                                        );
+                                      })()}
+                                    </div>
+                                  </div>
+                                )}
                                 {selectedContestantLoading && (
                                   <p className="text-[10px] uppercase tracking-[0.2em] text-white/30">Refreshing latest data...</p>
                                 )}

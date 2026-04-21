@@ -127,7 +127,7 @@ def _load_last_completed_team_xi(
 
     player_rows = db.execute(
         """
-        SELECT id, name, team, role, aliases
+        SELECT id, name, team, role, type, aliases
         FROM players
         WHERE team IN (?, ?)
         """,
@@ -273,6 +273,7 @@ async def list_players(
                     p.name,
                     p.team,
                     p.role,
+                    p.type,
                     p.aliases,
                     COALESCE(SUM(pp.points), 0) AS total_points,
                     COUNT(pp.match_id) AS matches_played,
@@ -282,7 +283,7 @@ async def list_players(
                 FROM players p
                 LEFT JOIN player_points pp ON pp.player_id = p.id
                 WHERE p.team IN (?, ?)
-                GROUP BY p.id, p.name, p.team, p.role, p.aliases
+                GROUP BY p.id, p.name, p.team, p.role, p.type, p.aliases
                 ORDER BY
                     CASE p.role
                         WHEN 'Wicketkeeper' THEN 1
@@ -421,11 +422,12 @@ async def list_players(
             p.name,
             p.team,
             p.role,
+            p.type,
             p.aliases,
             COALESCE(SUM(pp.points), 0) AS total_points
         FROM players p
         LEFT JOIN player_points pp ON pp.player_id = p.id
-        GROUP BY p.id, p.name, p.team, p.role, p.aliases
+        GROUP BY p.id, p.name, p.team, p.role, p.type, p.aliases
         ORDER BY p.team, p.role, total_points DESC, p.name
         """
     ).fetchall()

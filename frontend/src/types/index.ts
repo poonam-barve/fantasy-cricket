@@ -45,6 +45,7 @@ export type Player = {
   name: string;
   team: string;
   role: string;
+  type?: string | null;
   aliases: string;
   total_points?: number;
   matches_played?: number;

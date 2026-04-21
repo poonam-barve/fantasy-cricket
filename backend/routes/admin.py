@@ -138,6 +138,7 @@ class CreatePlayerBody(BaseModel):
     name: str
     team: str
     role: str
+    type: Optional[str] = None
     aliases: Optional[str] = ""
 
 
@@ -145,6 +146,7 @@ class UpdatePlayerBody(BaseModel):
     name: Optional[str] = None
     team: Optional[str] = None
     role: Optional[str] = None
+    type: Optional[str] = None
     aliases: Optional[str] = None
 
 
@@ -162,8 +164,8 @@ async def create_player(
 ):
     db = get_db()
     cursor = db.execute(
-        "INSERT INTO players (name, team, role, aliases) VALUES (?, ?, ?, ?)",
-        (body.name, body.team, body.role, body.aliases or ""),
+        "INSERT INTO players (name, team, role, type, aliases) VALUES (?, ?, ?, ?, ?)",
+        (body.name, body.team, body.role, body.type or None, body.aliases or ""),
     )
     db.commit()
     _refresh_admin_caches(tables={"players"}, refresh_schedule_map=True)
@@ -198,6 +200,9 @@ async def update_player(
     if body.role is not None:
         updates.append("role = ?")
         params.append(body.role)
+    if body.type is not None:
+        updates.append("type = ?")
+        params.append(body.type or None)
     if body.aliases is not None:
         updates.append("aliases = ?")
         params.append(body.aliases)

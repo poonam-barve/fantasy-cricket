@@ -180,6 +180,20 @@ def _ensure_user_teams_updated_at_postgres(cursor):
     )
 
 
+def _ensure_players_type_postgres(cursor):
+    cursor.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS type CHAR(1) DEFAULT NULL")
+
+
+def _ensure_players_type_sqlite(conn):
+    if not _sqlite_column_exists(conn, "players", "type"):
+        conn.execute("ALTER TABLE players ADD COLUMN type CHAR(1) DEFAULT NULL")
+
+
+def _ensure_matches_venue_sqlite(conn):
+    if not _sqlite_column_exists(conn, "matches", "venue"):
+        conn.execute("ALTER TABLE matches ADD COLUMN venue TEXT DEFAULT NULL")
+
+
 def _ensure_user_teams_audit_sqlite(conn):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS user_teams_audit (
@@ -378,6 +392,19 @@ def _ensure_matches_metadata_sqlite(conn):
     )
 
 
+def _ensure_indexes_sqlite(conn):
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_user_match ON user_teams(user_id, match_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_match ON user_teams(match_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_match_user ON user_teams(match_id, user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_match_updated_at ON user_teams(match_id, updated_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_contestant_points_match ON contestant_points(match_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_player_points_match ON player_points(match_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_player_points_last_updated ON player_points(last_updated)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_backups_user_match ON team_backups(user_id, match_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_backups_match ON team_backups(match_id)")
+
+
 def _ensure_matches_metadata_postgres(cursor):
     cursor.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS cricbuzz_match_id INTEGER")
     cursor.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS espn_match_id INTEGER")
@@ -435,9 +462,11 @@ def init_db():
                 name TEXT NOT NULL,
                 team TEXT NOT NULL,
                 role TEXT NOT NULL,
+                type CHAR(1) DEFAULT NULL,
                 aliases TEXT DEFAULT ''
             )
         """)
+        _ensure_players_type_postgres(cursor)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS matches (
                 id INTEGER PRIMARY KEY,
@@ -563,6 +592,7 @@ def init_db():
                 name TEXT NOT NULL,
                 team TEXT NOT NULL,
                 role TEXT NOT NULL,
+                type CHAR(1) DEFAULT NULL,
                 aliases TEXT DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS matches (
@@ -640,16 +670,6 @@ def init_db():
                 team2 TEXT NOT NULL,
                 UNIQUE(name, team, match_id, match_date, team1, team2)
             );
-            CREATE INDEX IF NOT EXISTS idx_user_teams_user_match ON user_teams(user_id, match_id);
-            CREATE INDEX IF NOT EXISTS idx_user_teams_match ON user_teams(match_id);
-            CREATE INDEX IF NOT EXISTS idx_user_teams_match_user ON user_teams(match_id, user_id);
-            CREATE INDEX IF NOT EXISTS idx_user_teams_match_updated_at ON user_teams(match_id, updated_at);
-            CREATE INDEX IF NOT EXISTS idx_contestant_points_match ON contestant_points(match_id);
-            CREATE INDEX IF NOT EXISTS idx_player_points_match ON player_points(match_id);
-            CREATE INDEX IF NOT EXISTS idx_player_points_last_updated ON player_points(last_updated);
-            CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid);
-            CREATE INDEX IF NOT EXISTS idx_team_backups_user_match ON team_backups(user_id, match_id);
-            CREATE INDEX IF NOT EXISTS idx_team_backups_match ON team_backups(match_id);
             CREATE TABLE IF NOT EXISTS weekend_tournaments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 qualifying_match_id INTEGER NOT NULL REFERENCES matches(id),
@@ -678,13 +698,12 @@ def init_db():
             );
         """)
         _ensure_user_teams_updated_at_sqlite(conn)
+        _ensure_matches_venue_sqlite(conn)
+        _ensure_matches_metadata_sqlite(conn)
         _ensure_user_teams_audit_sqlite(conn)
         _ensure_team_backups_sqlite(conn)
         _ensure_unknown_players_sqlite(conn)
-        try:
-            conn.execute("ALTER TABLE matches ADD COLUMN venue TEXT DEFAULT NULL")
-        except Exception:
-            pass
-        _ensure_matches_metadata_sqlite(conn)
+        _ensure_players_type_sqlite(conn)
+        _ensure_indexes_sqlite(conn)
         conn.commit()
         conn.close()

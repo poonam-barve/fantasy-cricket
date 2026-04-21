@@ -7,7 +7,7 @@ import {
   onAuthStateChanged,
 } from 'firebase/auth';
 import { auth } from './firebase';
-import client from '../api/client';
+import client, { isDevLoginEnabled } from '../api/client';
 import type { User } from '../types';
 
 interface AuthContextType {
@@ -76,8 +76,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      if (devLogin) {
-        const res = await client.get('/api/auth/me', { headers: { 'X-Dev-Login': '1' } });
+      if (devLogin || (!firebaseUserOverride && isDevLoginEnabled())) {
+        const res = await client.get('/api/auth/dev-login');
         setProfile(res.data);
         return { profile: res.data, backendReady: true };
       }
@@ -179,12 +179,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     await signOut(auth);
     setProfile(null);
+    try {
+      localStorage.removeItem('fantasy_cricket_dev_login');
+    } catch {
+      // Ignore storage failures.
+    }
   };
 
   // Dev mode login - works without Firebase
   const devLogin = async () => {
+    try {
+      localStorage.setItem('fantasy_cricket_dev_login', '1');
+    } catch {
+      // Ignore storage failures.
+    }
     const result = await fetchProfile(true);
     if (!result.profile) {
+      try {
+        localStorage.removeItem('fantasy_cricket_dev_login');
+      } catch {
+        // Ignore storage failures.
+      }
       throw new Error('Dev login failed.');
     }
     setLoading(false);

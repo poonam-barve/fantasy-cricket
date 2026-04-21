@@ -4,15 +4,21 @@ import type { Player } from '../../types';
 
 const IPL_TEAMS = ['CSK', 'RCB', 'MI', 'KKR', 'RR', 'GT', 'DC', 'LSG', 'PBKS', 'SRH'];
 const ROLES = ['Wicketkeeper', 'Batter', 'AllRounder', 'Bowler'];
+const formatPlayerType = (type?: string | null) => {
+  if (type === 'p') return 'Pacer';
+  if (type === 's') return 'Spinner';
+  return '-';
+};
 
 interface PlayerForm {
   name: string;
   team: string;
   role: string;
+  type: string;
   aliases: string;
 }
 
-const emptyForm: PlayerForm = { name: '', team: 'CSK', role: 'Batter', aliases: '' };
+const emptyForm: PlayerForm = { name: '', team: 'CSK', role: 'Batter', type: '', aliases: '' };
 
 export default function ManagePlayers() {
   const [players, setPlayers] = useState<Player[]>([]);
@@ -53,7 +59,7 @@ export default function ManagePlayers() {
 
   const openEdit = (player: Player) => {
     setEditingId(player.id);
-    setForm({ name: player.name, team: player.team, role: player.role, aliases: player.aliases });
+    setForm({ name: player.name, team: player.team, role: player.role, type: player.type || '', aliases: player.aliases });
     setModalOpen(true);
   };
 
@@ -140,6 +146,7 @@ export default function ManagePlayers() {
                 <th className="px-6 py-3">Name</th>
                 <th className="px-6 py-3">Team</th>
                 <th className="px-6 py-3">Role</th>
+                <th className="px-6 py-3">Type</th>
                 <th className="px-6 py-3">Aliases</th>
                 <th className="px-6 py-3">Actions</th>
               </tr>
@@ -155,6 +162,7 @@ export default function ManagePlayers() {
                     </span>
                   </td>
                   <td className="px-6 py-4 text-gray-600">{player.role}</td>
+                  <td className="px-6 py-4 text-gray-500">{formatPlayerType(player.type)}</td>
                   <td className="px-6 py-4 text-gray-500 max-w-[200px] truncate">{player.aliases}</td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2">
@@ -176,7 +184,7 @@ export default function ManagePlayers() {
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-gray-400">
+                  <td colSpan={7} className="px-6 py-8 text-center text-gray-400">
                     No players found.
                   </td>
                 </tr>
@@ -226,6 +234,18 @@ export default function ManagePlayers() {
                   {ROLES.map((r) => (
                     <option key={r} value={r}>{r}</option>
                   ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={form.type}
+                  onChange={(e) => setForm({ ...form, type: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">None</option>
+                  <option value="p">Pacer</option>
+                  <option value="s">Spinner</option>
                 </select>
               </div>
               <div>

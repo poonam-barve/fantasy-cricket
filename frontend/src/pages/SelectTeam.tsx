@@ -107,7 +107,7 @@ function PlayerHistoryToggle({ player, isOpen, isSelected, onToggle }: PlayerHis
   const recentHistory = player.recent_history || [];
 
   return (
-    <div className="relative z-40 flex-shrink-0 self-start">
+    <div className="relative z-[70] flex-shrink-0 self-start">
       <button
         type="button"
         onClick={(e) => {
@@ -135,17 +135,17 @@ function PlayerHistoryToggle({ player, isOpen, isSelected, onToggle }: PlayerHis
 
       {isOpen && (
         <div
-          className="absolute left-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-2xl border border-white/20 bg-black shadow-2xl shadow-black/80 ring-1 ring-white/10"
+          className="absolute left-0 top-full z-[80] mt-2 w-48 overflow-hidden rounded-2xl border border-white/20 bg-black shadow-2xl shadow-black/80 ring-1 ring-black/30"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="border-b border-white/10 px-3 py-2">
+          <div className="border-b border-white/10 bg-black px-3 py-2">
             <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-300">Recent Form</div>
           </div>
-          <div className="max-h-48 overflow-y-auto px-3 py-2">
+          <div className="max-h-48 overflow-y-auto bg-black px-3 py-2">
             {recentHistory.length > 0 ? (
               recentHistory.map((entry) => (
                 <div key={`${player.id}-${entry.match_id}`} className="flex items-center justify-between gap-3 border-b border-white/5 py-2 last:border-b-0">
-                  <span className="text-xs text-white/65">
+                  <span className="text-xs text-white/80">
                     Match#{entry.match_id}{entry.opponent ? ` vs ${entry.opponent}` : ''}
                   </span>
                   <span className={`text-xs font-semibold ${entry.did_not_play ? 'text-white/40' : 'text-blue-300'}`}>
@@ -450,6 +450,7 @@ export default function SelectTeamPage() {
     const missingRolesAfterSelection = REQUIRED_ROLES.filter((role) => simulatedCounts[role] === 0).length;
     return remainingSlots >= missingRolesAfterSelection;
   };
+  const squadFull = selectedCount >= 11;
 
   const renderTeamBadge = (team: string, compact = false) => {
     const theme = getTeamTheme(team);
@@ -615,8 +616,10 @@ export default function SelectTeamPage() {
         className={`cursor-pointer rounded-lg px-2 py-1.5 transition-all ${
           isSelected
             ? 'player-selected-highlight border border-sky-300/60'
-            : !selectionAllowed
+            : squadFull
             ? 'cursor-not-allowed bg-white/[0.03] opacity-45'
+            : !selectionAllowed
+            ? 'cursor-not-allowed bg-white/[0.03] text-white/55'
             : 'bg-white/[0.04] hover:bg-white/[0.08]'
         }`}
       >
@@ -915,11 +918,13 @@ export default function SelectTeamPage() {
                           }
                         }}
                         disabled={!isSelected && !selectionAllowed}
-                        className={`flex w-full items-center gap-3 border-b border-white/5 px-4 py-3 text-left transition last:border-b-0 ${
+                        className={`relative z-20 flex w-full items-center gap-3 border-b border-white/5 px-4 py-3 text-left transition last:border-b-0 ${
                           isSelected
                             ? 'player-selected-highlight border border-sky-300/60'
+                            : squadFull
+                            ? 'cursor-not-allowed bg-white/[0.01] opacity-45'
                             : !selectionAllowed
-                            ? 'cursor-not-allowed opacity-45'
+                            ? 'cursor-not-allowed bg-white/[0.01] text-white/55'
                             : 'bg-white/[0.02] hover:bg-white/[0.05]'
                         }`}
                       >
@@ -1070,13 +1075,15 @@ export default function SelectTeamPage() {
                               }
                             }}
                             disabled={!isSelected && !selectionAllowed}
-                            className={`flex w-full items-center gap-3 border-b border-white/5 px-4 py-3 text-left transition last:border-b-0 ${
-                              isSelected
-                                ? 'player-selected-highlight border border-sky-300/60'
-                                : !selectionAllowed
-                                ? 'cursor-not-allowed opacity-45'
-                                : 'bg-white/[0.02] hover:bg-white/[0.05]'
-                            }`}
+                        className={`flex w-full items-center gap-3 border-b border-white/5 px-4 py-3 text-left transition last:border-b-0 ${
+                          isSelected
+                            ? 'player-selected-highlight border border-sky-300/60'
+                            : squadFull
+                            ? 'cursor-not-allowed bg-white/[0.01] opacity-45'
+                            : !selectionAllowed
+                            ? 'cursor-not-allowed bg-white/[0.01] text-white/55'
+                            : 'bg-white/[0.02] hover:bg-white/[0.05]'
+                        }`}
                           >
                             <div
                               className={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full ${
@@ -1102,10 +1109,10 @@ export default function SelectTeamPage() {
                                 {renderTeamBadge(player.team, true)}
                                 <span className="truncate text-sm font-medium text-white">{player.name}</span>
                               </div>
-                              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-white/45">
-                                <span>{ROLE_CONFIG[player.role]?.label || player.role}</span>
-                                <span className="font-semibold text-blue-300">Avg {formatPoints(player.avg_points || 0)}</span>
-                                {showAvailabilityDetails && playingXi.announced && (
+                          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-white/45">
+                            <span>{ROLE_CONFIG[player.role]?.label || player.role}</span>
+                            <span className="font-semibold text-blue-300">Avg {formatPoints(player.avg_points || 0)}</span>
+                            {showAvailabilityDetails && playingXi.announced && (
                                   <span
                                     className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold ${
                                       availabilityStatus === 'available'
@@ -1361,17 +1368,19 @@ export default function SelectTeamPage() {
                   return (
                     <div
                       key={player.id}
+                      className={`relative ${openHistoryPlayerId === player.id ? 'z-50' : 'z-20'} flex items-start gap-3 px-4 py-3 border-b border-white/5 last:border-b-0 transition-all cursor-pointer select-none ${
+                        isSelected
+                          ? 'player-selected-highlight border border-sky-300/60'
+                          : squadFull
+                          ? 'bg-white/[0.01] cursor-not-allowed'
+                          : !selectionAllowed
+                          ? 'bg-white/[0.01] text-white/55 cursor-not-allowed'
+                          : 'bg-white/[0.02] hover:bg-white/[0.05]'
+                      }`}
                         onClick={() => {
                           setOpenHistoryPlayerId(null);
                           if (isSelected || selectionAllowed) togglePlayer(player.id);
                         }}
-                        className={`flex items-start gap-3 px-4 py-3 border-b border-white/5 last:border-b-0 transition-all cursor-pointer select-none ${
-                          isSelected
-                            ? 'player-selected-highlight border border-sky-300/60'
-                            : !selectionAllowed
-                            ? 'opacity-45 cursor-not-allowed'
-                            : 'bg-white/[0.02] hover:bg-white/[0.05]'
-                        }`}
                       >
                         <PlayerHistoryToggle
                           player={player}
@@ -1382,7 +1391,7 @@ export default function SelectTeamPage() {
                           }}
                         />
 
-                      <div className="min-w-0 flex-1">
+                      <div className={`min-w-0 flex-1 ${squadFull && !isSelected ? 'opacity-45' : ''}`}>
                         <div className="flex items-center gap-2">
                           {renderTeamBadge(player.team)}
                           <p className="min-w-0 truncate text-sm font-medium text-white">{player.name}</p>
@@ -1540,7 +1549,7 @@ export default function SelectTeamPage() {
                                 <div className="text-[11px] font-semibold leading-tight text-white whitespace-normal break-words">
                                   {player.name}
                                 </div>
-                                <div className="mt-0.5 flex items-center gap-2 text-[10px] text-white/50">
+                        <div className="mt-0.5 flex items-center gap-2 text-[10px] text-white/50">
                                   <span>{ROLE_CONFIG[player.role]?.label || player.role}</span>
                                   <span className="font-semibold text-blue-300">
                                     Avg {Math.round(player.avg_points || 0)}
@@ -1587,7 +1596,9 @@ export default function SelectTeamPage() {
 
                 {/* Wicketkeeper */}
                 <div className="relative z-10 mb-3">
-                  <p className="text-center text-white/40 text-[9px] uppercase tracking-widest mb-1.5">WK</p>
+                  <div className="mb-1.5 flex justify-center">
+                    <p className="text-center text-white/40 text-[9px] uppercase tracking-widest mb-1.5">WK</p>
+                  </div>
                   <div className="flex justify-center gap-2.5 flex-wrap min-h-[52px] items-start">
                     {getSelectedByRole('Wicketkeeper').map((p) => (
                       <GroundPlayer
@@ -1605,7 +1616,9 @@ export default function SelectTeamPage() {
 
                 {/* Batters */}
                 <div className="relative z-10 mb-3">
-                  <p className="text-center text-white/40 text-[9px] uppercase tracking-widest mb-1.5">BAT</p>
+                  <div className="mb-1.5 flex justify-center">
+                    <p className="text-center text-white/40 text-[9px] uppercase tracking-widest mb-1.5">BAT</p>
+                  </div>
                   <div className="flex justify-center gap-2.5 flex-wrap min-h-[52px] items-start">
                     {getSelectedByRole('Batter').map((p) => (
                       <GroundPlayer
@@ -1623,7 +1636,9 @@ export default function SelectTeamPage() {
 
                 {/* All-Rounders */}
                 <div className="relative z-10 mb-3">
-                  <p className="text-center text-white/40 text-[9px] uppercase tracking-widest mb-1.5">AR</p>
+                  <div className="mb-1.5 flex justify-center">
+                    <p className="text-center text-white/40 text-[9px] uppercase tracking-widest mb-1.5">AR</p>
+                  </div>
                   <div className="flex justify-center gap-2.5 flex-wrap min-h-[52px] items-start">
                     {getSelectedByRole('AllRounder').map((p) => (
                       <GroundPlayer
@@ -1641,7 +1656,9 @@ export default function SelectTeamPage() {
 
                 {/* Bowlers */}
                 <div className="relative z-10">
-                  <p className="text-center text-white/40 text-[9px] uppercase tracking-widest mb-1.5">BOWL</p>
+                  <div className="mb-1.5 flex justify-center">
+                    <p className="text-center text-white/40 text-[9px] uppercase tracking-widest mb-1.5">BOWL</p>
+                  </div>
                   <div className="flex justify-center gap-2.5 flex-wrap min-h-[52px] items-start">
                     {getSelectedByRole('Bowler').map((p) => (
                       <GroundPlayer

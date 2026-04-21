@@ -167,13 +167,14 @@ def get_cached_data(sheet_name: str) -> list[dict]:
 
 def _cached_players() -> list[dict]:
     db = get_db()
-    rows = db.execute("SELECT id, name, team, role, aliases FROM players").fetchall()
+    rows = db.execute("SELECT id, name, team, role, type, aliases FROM players").fetchall()
     return [
         {
             "PlayerID": r["id"],
             "Name": r["name"],
             "Team": r["team"],
             "Role": r["role"],
+            "Type": r["type"],
             "Aliases": r["aliases"] or "",
         }
         for r in rows

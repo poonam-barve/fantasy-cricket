@@ -57,79 +57,182 @@ completed_recompute_started = False
 
 def seed_db_if_needed():
     db = get_db()
-    row = db.execute("SELECT COUNT(*) as cnt FROM players").fetchone()
-    count = row["cnt"] if isinstance(row, dict) else row[0]
-    if count > 0:
-        print(f"Database already has {count} players, skipping seed")
+    counts = {
+        "players": db.execute("SELECT COUNT(*) as cnt FROM players").fetchone(),
+        "matches": db.execute("SELECT COUNT(*) as cnt FROM matches").fetchone(),
+        "users": db.execute("SELECT COUNT(*) as cnt FROM users").fetchone(),
+    }
+    player_count = counts["players"]["cnt"] if isinstance(counts["players"], dict) else counts["players"][0]
+    match_count = counts["matches"]["cnt"] if isinstance(counts["matches"], dict) else counts["matches"][0]
+    user_count = counts["users"]["cnt"] if isinstance(counts["users"], dict) else counts["users"][0]
+
+    if player_count > 0 and match_count > 0 and user_count > 0:
+        print(
+            f"Database already has {player_count} players, {match_count} matches and {user_count} users, skipping seed"
+        )
         return
 
     workbook_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "FantasyCricket.xlsx")
-    if not os.path.exists(workbook_path):
-        print(f"Seed file not found at {workbook_path}, skipping seed")
-        return
+    seeded_from_workbook = False
+    if os.path.exists(workbook_path):
+        print("Seeding database from FantasyCricket.xlsx")
+        wb = openpyxl.load_workbook(workbook_path, read_only=True)
 
-    print("Seeding database from FantasyCricket.xlsx")
-    wb = openpyxl.load_workbook(workbook_path, read_only=True)
+        ws = wb["Players"]
+        workbook_player_count = 0
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] is None:
+                break
+            db.execute(
+                """
+                INSERT INTO players (id, name, team, role, aliases)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    name = ?,
+                    team = ?,
+                    role = ?,
+                    aliases = ?
+                """,
+                (int(row[0]), row[1], row[2], row[3], row[4] or "", row[1], row[2], row[3], row[4] or ""),
+            )
+            workbook_player_count += 1
 
-    ws = wb["Players"]
-    player_count = 0
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if row[0] is None:
-            break
+        ws = wb["Matches"]
+        workbook_match_count = 0
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] is None:
+                break
+            date_str = row[1].strftime("%Y-%m-%d")
+            time_str = row[2].strftime("%H:%M")
+            db.execute(
+                """
+                INSERT INTO matches (id, team1, team2, match_date, match_time, status, toss_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    team1 = ?,
+                    team2 = ?,
+                    match_date = ?,
+                    match_time = ?,
+                    status = ?,
+                    toss_time = ?
+                """,
+                (
+                    int(row[0]),
+                    row[3],
+                    row[4],
+                    date_str,
+                    time_str,
+                    "future",
+                    compute_toss_time(date_str, time_str),
+                    row[3],
+                    row[4],
+                    date_str,
+                    time_str,
+                    "future",
+                    compute_toss_time(date_str, time_str),
+                ),
+            )
+            workbook_match_count += 1
+
+        db.commit()
+        wb.close()
+        seeded_from_workbook = workbook_player_count > 0 or workbook_match_count > 0
+        print(f"Seeded: {workbook_player_count} players, {workbook_match_count} matches")
+    else:
+        print(f"Seed file not found at {workbook_path}, using fallback local seed")
+
+    if user_count == 0:
         db.execute(
             """
-            INSERT INTO players (id, name, team, role, aliases)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT (id) DO UPDATE SET
-                name = ?,
-                team = ?,
-                role = ?,
-                aliases = ?
+            INSERT INTO users (firebase_uid, email, name, mobile, role, is_active)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(firebase_uid) DO UPDATE SET
+                email = excluded.email,
+                name = excluded.name,
+                mobile = excluded.mobile,
+                role = excluded.role,
+                is_active = excluded.is_active
             """,
-            (int(row[0]), row[1], row[2], row[3], row[4] or "", row[1], row[2], row[3], row[4] or ""),
+            ("dev_local_admin", "local.admin@example.com", "Local Admin", "", "admin", 1),
         )
-        player_count += 1
 
-    ws = wb["Matches"]
-    match_count = 0
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if row[0] is None:
-            break
-        date_str = row[1].strftime("%Y-%m-%d")
-        time_str = row[2].strftime("%H:%M")
+    if player_count == 0 and not seeded_from_workbook:
+        fallback_players = [
+            (900001, "Local Batter", "CSK", "BAT", ""),
+            (900002, "Local Wicketkeeper", "MI", "WK", ""),
+            (900003, "Local Pacer All-Rounder", "RCB", "AR", "", "p"),
+            (900004, "Local Spinner Bowler", "KKR", "BOWL", "", "s"),
+        ]
+        for player in fallback_players:
+            if len(player) == 5:
+                pid, name, team, role, aliases = player
+                player_type = None
+            else:
+                pid, name, team, role, aliases, player_type = player
+            db.execute(
+                """
+                INSERT INTO players (id, name, team, role, aliases, type)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    name = excluded.name,
+                    team = excluded.team,
+                    role = excluded.role,
+                    aliases = excluded.aliases,
+                    type = excluded.type
+                """,
+                (pid, name, team, role, aliases, player_type),
+            )
+
+    if match_count == 0 and not seeded_from_workbook:
+        match_date = (datetime.now(IST) + timedelta(days=1)).strftime("%Y-%m-%d")
+        match_time = "19:30"
         db.execute(
             """
-            INSERT INTO matches (id, team1, team2, match_date, match_time, status, toss_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (id) DO UPDATE SET
-                team1 = ?,
-                team2 = ?,
-                match_date = ?,
-                match_time = ?,
-                status = ?,
-                toss_time = ?
+            INSERT INTO matches (id, team1, team2, match_date, match_time, status, venue, toss_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                team1 = excluded.team1,
+                team2 = excluded.team2,
+                match_date = excluded.match_date,
+                match_time = excluded.match_time,
+                status = excluded.status,
+                venue = excluded.venue,
+                toss_time = excluded.toss_time
             """,
             (
-                int(row[0]),
-                row[3],
-                row[4],
-                date_str,
-                time_str,
+                900001,
+                "CSK",
+                "MI",
+                match_date,
+                match_time,
                 "future",
-                compute_toss_time(date_str, time_str),
-                row[3],
-                row[4],
-                date_str,
-                time_str,
-                "future",
-                compute_toss_time(date_str, time_str),
+                "M.A. Chidambaram Stadium",
+                compute_toss_time(match_date, match_time),
             ),
         )
-        match_count += 1
 
     db.commit()
-    wb.close()
-    print(f"Seeded: {player_count} players, {match_count} matches")
+    print("Fallback local seed applied" if not seeded_from_workbook else "Local seed completed")
+
+
+def normalize_player_types():
+    db = get_db()
+    updated_rows = 0
+    type_overrides = {
+        "Prince Yadav": "p",
+        "Ravi Bishnoi": "s",
+    }
+
+    for player_name, player_type in type_overrides.items():
+        result = db.execute(
+            "UPDATE players SET type = ? WHERE LOWER(name) = LOWER(?)",
+            (player_type, player_name),
+        )
+        updated_rows += result.rowcount or 0
+
+    db.commit()
+    if updated_rows:
+        print(f"Updated player types for {updated_rows} rows")
 
 
 def bootstrap_app():
@@ -138,6 +241,7 @@ def bootstrap_app():
         init_db()
         print("Database initialized")
         seed_db_if_needed()
+        normalize_player_types()
         init_firebase()
         bootstrap_ready = True
         bootstrap_error = None

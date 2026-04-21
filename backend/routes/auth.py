@@ -95,6 +95,23 @@ async def register(body: RegisterBody, authorization: str = Header(default=None)
     return dict(user)
 
 
+@router.get("/dev-login")
+async def dev_login():
+    db = get_db()
+    user = db.execute(
+        """
+        SELECT *
+        FROM users
+        WHERE is_active = 1
+        ORDER BY id
+        LIMIT 1
+        """
+    ).fetchone()
+    if not user:
+        raise HTTPException(status_code=404, detail="No active users available for dev login")
+    return dict(user)
+
+
 @router.get("/me")
 async def me(user: dict = Depends(get_current_user)):
     return user

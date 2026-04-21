@@ -79,6 +79,7 @@ class Tournament:
                 "name": player.get("Name", ""),
                 "team": player.get("Team", ""),
                 "role": player.get("Role", ""),
+                "type": player.get("Type"),
                 "aliases": player.get("Aliases", ""),
             })
 
