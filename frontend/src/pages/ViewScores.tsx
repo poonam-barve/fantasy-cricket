@@ -309,33 +309,6 @@ export default function ViewScoresPage() {
     return () => ro.disconnect();
   }, []);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-black">
-        <header id="view-scores-sticky-header" className="mobile-safe-blur sticky top-[56px] z-30 bg-black/80 border-b border-white/10 md:backdrop-blur-lg">
-          <div className="max-w-6xl mx-auto flex items-center justify-between gap-3 px-4 py-4">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-white/10 animate-pulse" />
-              <div className="space-y-1.5">
-                <div className="h-5 w-28 rounded bg-white/10 animate-pulse" />
-                <div className="h-3 w-20 rounded bg-white/10 animate-pulse" />
-              </div>
-            </div>
-            <div className="shrink-0 grid w-[10.5rem] grid-cols-2 gap-1 rounded-xl bg-white/5 p-1">
-              <div className="h-7 w-24 rounded-lg bg-white/10 animate-pulse" />
-              <div className="h-7 w-24 rounded-lg bg-white/10 animate-pulse" />
-              <div className="h-7 w-24 rounded-lg bg-white/10 animate-pulse" />
-              <div className="h-7 w-24 rounded-lg bg-white/10 animate-pulse" />
-            </div>
-          </div>
-        </header>
-        <main className="max-w-6xl mx-auto px-4 py-6">
-          <ScoresSkeleton />
-        </main>
-      </div>
-    );
-  }
-
   const sortedContestants = [...contestants].sort((a, b) => b.points - a.points);
   const rankedContestants: (ContestantScore & { rank: number })[] = [];
   sortedContestants.forEach((entry, i) => {
@@ -365,6 +338,33 @@ export default function ViewScoresPage() {
       diffToFirst: selected.points - first.points,
     };
   }, [rankedContestants, selectedContestantId]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-black">
+        <header id="view-scores-sticky-header" className="mobile-safe-blur sticky top-[56px] z-30 bg-black/80 border-b border-white/10 md:backdrop-blur-lg">
+          <div className="max-w-6xl mx-auto flex items-center justify-between gap-3 px-4 py-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-white/10 animate-pulse" />
+              <div className="space-y-1.5">
+                <div className="h-5 w-28 rounded bg-white/10 animate-pulse" />
+                <div className="h-3 w-20 rounded bg-white/10 animate-pulse" />
+              </div>
+            </div>
+            <div className="shrink-0 grid w-[10.5rem] grid-cols-2 gap-1 rounded-xl bg-white/5 p-1">
+              <div className="h-7 w-24 rounded-lg bg-white/10 animate-pulse" />
+              <div className="h-7 w-24 rounded-lg bg-white/10 animate-pulse" />
+              <div className="h-7 w-24 rounded-lg bg-white/10 animate-pulse" />
+              <div className="h-7 w-24 rounded-lg bg-white/10 animate-pulse" />
+            </div>
+          </div>
+        </header>
+        <main className="max-w-6xl mx-auto px-4 py-6">
+          <ScoresSkeleton />
+        </main>
+      </div>
+    );
+  }
 
   const renderPlayerEntry = (entry: TeamDiffEntry | null, side: 'left' | 'right') => {
     if (!entry) return <div className="flex-1 p-3 bg-white/5 rounded-xl text-center text-white/30 text-xs">—</div>;
