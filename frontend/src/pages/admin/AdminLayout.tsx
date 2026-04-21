@@ -58,6 +58,15 @@ const navItems = [
       </svg>
     ),
   },
+  {
+    to: '/admin/missed-players',
+    label: 'Missed Players',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h10M4 18h16M18 10l2 2-2 2" />
+      </svg>
+    ),
+  },
 ];
 
 export default function AdminLayout() {

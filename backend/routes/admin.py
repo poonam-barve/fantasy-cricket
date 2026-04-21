@@ -575,6 +575,79 @@ async def view_teams(
     }
 
 
+@router.get("/missed-players")
+async def missed_players(
+    match_id: int | None = Query(default=None),
+    user: dict = Depends(require_admin),
+):
+    db = get_db()
+
+    if match_id is None:
+        row = db.execute(
+            """
+            SELECT match_id
+            FROM player_points
+            GROUP BY match_id
+            ORDER BY match_id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if row:
+            match_id = int(row["match_id"])
+        else:
+            row = db.execute("SELECT id FROM matches ORDER BY id DESC LIMIT 1").fetchone()
+            if not row:
+                return {"match": None, "players": [], "missed_count": 0, "total_missed_points": 0}
+            match_id = int(row["id"])
+
+    match = db.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    rows = db.execute(
+        """
+        SELECT
+            pp.match_id,
+            pp.player_id,
+            p.name,
+            p.team,
+            p.role,
+            ROUND(COALESCE(pp.points, 0), 2) AS points,
+            COUNT(DISTINCT ut.user_id) AS owner_count
+        FROM player_points pp
+        JOIN players p ON p.id = pp.player_id
+        LEFT JOIN user_teams ut
+          ON ut.match_id = pp.match_id
+         AND ut.player_id = pp.player_id
+        WHERE pp.match_id = ?
+        GROUP BY pp.match_id, pp.player_id, p.name, p.team, p.role, pp.points
+        HAVING COUNT(DISTINCT ut.user_id) = 0
+        ORDER BY points DESC, p.team ASC, p.role ASC, p.name ASC
+        """,
+        (match_id,),
+    ).fetchall()
+
+    total_missed_points = round(sum(float(row["points"] or 0) for row in rows), 2)
+
+    return {
+        "match": dict(match),
+        "players": [
+            {
+                "match_id": int(row["match_id"]),
+                "player_id": int(row["player_id"]),
+                "name": row["name"],
+                "team": row["team"],
+                "role": row["role"],
+                "points": float(row["points"] or 0),
+                "owner_count": int(row["owner_count"] or 0),
+            }
+            for row in rows
+        ],
+        "missed_count": len(rows),
+        "total_missed_points": total_missed_points,
+    }
+
+
 @router.put("/teams")
 async def update_team(
     body: AdminUpdateTeamBody,

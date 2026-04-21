@@ -24,6 +24,7 @@ const ManageMatches = lazy(() => import('./pages/admin/ManageMatches'));
 const ManageUsers = lazy(() => import('./pages/admin/ManageUsers'));
 const ScoreControl = lazy(() => import('./pages/admin/ScoreControl'));
 const ManageTeams = lazy(() => import('./pages/admin/ManageTeams'));
+const MissedPlayers = lazy(() => import('./pages/admin/MissedPlayers'));
 
 function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -70,6 +71,7 @@ export default function App() {
               <Route path="teams" element={<ManageTeams />} />
               <Route path="users" element={<ManageUsers />} />
               <Route path="scores" element={<ScoreControl />} />
+              <Route path="missed-players" element={<MissedPlayers />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

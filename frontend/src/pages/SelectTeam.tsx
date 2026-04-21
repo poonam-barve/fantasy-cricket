@@ -135,7 +135,7 @@ function PlayerHistoryToggle({ player, isOpen, isSelected, onToggle }: PlayerHis
 
       {isOpen && (
         <div
-          className="mobile-safe-blur absolute left-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-2xl border border-white/15 bg-[#04110b]/98 shadow-2xl shadow-black/60 backdrop-blur-md ring-1 ring-white/10"
+          className="absolute left-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-2xl border border-white/20 bg-black shadow-2xl shadow-black/80 ring-1 ring-white/10"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="border-b border-white/10 px-3 py-2">
