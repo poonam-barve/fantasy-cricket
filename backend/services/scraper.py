@@ -892,8 +892,13 @@ def _resolve_team_player_ids_from_names(
     return ordered_ids, unmatched_names
 
 
+def _extract_candidate_names(value: str) -> list[str]:
+    parts = re.split(r"(?:,|;|\||•|·|\n|\r|\t)", value)
+    return [name.strip() for name in parts if name.strip()]
+
+
 def _extract_comma_separated_names(value: str) -> list[str]:
-    return [name.strip() for name in value.split(",") if name.strip()]
+    return _extract_candidate_names(value)
 
 
 def _team_name_variants(team_name: str) -> set[str]:
@@ -1103,11 +1108,24 @@ def _extract_playing_xi_from_commentary(
 
         return [], []
 
+    def _line_is_xi_heading(line: str, team: str) -> bool:
+        team_variants = expanded_team_names[team]
+        for variant in team_variants:
+            if not variant:
+                continue
+            if re.search(
+                rf"(?:^|\bTeams:\s*){re.escape(variant)}\s*\(Playing XI\)\s*[:\-]?\s*$",
+                line,
+                flags=re.IGNORECASE,
+            ):
+                return True
+        return False
+
     def _extract_from_lines(team: str) -> tuple[list[str], list[str]]:
         xi_names: list[str] = []
         substitute_names: list[str] = []
 
-        for line in page_lines:
+        for index, line in enumerate(page_lines):
             if xi_names and substitute_names:
                 break
             line_xi, line_subs = _extract_names_from_line(line, team)
@@ -1115,6 +1133,24 @@ def _extract_playing_xi_from_commentary(
                 xi_names = line_xi
             if line_subs and not substitute_names:
                 substitute_names = line_subs
+
+            if _line_is_xi_heading(line, team) or (line_xi and len(line_xi) < 11):
+                collected_names = list(line_xi)
+                other_team_markers = expanded_team_names[team1 if team == team2 else team2]
+                for tail_line in page_lines[index + 1:index + 18]:
+                    normalized_tail = _normalize_player_name(tail_line)
+                    if not normalized_tail:
+                        continue
+                    if any(normalized_tail == _normalize_player_name(marker) for marker in other_team_markers):
+                        break
+                    if "impact substitutes" in normalized_tail or "playing xi" in normalized_tail:
+                        if collected_names:
+                            break
+                    collected_names.extend(_extract_candidate_names(tail_line))
+                    if len(collected_names) >= 11:
+                        break
+                if len(collected_names) >= 9 and len(collected_names) > len(xi_names):
+                    xi_names = collected_names
 
         return xi_names, substitute_names
 

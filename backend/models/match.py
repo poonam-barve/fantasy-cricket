@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 from backend.models.player import Player
 from backend.models.registry import PlayerRegistry
 from backend.config import TEAM_MAP
+from backend.services import data_service
 
 
 def clean_name(name):
@@ -23,11 +24,12 @@ def clean_team_name(name):
 
 
 class Match:
-    def __init__(self, match_id, team1, team2, registry: PlayerRegistry):
+    def __init__(self, match_id, team1, team2, registry: PlayerRegistry, match_date: str | None = None):
         self.match_id = match_id
         self.team1 = team1
         self.team2 = team2
         self.registry = registry
+        self.match_date = match_date or ""
         self.players = {}  # pid -> Player
         self.scorecard = []
 
@@ -62,6 +64,18 @@ class Match:
                 )
             return preferred_pid
 
+        if not direct_pid:
+            try:
+                data_service.log_unknown_player(
+                    cleaned_name,
+                    team,
+                    int(self.match_id),
+                    self.match_date,
+                    self.team1,
+                    self.team2,
+                )
+            except Exception:
+                pass
         return direct_pid
 
     def get_or_create_player(self, pid):
@@ -92,7 +106,7 @@ class Match:
 
     def get_player_by_team(self, name, team):
         name = clean_name(name)
-        pid = self.registry.get_player_id(name, team)
+        pid = self.get_player_id(name, team)
         if not pid:
             return None
         player = self.get_or_create_player(pid)
@@ -350,7 +364,7 @@ class Match:
         return None
 
     def parse_espn_bowling_dot_balls(self, soup: BeautifulSoup):
-        temp_match = Match(self.match_id, self.team1, self.team2, self.registry)
+        temp_match = Match(self.match_id, self.team1, self.team2, self.registry, self.match_date)
         if not temp_match.parse_espn_scorecard(soup):
             return False
 

@@ -563,6 +563,32 @@ def prune_user_backups(user_id: int, match_id: int, selected_player_ids: list[in
     db.commit()
 
 
+def log_unknown_player(name: str, team: str, match_id: int, match_date: str, team1: str, team2: str) -> None:
+    """Record an unresolved player mapping for later review."""
+    cleaned_name = " ".join(str(name or "").split()).strip()
+    cleaned_team = " ".join(str(team or "").split()).strip()
+    if not cleaned_name or not cleaned_team:
+        return
+
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO unknown_players (name, team, match_id, match_date, team1, team2)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(name, team, match_id, match_date, team1, team2) DO NOTHING
+        """,
+        (
+            cleaned_name,
+            cleaned_team,
+            int(match_id),
+            str(match_date or ""),
+            str(team1 or ""),
+            str(team2 or ""),
+        ),
+    )
+    db.commit()
+
+
 def get_backup_counts_for_user(user_id: int, match_ids: list[int | str]) -> dict[int, int]:
     if not match_ids:
         return {}

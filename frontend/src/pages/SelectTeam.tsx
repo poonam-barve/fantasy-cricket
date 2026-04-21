@@ -118,10 +118,10 @@ function PlayerHistoryToggle({ player, isOpen, isSelected, onToggle }: PlayerHis
         aria-expanded={isOpen}
         className={`flex h-7 w-7 items-center justify-center rounded-full border transition-all ${
           isOpen
-            ? 'border-sky-300/60 bg-sky-400/30 text-sky-50'
+            ? 'border-sky-300/80 bg-sky-400/45 text-sky-50 shadow-lg shadow-sky-400/20'
             : isSelected
-            ? 'border-sky-300/55 bg-sky-400/25 text-sky-50 hover:border-sky-200/80 hover:bg-sky-400/30'
-            : 'border-white/20 bg-white/10 text-white/70 hover:border-white/35 hover:bg-white/15'
+            ? 'border-sky-300/70 bg-sky-400/30 text-sky-50 hover:border-sky-200/90 hover:bg-sky-400/40'
+            : 'border-white/25 bg-white/15 text-white/80 hover:border-white/45 hover:bg-white/20'
         }`}
       >
         <svg className={`h-3.5 w-3.5 transition-transform ${isOpen ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
@@ -135,7 +135,7 @@ function PlayerHistoryToggle({ player, isOpen, isSelected, onToggle }: PlayerHis
 
       {isOpen && (
         <div
-          className="mobile-safe-blur absolute left-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-2xl border border-white/10 bg-[#07130d]/95 shadow-2xl shadow-black/40 backdrop-blur"
+          className="mobile-safe-blur absolute left-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-2xl border border-white/15 bg-[#04110b]/98 shadow-2xl shadow-black/60 backdrop-blur-md ring-1 ring-white/10"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="border-b border-white/10 px-3 py-2">

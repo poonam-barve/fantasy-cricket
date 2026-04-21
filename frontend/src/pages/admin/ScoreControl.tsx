@@ -212,7 +212,7 @@ export default function ScoreControl() {
         <h2 className="text-lg font-bold text-gray-800 mb-1">Clear Table Data</h2>
         <p className="text-sm text-gray-500 mb-4">Permanently delete all rows from a table. This cannot be undone.</p>
         <div className="flex flex-wrap gap-2">
-          {['players', 'matches', 'user_teams', 'contestant_points', 'player_points'].map((table) => (
+          {['players', 'matches', 'user_teams', 'contestant_points', 'player_points', 'unknown_players'].map((table) => (
             <button
               key={table}
               onClick={async () => {

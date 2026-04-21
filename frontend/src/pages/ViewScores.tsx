@@ -834,7 +834,7 @@ export default function ViewScoresPage() {
 
                           {/* Expanded breakdown */}
                           {isExpanded && (
-                            <div className="px-4 py-3 bg-white/5 border-t border-white/5">
+                            <div className="px-4 py-3 border-t border-white/10 bg-[#04110b]/98 shadow-inner shadow-black/20">
                               <p className="text-white/40 text-[10px] uppercase tracking-wider mb-2">Analysis</p>
 
                               {/* Full stat grid */}
@@ -951,11 +951,11 @@ export default function ViewScoresPage() {
                                 <td className="px-3 py-2.5 text-right text-white/50">{p.runout_indirect}</td>
                               </tr>
                               {isExpanded && (
-                                <tr className="bg-white/5">
-                                  <td colSpan={21} className="px-4 py-3">
-                                    <p className="text-white/40 text-[10px] uppercase tracking-wider mb-2">Player Analysis</p>
-                                    {bd.length > 0 && (
-                                      <div className="flex flex-wrap gap-2">
+                              <tr className="bg-white/5">
+                                <td colSpan={21} className="px-4 py-3">
+                                  <p className="text-white/40 text-[10px] uppercase tracking-wider mb-2">Player Analysis</p>
+                                  {bd.length > 0 && (
+                                      <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-[#04110b]/98 p-3 shadow-inner shadow-black/20">
                                         {bd.map((item: { label: string; points: number }, j: number) => (
                                           <span key={j}
                                             className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border ${

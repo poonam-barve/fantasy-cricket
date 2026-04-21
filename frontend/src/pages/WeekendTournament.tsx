@@ -105,7 +105,16 @@ export default function WeekendTournamentPage() {
   const [history, setHistory] = useState<WeekendTournamentHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showRules, setShowRules] = useState(false);
   const { profile } = useAuth();
+
+  const contestRules = [
+    'Weekend Battles run only when there are 4 scheduled matches across Saturday and Sunday.',
+    'The last match before Saturday becomes the qualifier and seeds the top 16 users.',
+    'Each weekend match is a knockout round: Round of 16, Quarter Finals, Semi Finals, then Final.',
+    'If scores are tied, the higher overall leaderboard rank wins the head-to-head.',
+    'The winner of the Final is crowned Weekend Champion.',
+  ];
 
   const fetchData = async () => {
     try {
@@ -142,7 +151,7 @@ export default function WeekendTournamentPage() {
   const getMatchLabel = (matchId: number) => {
     if (!tournament?.matches) return `M${matchId}`;
     const m = tournament.matches[String(matchId)];
-    return m ? `${m.team1} vs ${m.team2}` : `M${matchId}`;
+    return m ? `M${matchId} - ${m.team1} vs ${m.team2}` : `M${matchId}`;
   };
 
   return (
@@ -151,6 +160,13 @@ export default function WeekendTournamentPage() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-bold text-white">Weekend Battle</h2>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowRules(true)}
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+          >
+            What's this?
+          </button>
           <Link to="/dashboard" className="p-2 hover:bg-white/10 rounded-xl transition-all" title="Back">
             <svg className="w-5 h-5 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -280,6 +296,36 @@ export default function WeekendTournamentPage() {
             </div>
           )}
         </>
+      )}
+
+      {showRules && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#07130d]/98 shadow-2xl shadow-black/60">
+            <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-purple-300">Weekend Battle</p>
+                <h3 className="text-lg font-bold text-white">What's this?</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRules(false)}
+                className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/60 transition hover:bg-white/10 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-3 px-5 py-4 text-sm text-white/70">
+              {contestRules.map((rule, index) => (
+                <div key={index} className="flex gap-3 rounded-2xl border border-white/5 bg-white/[0.03] px-3 py-2.5">
+                  <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-purple-500/20 text-[11px] font-bold text-purple-300">
+                    {index + 1}
+                  </span>
+                  <span>{rule}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

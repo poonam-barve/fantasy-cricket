@@ -737,6 +737,7 @@ def _build_live_match_payload(match_id: int, match_row, registry, players_data, 
         team1,
         team2,
         registry,
+        match_date,
     )
 
     players_rows = _build_players_rows(players_data, team1, team2)

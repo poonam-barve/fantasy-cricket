@@ -140,6 +140,7 @@ def _load_last_completed_team_xi(
         last_team1,
         last_team2,
         registry,
+        last_match_date,
     )
 
     cached_playing_xi = data_service.get_cached_match_playing_xi(

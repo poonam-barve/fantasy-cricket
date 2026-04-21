@@ -317,6 +317,20 @@ def _ensure_team_backups_postgres(cursor):
     """)
 
 
+def _ensure_unknown_players_postgres(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS unknown_players (
+            name TEXT NOT NULL,
+            team TEXT NOT NULL,
+            match_id INTEGER NOT NULL,
+            match_date TEXT NOT NULL,
+            team1 TEXT NOT NULL,
+            team2 TEXT NOT NULL,
+            UNIQUE(name, team, match_id, match_date, team1, team2)
+        )
+    """)
+
+
 def _ensure_team_backups_sqlite(conn):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS team_backups (
@@ -327,6 +341,20 @@ def _ensure_team_backups_sqlite(conn):
             backup_player_id INTEGER NOT NULL REFERENCES players(id),
             replaced_player_id INTEGER REFERENCES players(id),
             UNIQUE(user_id, match_id, backup_order)
+        )
+    """)
+
+
+def _ensure_unknown_players_sqlite(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS unknown_players (
+            name TEXT NOT NULL,
+            team TEXT NOT NULL,
+            match_id INTEGER NOT NULL,
+            match_date TEXT NOT NULL,
+            team1 TEXT NOT NULL,
+            team2 TEXT NOT NULL,
+            UNIQUE(name, team, match_id, match_date, team1, team2)
         )
     """)
 
@@ -469,6 +497,7 @@ def init_db():
             )
         """)
         _ensure_team_backups_postgres(cursor)
+        _ensure_unknown_players_postgres(cursor)
 
         # Weekend tournament tables
         cursor.execute("""
@@ -602,6 +631,15 @@ def init_db():
                 replaced_player_id INTEGER REFERENCES players(id),
                 UNIQUE(user_id, match_id, backup_order)
             );
+            CREATE TABLE IF NOT EXISTS unknown_players (
+                name TEXT NOT NULL,
+                team TEXT NOT NULL,
+                match_id INTEGER NOT NULL,
+                match_date TEXT NOT NULL,
+                team1 TEXT NOT NULL,
+                team2 TEXT NOT NULL,
+                UNIQUE(name, team, match_id, match_date, team1, team2)
+            );
             CREATE INDEX IF NOT EXISTS idx_user_teams_user_match ON user_teams(user_id, match_id);
             CREATE INDEX IF NOT EXISTS idx_user_teams_match ON user_teams(match_id);
             CREATE INDEX IF NOT EXISTS idx_user_teams_match_user ON user_teams(match_id, user_id);
@@ -642,6 +680,7 @@ def init_db():
         _ensure_user_teams_updated_at_sqlite(conn)
         _ensure_user_teams_audit_sqlite(conn)
         _ensure_team_backups_sqlite(conn)
+        _ensure_unknown_players_sqlite(conn)
         try:
             conn.execute("ALTER TABLE matches ADD COLUMN venue TEXT DEFAULT NULL")
         except Exception:

@@ -86,7 +86,7 @@ class Tournament:
         self.match_rows = {}
         for m in matches_data:
             match_id = str(m["MatchID"])
-            self.matches[match_id] = Match(match_id, m["Team1"], m["Team2"], self.registry)
+            self.matches[match_id] = Match(match_id, m["Team1"], m["Team2"], self.registry, m.get("Date") or m.get("match_date"))
             self.match_rows[match_id] = m
 
     def load_teams(self, teams_data):

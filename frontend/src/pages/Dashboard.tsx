@@ -380,7 +380,7 @@ export default function DashboardPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
               </svg>
             </div>
-            <span className="text-amber-300 text-xs font-medium">Leaderboard</span>
+            <span className="w-full text-center text-amber-300 text-xs font-medium leading-tight">Leaderboard</span>
           </Link>
           <Link to="/points-table"
             className="flex flex-col items-center gap-2 p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl transition-all group">
@@ -389,7 +389,7 @@ export default function DashboardPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
             </div>
-            <span className="text-white/50 text-xs font-medium">Points Table</span>
+            <span className="w-full text-center text-white/50 text-xs font-medium leading-tight">Points Table</span>
           </Link>
           <Link to="/rules"
             className="flex flex-col items-center gap-2 p-3 bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 rounded-2xl transition-all group">
@@ -398,7 +398,7 @@ export default function DashboardPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
-            <span className="text-blue-300 text-xs font-medium">Rules</span>
+            <span className="w-full text-center text-blue-300 text-xs font-medium leading-tight">Rules</span>
           </Link>
           <Link to="/weekend"
             className="flex flex-col items-center gap-2 p-3 bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/20 rounded-2xl transition-all group">
@@ -407,7 +407,7 @@ export default function DashboardPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
-            <span className="text-purple-300 text-xs font-medium">Weekend Battle</span>
+            <span className="w-full text-center text-purple-300 text-xs font-medium leading-tight">Weekend Battle</span>
           </Link>
           </div>
         </div>

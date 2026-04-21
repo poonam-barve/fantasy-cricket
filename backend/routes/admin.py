@@ -648,6 +648,7 @@ CLEARABLE_TABLES = {
     "team_backups": "DELETE FROM team_backups",
     "contestant_points": "DELETE FROM contestant_points",
     "player_points": "DELETE FROM player_points",
+    "unknown_players": "DELETE FROM unknown_players",
 }
 
 
@@ -670,6 +671,7 @@ async def clear_table(
         db.execute("DELETE FROM team_backups")
         db.execute("DELETE FROM contestant_points")
         db.execute("DELETE FROM player_points")
+        db.execute("DELETE FROM unknown_players")
 
     # If clearing players, also clear dependent data
     if table_name == "players":
@@ -677,6 +679,7 @@ async def clear_table(
         db.execute("DELETE FROM team_backups")
         db.execute("DELETE FROM contestant_points")
         db.execute("DELETE FROM player_points")
+        db.execute("DELETE FROM unknown_players")
 
     db.execute(CLEARABLE_TABLES[table_name])
     db.commit()
