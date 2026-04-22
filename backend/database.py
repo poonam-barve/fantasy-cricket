@@ -406,22 +406,9 @@ def _ensure_indexes_sqlite(conn):
 
 
 def _ensure_matches_metadata_postgres(cursor):
-    cursor.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS cricbuzz_match_id INTEGER")
-    cursor.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS espn_match_id INTEGER")
-    cursor.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS toss_time TEXT")
-    cursor.execute(
-        """
-        UPDATE matches
-        SET toss_time = COALESCE(
-            toss_time,
-            TO_CHAR(
-                (match_date::date + match_time::time - INTERVAL '30 minutes'),
-                'HH24:MI'
-            )
-        )
-        WHERE toss_time IS NULL OR toss_time = ''
-        """
-    )
+    # Postgres tables are created with these columns already. Avoid runtime ALTERs
+    # here because they can deadlock with concurrent read traffic during startup.
+    return
 
 
 def get_db():
@@ -481,12 +468,6 @@ def init_db():
                 toss_time TEXT DEFAULT NULL
             )
         """)
-        cursor.execute("""
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'matches' AND column_name = 'venue'
-        """)
-        if not cursor.fetchone():
-            cursor.execute("ALTER TABLE matches ADD COLUMN venue TEXT DEFAULT NULL")
         _ensure_matches_metadata_postgres(cursor)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_teams (
