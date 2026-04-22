@@ -109,7 +109,7 @@ def _merge_playing_xi_payloads(primary: dict | None, secondary: dict | None) -> 
         merged["substitutes_available"] = merged["substitutes_available"] or bool(candidate.get("substitutes_available"))
 
     merged["announced"] = len(merged["player_ids"]) == 22
-    merged["finalized"] = len(merged["player_ids"]) == 22 and len(merged["substitute_ids"]) == 10
+    merged["finalized"] = _is_finalized_playing_xi(merged)
     return merged
 
 
@@ -1080,7 +1080,6 @@ def _extract_playing_xi_from_commentary(
     substitute_ids: list[int] = []
     unmatched_playing: list[str] = []
     unmatched_substitutes: list[str] = []
-    announced = False
     normalized_page_text = " ".join(page_text.split())
 
     def _extract_names_from_line(line: str, team: str) -> tuple[list[str], list[str]]:
@@ -1108,49 +1107,96 @@ def _extract_playing_xi_from_commentary(
 
         return [], []
 
-    def _line_is_xi_heading(line: str, team: str) -> bool:
+    def _line_is_section_heading(line: str, team: str, section: str) -> bool:
         team_variants = expanded_team_names[team]
         for variant in team_variants:
             if not variant:
                 continue
             if re.search(
-                rf"(?:^|\bTeams:\s*){re.escape(variant)}\s*\(Playing XI\)\s*[:\-]?\s*$",
+                rf"(?:^|\bTeams:\s*){re.escape(variant)}\s*\({re.escape(section)}\)\s*[:\-]?\s*$",
                 line,
                 flags=re.IGNORECASE,
             ):
                 return True
         return False
 
+    def _is_any_team_marker(line: str) -> bool:
+        normalized_line = _normalize_player_name(line)
+        if not normalized_line:
+            return False
+        markers = {
+            _normalize_player_name(team1),
+            _normalize_player_name(team2),
+            _normalize_player_name(_expand_team_name(team1)),
+            _normalize_player_name(_expand_team_name(team2)),
+            _normalize_player_name("Teams"),
+            _normalize_player_name("Playing XI"),
+            _normalize_player_name("Impact subs"),
+            _normalize_player_name("Impact substitutes"),
+        }
+        return normalized_line in markers
+
+    def _collect_section_names(team: str, start_index: int, section: str, initial_names: list[str]) -> list[str]:
+        collected_names = list(initial_names)
+        other_team_markers = expanded_team_names[team1 if team == team2 else team2]
+        current_team_markers = expanded_team_names[team]
+        max_rows = 18 if section == "playing xi" else 10
+
+        for tail_line in page_lines[start_index + 1:start_index + 24]:
+            normalized_tail = _normalize_player_name(tail_line)
+            if not normalized_tail:
+                continue
+            tail_lower = tail_line.lower()
+            other_team_hit = any(marker.lower() in tail_lower for marker in other_team_markers if marker)
+            current_team_hit = any(marker.lower() in tail_lower for marker in current_team_markers if marker)
+            if other_team_hit and not current_team_hit and collected_names:
+                break
+            if _is_any_team_marker(tail_line):
+                if collected_names:
+                    break
+                continue
+            if other_team_hit and not current_team_hit:
+                break
+            if "playing xi" in normalized_tail and section != "playing xi":
+                break
+            if "impact sub" in normalized_tail and section == "playing xi" and collected_names:
+                break
+            collected_names.extend(_extract_candidate_names(tail_line))
+            if len(collected_names) >= max_rows:
+                break
+
+        return collected_names
+
     def _extract_from_lines(team: str) -> tuple[list[str], list[str]]:
         xi_names: list[str] = []
         substitute_names: list[str] = []
 
         for index, line in enumerate(page_lines):
-            if xi_names and substitute_names:
-                break
             line_xi, line_subs = _extract_names_from_line(line, team)
-            if line_xi and not xi_names:
-                xi_names = line_xi
-            if line_subs and not substitute_names:
-                substitute_names = line_subs
+            if line_xi:
+                collected_xi = _collect_section_names(team, index, "playing xi", line_xi)
+                for name in collected_xi:
+                    if name not in xi_names:
+                        xi_names.append(name)
+            if line_subs:
+                collected_subs = _collect_section_names(team, index, "impact subs", line_subs)
+                for name in collected_subs:
+                    if name not in substitute_names:
+                        substitute_names.append(name)
 
-            if _line_is_xi_heading(line, team) or (line_xi and len(line_xi) < 11):
-                collected_names = list(line_xi)
-                other_team_markers = expanded_team_names[team1 if team == team2 else team2]
-                for tail_line in page_lines[index + 1:index + 18]:
-                    normalized_tail = _normalize_player_name(tail_line)
-                    if not normalized_tail:
-                        continue
-                    if any(normalized_tail == _normalize_player_name(marker) for marker in other_team_markers):
-                        break
-                    if "impact substitutes" in normalized_tail or "playing xi" in normalized_tail:
-                        if collected_names:
-                            break
-                    collected_names.extend(_extract_candidate_names(tail_line))
-                    if len(collected_names) >= 11:
-                        break
-                if len(collected_names) >= 9 and len(collected_names) > len(xi_names):
-                    xi_names = collected_names
+            if _line_is_section_heading(line, team, "Playing XI") and not line_xi:
+                collected_xi = _collect_section_names(team, index, "playing xi", [])
+                for name in collected_xi:
+                    if name not in xi_names:
+                        xi_names.append(name)
+            if (
+                _line_is_section_heading(line, team, "Impact subs")
+                or _line_is_section_heading(line, team, "Impact substitutes")
+            ) and not line_subs:
+                collected_subs = _collect_section_names(team, index, "impact subs", [])
+                for name in collected_subs:
+                    if name not in substitute_names:
+                        substitute_names.append(name)
 
         return xi_names, substitute_names
 
@@ -1242,9 +1288,7 @@ def _extract_playing_xi_from_commentary(
             substitute_ids.extend(resolved_ids)
             unmatched_substitutes.extend(unresolved_names)
 
-    if len(playing_ids) >= 18:
-        announced = True
-
+    announced = len(playing_ids) == 22
     return playing_ids, substitute_ids, unmatched_playing, unmatched_substitutes, announced
 
 
@@ -1277,10 +1321,10 @@ def parse_playing_xi_from_sources(
             substitute_unmatched_names,
             announced,
         ) = _extract_playing_xi_from_commentary(commentary_html, team1, team2, players_rows)
-        if announced:
+        if len(playing_ids) == 22:
             payload.update(
                 {
-                    "announced": len(playing_ids) == 22,
+                    "announced": True,
                     "url": commentary_url or "commentary",
                     "player_ids": list(playing_ids),
                     "substitute_ids": list(substitute_ids),
@@ -1326,10 +1370,10 @@ def parse_playing_xi_from_sources(
                 playing_ids = list(json_playing_ids)
                 unmatched_names = json_unmatched_names
                 announced = True
-        if announced:
+        if len(playing_ids) == 22:
             payload.update(
                 {
-                    "announced": len(playing_ids) == 22,
+                    "announced": True,
                     "url": squads_url or "squads",
                     "player_ids": list(playing_ids),
                     "substitute_ids": list(substitute_ids),
@@ -1735,7 +1779,7 @@ def fetch_playing_xi(
 
         parsed_payload = _merge_playing_xi_payloads(parsed_from_squads, parsed_from_commentary)
 
-        if not parsed_payload["announced"] and not parsed_payload["substitute_ids"]:
+        if len(parsed_payload["player_ids"]) < 22 or len(parsed_payload["substitute_ids"]) < 10:
             parsed_payload = parse_playing_xi_from_sources(
                 commentary_html,
                 squads_html,
