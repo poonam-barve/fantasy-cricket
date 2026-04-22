@@ -225,10 +225,77 @@ def _load_effective_match_points(db) -> dict[int, list[dict]]:
     return effective
 
 
-def _calculate_balances(db):
+def _build_rank_map(active_users, totals_by_user: dict[int, float]) -> dict[int, int]:
+    sorted_users = sorted(
+        active_users,
+        key=lambda row: (-round(float(totals_by_user.get(row["id"], 0)), 2), row["name"]),
+    )
+
+    rank_map: dict[int, int] = {}
+    current_rank = 0
+    previous_points = None
+    for index, row in enumerate(sorted_users, start=1):
+        uid = int(row["id"])
+        points = round(float(totals_by_user.get(uid, 0)), 2)
+        if previous_points is None or points != previous_points:
+            current_rank = index
+            previous_points = points
+        rank_map[uid] = current_rank
+    return rank_map
+
+
+def _build_rank_movement_context(db, effective_match_points: dict[int, list[dict]] | None = None):
+    if effective_match_points is None:
+        effective_match_points = _load_effective_match_points(db)
+
+    active_users = db.execute(
+        """
+        SELECT id, name
+        FROM users
+        WHERE is_active = 1
+        ORDER BY name
+        """
+    ).fetchall()
+
+    cumulative_points: dict[int, float] = defaultdict(float)
+    rank_change_by_match: dict[int, dict[int, int]] = {}
+    previous_rank_map: dict[int, int] | None = None
+    current_rank_map: dict[int, int] = {}
+    completed_match_ids = sorted(effective_match_points.keys())
+
+    for match_id in completed_match_ids:
+        for contestant in effective_match_points.get(match_id, []):
+            cumulative_points[int(contestant["user_id"])] += float(contestant["points"])
+
+        current_rank_map = _build_rank_map(active_users, cumulative_points)
+        if previous_rank_map is not None:
+            delta_map: dict[int, int] = {}
+            for user_id, current_rank in current_rank_map.items():
+                previous_rank = previous_rank_map.get(user_id)
+                if previous_rank is None:
+                    continue
+                delta = previous_rank - current_rank
+                if delta:
+                    delta_map[user_id] = delta
+            rank_change_by_match[int(match_id)] = delta_map
+        previous_rank_map = current_rank_map
+
+    current_rank_change = rank_change_by_match.get(completed_match_ids[-1], {}) if completed_match_ids else {}
+    return {
+        "effective_match_points": effective_match_points,
+        "current_rank_map": current_rank_map,
+        "current_rank_change": current_rank_change,
+        "rank_change_by_match": rank_change_by_match,
+    }
+
+
+def _calculate_balances(db, effective_match_points: dict[int, list[dict]] | None = None):
     """Calculate running balance for each user across all completed matches."""
+    if effective_match_points is None:
+        effective_match_points = _load_effective_match_points(db)
+
     matches = defaultdict(list)
-    for match_id, contestants in _load_effective_match_points(db).items():
+    for match_id, contestants in effective_match_points.items():
         for contestant in contestants:
             if not contestant.get("participated", True):
                 continue
@@ -291,9 +358,10 @@ def _compute_medals(effective_match_points: dict) -> dict[int, dict[str, int]]:
     return dict(medals)
 
 
-def _build_leaderboard(db):
-    balances, _ = _calculate_balances(db)
-    effective_match_points = _load_effective_match_points(db)
+def _build_leaderboard(db, effective_match_points: dict[int, list[dict]] | None = None, current_rank_change: dict[int, int] | None = None):
+    if effective_match_points is None:
+        effective_match_points = _load_effective_match_points(db)
+    balances, _ = _calculate_balances(db, effective_match_points)
     totals_by_user = defaultdict(float)
     for contestants in effective_match_points.values():
         for contestant in contestants:
@@ -343,6 +411,7 @@ def _build_leaderboard(db):
             "name": row["name"],
             "user_id": uid,
             "points": pts,
+            "rank_change": current_rank_change.get(uid) if current_rank_change else None,
             "gold": user_medals["gold"],
             "silver": user_medals["silver"],
             "bronze": user_medals["bronze"],
@@ -353,10 +422,12 @@ def _build_leaderboard(db):
     return result
 
 
-def _build_points_table(db):
-    _, match_results = _calculate_balances(db)
+def _build_points_table(db, effective_match_points: dict[int, list[dict]] | None = None, rank_change_by_match: dict[int, dict[int, int]] | None = None):
+    if effective_match_points is None:
+        effective_match_points = _load_effective_match_points(db)
+    _, match_results = _calculate_balances(db, effective_match_points)
     result = []
-    for match_id, contestants in _load_effective_match_points(db).items():
+    for match_id, contestants in effective_match_points.items():
         sorted_contestants = sorted(contestants, key=lambda item: (-item["points"], item["name"]))
         for contestant in sorted_contestants:
             uid = contestant["user_id"]
@@ -369,6 +440,7 @@ def _build_points_table(db):
                 "net": match_results.get(uid, {}).get(match_id, 0),
                 "adjusted": contestant.get("adjusted", False),
                 "participated": contestant.get("participated", True),
+                "rank_change": (rank_change_by_match or {}).get(match_id, {}).get(uid),
             })
     return result
 
@@ -393,8 +465,10 @@ def _wait_for_leaderboard_cache(timeout_seconds: float = 8.0, poll_seconds: floa
 
 def refresh_leaderboard_cache_once() -> dict:
     db = get_db()
-    leaderboard = _build_leaderboard(db)
-    points_table = _build_points_table(db)
+    effective_match_points = _load_effective_match_points(db)
+    rank_context = _build_rank_movement_context(db, effective_match_points)
+    leaderboard = _build_leaderboard(db, effective_match_points, rank_context["current_rank_change"])
+    points_table = _build_points_table(db, effective_match_points, rank_context["rank_change_by_match"])
     player_points_version = data_service.get_latest_player_points_update()
     with LEADERBOARD_CACHE_LOCK:
         LEADERBOARD_CACHE["leaderboard"] = leaderboard

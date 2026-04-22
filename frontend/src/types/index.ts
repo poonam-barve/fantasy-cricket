@@ -133,6 +133,7 @@ export type LeaderboardEntry = {
   name: string;
   user_id: number;
   points: number;
+  rank_change?: number | null;
   gold: number;
   silver: number;
   bronze: number;
@@ -148,6 +149,7 @@ export type PointsTableEntry = {
   last_updated: string;
   adjusted?: boolean;
   participated?: boolean;
+  rank_change?: number | null;
 };
 
 // Weekend Tournament

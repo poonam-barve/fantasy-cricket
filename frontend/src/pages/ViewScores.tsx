@@ -4,6 +4,7 @@ import client from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import type { PlayerScore, ContestantScore } from '../types';
 import { getTeamTheme } from '../utils/teamTheme';
+import RankShiftBadge from '../components/RankShiftBadge';
 import { ScoresSkeleton } from '../components/Skeleton';
 
 interface TeamDiffEntry {
@@ -93,6 +94,7 @@ export default function ViewScoresPage() {
   const [contestants, setContestants] = useState<ContestantScore[]>([]);
   const [scorecard, setScorecard] = useState<ScorecardInnings[]>([]);
   const [myTeam, setMyTeam] = useState<Set<string>>(new Set());
+  const [contestantRankChanges, setContestantRankChanges] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [scoresSnapshotVersion, setScoresSnapshotVersion] = useState<number | null>(null);
@@ -117,6 +119,7 @@ export default function ViewScoresPage() {
   const [selectedOther, setSelectedOther] = useState<number | null>(null);
   const [diffData, setDiffData] = useState<TeamDiffData | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
+  const previousContestantRanksRef = useRef<Record<number, number> | null>(null);
 
   const isSnapshotConflict = (error: unknown) =>
     Boolean((error as { response?: { status?: number } })?.response?.status === 409);
@@ -127,8 +130,31 @@ export default function ViewScoresPage() {
         client.get(`/api/scores/${matchId}`),
         client.get(`/api/scores/${matchId}/my-team`).catch(() => ({ data: [] })),
       ]);
+      const nextContestants: ContestantScore[] = scoresRes.data.contestants || [];
+      const nextRankedContestants = [...nextContestants].sort((a, b) => b.points - a.points);
+      const nextRankMap: Record<number, number> = {};
+      nextRankedContestants.forEach((entry, i) => {
+        let rank = i + 1;
+        if (i > 0 && entry.points === nextRankedContestants[i - 1].points) {
+          rank = nextRankMap[nextRankedContestants[i - 1].id];
+        }
+        nextRankMap[entry.id] = rank;
+      });
+
+      const previousRankMap = previousContestantRanksRef.current || {};
+      const nextRankChanges: Record<number, number> = {};
+      Object.entries(nextRankMap).forEach(([idStr, rank]) => {
+        const contestantId = Number(idStr);
+        const prevRank = previousRankMap[contestantId];
+        if (prevRank && prevRank !== rank) {
+          nextRankChanges[contestantId] = prevRank - rank;
+        }
+      });
+      previousContestantRanksRef.current = nextRankMap;
+
       setPlayerScores(scoresRes.data.players || []);
-      setContestants(scoresRes.data.contestants || []);
+      setContestants(nextContestants);
+      setContestantRankChanges(nextRankChanges);
       setScorecard(scoresRes.data.scorecard || []);
       setScoresSnapshotVersion(scoresRes.data.snapshot_version ?? null);
       const team = teamRes.data || [];
@@ -242,6 +268,7 @@ export default function ViewScoresPage() {
     setContestants([]);
     setScorecard([]);
     setMyTeam(new Set());
+    setContestantRankChanges({});
     setLastUpdated(null);
     setScoresSnapshotVersion(null);
     setScoresRefreshing(false);
@@ -252,6 +279,7 @@ export default function ViewScoresPage() {
     setSelectedContestantBreakdown(null);
     setOpenScorecardIndex(0);
     setSelectedOther(null);
+    previousContestantRanksRef.current = null;
   }, [matchId]);
 
   useEffect(() => {
@@ -329,12 +357,12 @@ export default function ViewScoresPage() {
       return { rank: selected.rank, diffToAbove: null, diffToFirst: null };
     }
 
-    const above = rankedContestants[selectedIndex - 1];
+    const above = [...rankedContestants.slice(0, selectedIndex)].reverse().find((contestant) => contestant.points > selected.points) ?? null;
     const first = rankedContestants[0];
 
     return {
       rank: selected.rank,
-      diffToAbove: selected.points - above.points,
+      diffToAbove: above ? selected.points - above.points : null,
       diffToFirst: selected.points - first.points,
     };
   }, [rankedContestants, selectedContestantId]);
@@ -752,7 +780,10 @@ export default function ViewScoresPage() {
                               )}
                             </div>
                           </div>
-                          <span className="ml-4 flex-shrink-0 text-blue-400 font-bold text-sm">{c.points} pts</span>
+                          <div className="ml-3 flex shrink-0 items-center gap-1.5">
+                            <RankShiftBadge delta={contestantRankChanges[c.id] ?? undefined} compact />
+                            <span className="text-blue-400 font-bold text-sm whitespace-nowrap">{c.points} pts</span>
+                          </div>
                           <span className={`ml-3 text-[10px] text-white/40 transition-transform ${isSelected ? 'rotate-90' : ''}`}>&#9654;</span>
                         </button>
 
@@ -789,14 +820,13 @@ export default function ViewScoresPage() {
                                   <div className="grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-2">
                                     <div className="rounded-lg bg-black/30 px-2 py-1.5">
                                       <p className="text-[9px] uppercase tracking-[0.16em] text-white/30">Vs Above</p>
-                                      {(() => {
-                                        const diffToAbove = selectedContestantSummary.diffToAbove ?? 0;
-                                        return (
-                                          <p className={`text-xs font-bold ${diffToAbove < 0 ? 'text-red-300' : 'text-green-300'}`}>
-                                            {diffToAbove > 0 ? '+' : ''}{diffToAbove.toFixed(2)}
-                                          </p>
-                                        );
-                                      })()}
+                                      {selectedContestantSummary.diffToAbove == null ? (
+                                        <p className="text-xs font-bold text-white/40">—</p>
+                                      ) : (
+                                        <p className={`text-xs font-bold ${selectedContestantSummary.diffToAbove < 0 ? 'text-red-300' : 'text-green-300'}`}>
+                                          {selectedContestantSummary.diffToAbove > 0 ? '+' : ''}{selectedContestantSummary.diffToAbove.toFixed(2)}
+                                        </p>
+                                      )}
                                     </div>
                                     <div className="rounded-lg bg-black/30 px-2 py-1.5">
                                       <p className="text-[9px] uppercase tracking-[0.16em] text-white/30">Vs #1</p>

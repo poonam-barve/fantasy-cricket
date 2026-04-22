@@ -4,6 +4,7 @@ import client from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { getTeamTheme } from '../utils/teamTheme';
 import type { PointsTableEntry, Match } from '../types';
+import RankShiftBadge from '../components/RankShiftBadge';
 
 const PAGE_SIZE = 10;
 
@@ -35,6 +36,7 @@ export default function PointsTablePage() {
   const matchMap = new Map<string, Record<string, number>>();
   const netMap = new Map<string, Record<string, number>>();
   const adjustedMap = new Map<string, Record<string, boolean>>();
+  const rankChangeMap = new Map<string, number | null>();
 
   data.forEach((entry) => {
     contestantSet.add(entry.name);
@@ -45,6 +47,9 @@ export default function PointsTablePage() {
     matchMap.get(mid)![entry.name] = entry.points;
     netMap.get(mid)![entry.name] = entry.net || 0;
     adjustedMap.get(mid)![entry.name] = Boolean(entry.adjusted);
+    if (entry.rank_change !== undefined) {
+      rankChangeMap.set(`${mid}:${entry.name}`, entry.rank_change);
+    }
   });
 
   const contestants = Array.from(contestantSet);
@@ -58,6 +63,18 @@ export default function PointsTablePage() {
   );
   const rangeStart = matchPage * PAGE_SIZE + 1;
   const rangeEnd = Math.min((matchPage + 1) * PAGE_SIZE, matchIds.length);
+  const latestMatchId = useMemo(() => {
+    if (matchIds.length === 0) return null;
+    return [...matchIds].sort((a, b) => Number(b) - Number(a))[0];
+  }, [matchIds]);
+  const latestRankChangeByContestant = useMemo(() => {
+    const latest = new Map<string, number | null>();
+    if (!latestMatchId) return latest;
+    contestants.forEach((name) => {
+      latest.set(name, rankChangeMap.get(`${latestMatchId}:${name}`) ?? null);
+    });
+    return latest;
+  }, [contestants, latestMatchId, rankChangeMap]);
 
   // Compute per-match ranks
   const matchRanks = new Map<string, Record<string, number>>();
@@ -76,13 +93,10 @@ export default function PointsTablePage() {
   });
 
   const totalPoints: Record<string, number> = {};
-  const totalBalance: Record<string, number> = {};
   contestants.forEach((c) => {
     totalPoints[c] = 0;
-    totalBalance[c] = 0;
     matchIds.forEach((m) => {
       totalPoints[c] += matchMap.get(m)?.[c] || 0;
-      totalBalance[c] += netMap.get(m)?.[c] || 0;
     });
   });
 
@@ -149,14 +163,11 @@ export default function PointsTablePage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-white/5">
-                  <th className="sticky left-0 z-20 bg-black px-4 py-3 text-left text-xs font-medium text-white/30 uppercase tracking-wider whitespace-nowrap border-r border-white/5 min-w-[7rem]">
+                  <th className="sticky left-0 z-20 bg-black px-4 py-3 text-left text-xs font-medium text-white/30 uppercase tracking-wider whitespace-nowrap border-r border-white/5 min-w-[9.5rem]">
                     Player
                   </th>
-                  <th className="sticky left-[7rem] z-20 bg-black px-2 py-3 text-center text-xs font-medium text-white/30 uppercase tracking-wider whitespace-nowrap border-r border-white/5 min-w-[4.5rem]">
+                  <th className="sticky left-[9.5rem] z-20 bg-black px-2 py-3 text-center text-xs font-medium text-white/30 uppercase tracking-wider whitespace-nowrap border-r border-white/5 min-w-[4.5rem]">
                     Total
-                  </th>
-                  <th className="sticky left-[11.5rem] z-20 bg-black px-2 py-3 text-center text-xs font-medium text-white/30 uppercase tracking-wider whitespace-nowrap border-r border-white/5 min-w-[4.5rem]">
-                    ₹
                   </th>
                   {visibleMatchIds.map((mid) => {
                     const mi = matchInfo[mid];
@@ -180,22 +191,17 @@ export default function PointsTablePage() {
               <tbody className="divide-y divide-white/5">
                 {sortedContestants.map((c) => {
                   const isMe = c === currentUserName;
-                  const bal = totalBalance[c];
                   return (
                     <tr key={c} className={`transition-colors ${isMe ? 'bg-white/10' : 'hover:bg-white/5'}`}>
-                      <td className={`sticky left-0 z-10 px-4 py-3 text-white font-medium whitespace-nowrap border-r border-white/5 min-w-[7rem] ${isMe ? 'bg-black' : 'bg-black'}`}>
-                        <div className="flex items-center gap-1.5">
-                          <span className="truncate max-w-[5rem]">{c}</span>
+                      <td className={`sticky left-0 z-10 px-4 py-3 text-white font-medium whitespace-nowrap border-r border-white/5 min-w-[9.5rem] ${isMe ? 'bg-black' : 'bg-black'}`}>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <RankShiftBadge delta={latestRankChangeByContestant.get(c) ?? undefined} compact className="shrink-0" />
+                          <span className="truncate max-w-[8rem] sm:max-w-[10rem]">{c}</span>
                           {isMe && <span className="px-1 py-0.5 text-[8px] font-bold bg-white/20 text-white rounded">YOU</span>}
                         </div>
                       </td>
-                      <td className={`sticky left-[7rem] z-10 px-2 py-3 text-center font-bold text-white whitespace-nowrap border-r border-white/5 min-w-[4.5rem] ${isMe ? 'bg-black' : 'bg-black'}`}>
+                      <td className={`sticky left-[9.5rem] z-10 px-2 py-3 text-center font-bold text-white whitespace-nowrap border-r border-white/5 min-w-[4.5rem] ${isMe ? 'bg-black' : 'bg-black'}`}>
                         {totalPoints[c]}
-                      </td>
-                      <td className={`sticky left-[11.5rem] z-10 px-2 py-3 text-center font-bold whitespace-nowrap border-r border-white/5 min-w-[4.5rem] ${isMe ? 'bg-black' : 'bg-black'} ${
-                        bal > 0 ? 'text-green-400' : bal < 0 ? 'text-red-400' : 'text-white/30'
-                      }`}>
-                        {bal > 0 ? '+' : ''}{bal}
                       </td>
                       {visibleMatchIds.map((mid) => {
                         const pts = matchMap.get(mid)?.[c] || 0;

@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import client from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import type { LeaderboardEntry } from '../types';
+import RankShiftBadge from '../components/RankShiftBadge';
 
 type SortKey = 'points' | 'gold' | 'silver' | 'bronze' | 'total' | 'weekend_wins' | 'balance';
 type SortDir = 'asc' | 'desc';
@@ -130,7 +131,10 @@ export default function LeaderboardPage() {
                 <div className="flex flex-col items-center w-[30%] max-w-[7.5rem]">
                   <span className="text-2xl mb-1">&#x1F948;</span>
                   <p className="text-white text-xs sm:text-sm font-semibold text-center truncate w-full">{top3[1].name}</p>
-                  <p className="text-blue-400 text-[11px] font-bold">{top3[1].points} pts</p>
+                  <div className="flex items-center gap-1 text-[11px] font-bold">
+                    <RankShiftBadge delta={top3[1].rank_change} compact />
+                    <p className="text-blue-400">{top3[1].points} pts</p>
+                  </div>
                   <div className="flex items-center gap-1 mt-0.5 mb-2">
                     {top3[1].gold > 0 && <span className="text-[10px]">&#x1F947;{top3[1].gold}</span>}
                     {top3[1].silver > 0 && <span className="text-[10px]">&#x1F948;{top3[1].silver}</span>}
@@ -144,7 +148,10 @@ export default function LeaderboardPage() {
                 <div className="flex flex-col items-center w-[34%] max-w-[8.5rem] -mx-[1px]">
                   <span className="text-3xl mb-1">&#x1F947;</span>
                   <p className="text-white text-xs sm:text-sm font-bold text-center truncate w-full">{top3[0].name}</p>
-                  <p className="text-blue-400 text-[11px] font-bold">{top3[0].points} pts</p>
+                  <div className="flex items-center gap-1 text-[11px] font-bold">
+                    <RankShiftBadge delta={top3[0].rank_change} compact />
+                    <p className="text-blue-400">{top3[0].points} pts</p>
+                  </div>
                   <div className="flex items-center gap-1 mt-0.5 mb-2">
                     {top3[0].gold > 0 && <span className="text-[10px]">&#x1F947;{top3[0].gold}</span>}
                     {top3[0].silver > 0 && <span className="text-[10px]">&#x1F948;{top3[0].silver}</span>}
@@ -158,7 +165,10 @@ export default function LeaderboardPage() {
                 <div className="flex flex-col items-center w-[30%] max-w-[7.5rem]">
                   <span className="text-2xl mb-1">&#x1F949;</span>
                   <p className="text-white text-xs sm:text-sm font-semibold text-center truncate w-full">{top3[2].name}</p>
-                  <p className="text-blue-400 text-[11px] font-bold">{top3[2].points} pts</p>
+                  <div className="flex items-center gap-1 text-[11px] font-bold">
+                    <RankShiftBadge delta={top3[2].rank_change} compact />
+                    <p className="text-blue-400">{top3[2].points} pts</p>
+                  </div>
                   <div className="flex items-center gap-1 mt-0.5 mb-2">
                     {top3[2].gold > 0 && <span className="text-[10px]">&#x1F947;{top3[2].gold}</span>}
                     {top3[2].silver > 0 && <span className="text-[10px]">&#x1F948;{top3[2].silver}</span>}
@@ -185,7 +195,7 @@ export default function LeaderboardPage() {
             <div className="flex items-center px-2 sm:px-3 py-2.5 border-b border-white/5 text-[10px] sm:text-xs text-white/30 uppercase tracking-wider">
               <div className="w-6 sm:w-8 text-center">#</div>
               <div className="flex-1 ml-1 sm:ml-2">Player</div>
-              {colHeader('points', <span>Pts</span>, 'w-10 sm:w-14')}
+              {colHeader('points', <span>Pts</span>, 'w-14 sm:w-20')}
               {colHeader('gold', <span>&#x1F947;</span>, 'w-6 sm:w-8')}
               {colHeader('silver', <span>&#x1F948;</span>, 'w-6 sm:w-8')}
               {colHeader('bronze', <span>&#x1F949;</span>, 'w-6 sm:w-8')}
@@ -212,8 +222,11 @@ export default function LeaderboardPage() {
                         {isMe && <span className="flex-shrink-0 px-1 py-0.5 text-[8px] sm:text-[10px] font-bold bg-white/20 text-white rounded-md border border-white/20">YOU</span>}
                       </div>
                     </div>
-                    <div className="w-10 sm:w-14 text-center">
-                      <span className="text-blue-400 text-xs sm:text-sm font-semibold">{entry.points}</span>
+                    <div className="w-14 sm:w-20 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <RankShiftBadge delta={entry.rank_change} compact />
+                        <span className="text-blue-400 text-xs sm:text-sm font-semibold">{entry.points}</span>
+                      </div>
                     </div>
                     <div className="w-6 sm:w-8 text-center">
                       <span className={`text-[10px] sm:text-xs font-semibold ${entry.gold ? 'text-amber-400' : 'text-white/15'}`}>{entry.gold || '-'}</span>
