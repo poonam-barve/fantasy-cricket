@@ -11,69 +11,216 @@ const ROUND_COLORS: Record<number, string> = {
   4: 'text-green-400',
 };
 
+const ROUND_MATCHUP_COUNTS: Record<number, number> = {
+  1: 8,
+  2: 4,
+  3: 2,
+  4: 1,
+};
+
+function getBracketSlots(matchupCount: number) {
+  if (matchupCount <= 0) return [];
+  const totalRows = ROUND_MATCHUP_COUNTS[1] * 2 - 1;
+  const step = totalRows / matchupCount;
+  return Array.from({ length: matchupCount }, (_, index) => Math.round((index + 0.5) * step - 0.5));
+}
+
 function MatchupCard({ matchup, isMe }: { matchup: WeekendTournamentMatchup; isMe: (id: number) => boolean }) {
   const done = matchup.status === 'completed';
   const live = matchup.status === 'live';
+  const u1Winner = done && matchup.winner_user_id === matchup.user1?.id;
+  const u2Winner = done && matchup.winner_user_id === matchup.user2?.id;
+  const hasResult = done && !!matchup.winner_user_id;
 
   const renderPlayer = (
     user: { id: number; name: string } | null,
     points: number,
     isWinner: boolean,
     isLoser: boolean,
+    positionLabel: string,
   ) => {
-    if (!user) return <div className="px-2 py-1.5 text-xs text-white/20 italic">TBD</div>;
+    if (!user) {
+      return (
+        <div className="flex items-center justify-between rounded-md border border-dashed border-white/10 px-2 py-2 text-xs text-white/20 italic">
+          <span>TBD</span>
+          <span className="text-[9px] uppercase tracking-[0.18em] text-white/10">{positionLabel}</span>
+        </div>
+      );
+    }
     const me = isMe(user.id);
+    const blockTone = isWinner
+      ? 'border-green-400/25 bg-green-500/15 text-green-50'
+      : isLoser
+        ? 'border-red-400/20 bg-red-500/12 text-red-50'
+        : 'border-white/10 bg-white/[0.03] text-white';
     return (
-      <div className={`flex items-center justify-between px-2 py-1.5 ${isWinner ? 'bg-green-500/10' : isLoser ? 'bg-red-500/5 opacity-50' : ''}`}>
+      <div className={`flex items-center justify-between rounded-md border px-2 py-2 transition-colors ${blockTone}`}>
         <div className="flex items-center gap-1 min-w-0">
-          <span className={`text-xs font-medium truncate ${isWinner ? 'text-green-400' : 'text-white'}`}>{user.name}</span>
+          <span className={`text-xs font-medium truncate ${isWinner ? 'text-green-200' : isLoser ? 'text-red-100' : 'text-white'}`}>
+            {user.name}
+          </span>
           {me && <span className="px-1 py-0.5 text-[7px] font-bold bg-white/20 text-white rounded">YOU</span>}
+          {isWinner && done && <span className="px-1 py-0.5 text-[7px] font-bold rounded bg-green-500/20 text-green-100">WIN</span>}
+          {isLoser && done && <span className="px-1 py-0.5 text-[7px] font-bold rounded bg-red-500/20 text-red-100">OUT</span>}
         </div>
         {(done || live) && (
-          <span className={`text-[11px] font-bold ml-1 flex-shrink-0 ${isWinner ? 'text-green-400' : 'text-white/40'}`}>{points}</span>
+          <span className={`text-[11px] font-bold ml-1 flex-shrink-0 ${isWinner ? 'text-green-100' : isLoser ? 'text-red-100/80' : 'text-white/50'}`}>{points}</span>
         )}
       </div>
     );
   };
 
-  const u1Winner = done && matchup.winner_user_id === matchup.user1?.id;
-  const u2Winner = done && matchup.winner_user_id === matchup.user2?.id;
+  return (
+    <div className={`rounded-xl border overflow-hidden ${live ? 'border-green-500/40 shadow-sm shadow-green-500/10' : hasResult ? 'border-white/15' : 'border-white/10'} bg-gradient-to-br from-white/[0.06] to-white/[0.03]`}>
+      <div className="space-y-1 p-2">
+        {renderPlayer(matchup.user1, matchup.user1_points, u1Winner, done && !u1Winner, 'A')}
+        {renderPlayer(matchup.user2, matchup.user2_points, u2Winner, done && !u2Winner, 'B')}
+      </div>
+    </div>
+  );
+}
+
+function ConnectorBridge({
+  fromSlots,
+  toSlots,
+  rowHeight,
+  cardHeight,
+  topOffset,
+  bridgeWidth,
+}: {
+  fromSlots: number[];
+  toSlots: number[];
+  rowHeight: number;
+  cardHeight: number;
+  topOffset: number;
+  bridgeWidth: number;
+}) {
+  if (fromSlots.length === 0 || toSlots.length === 0) return null;
+
+  const totalRows = ROUND_MATCHUP_COUNTS[1] * 2 - 1;
+  const height = topOffset + totalRows * rowHeight + cardHeight;
+  const sourceX = 0;
+  const elbowX = 8;
+  const targetX = bridgeWidth;
+
+  const paths = fromSlots.map((slot, index) => {
+    const targetSlot = toSlots[Math.floor(index / 2)];
+    if (targetSlot === undefined) return null;
+
+    const sourceY = topOffset + slot * rowHeight + cardHeight / 2;
+    const targetY = topOffset + targetSlot * rowHeight + cardHeight / 2;
+
+    return `M ${sourceX} ${sourceY} H ${elbowX} V ${targetY} H ${targetX}`;
+  }).filter(Boolean) as string[];
 
   return (
-    <div className={`rounded-lg border overflow-hidden ${live ? 'border-green-500/40 shadow-sm shadow-green-500/10' : 'border-white/10'} bg-white/5`}>
-      {live && <div className="bg-green-500/20 text-center text-[9px] font-bold text-green-400 py-0.5 tracking-wider">LIVE</div>}
-      {renderPlayer(matchup.user1, matchup.user1_points, u1Winner, done && !u1Winner)}
-      <div className="h-px bg-white/10" />
-      {renderPlayer(matchup.user2, matchup.user2_points, u2Winner, done && !u2Winner)}
+    <div className="hidden sm:block relative shrink-0" style={{ width: bridgeWidth, height }}>
+      <svg className="absolute inset-0 h-full w-full overflow-visible" viewBox={`0 0 ${bridgeWidth} ${height}`} fill="none" aria-hidden="true">
+        {paths.map((d, index) => (
+          <path
+            key={index}
+            d={d}
+            stroke="rgba(255,255,255,0.18)"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ))}
+      </svg>
     </div>
   );
 }
 
 function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; isMe: (id: number) => boolean }) {
+  const [isCompact, setIsCompact] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 640 : false);
+
+  useEffect(() => {
+    const update = () => setIsCompact(window.innerWidth < 640);
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
   if (rounds.length === 0) return <div className="text-center text-white/30 py-8 text-sm">Bracket not yet drawn</div>;
+
+  const roundsByNumber = new Map(rounds.map((round) => [round.round, round]));
+  const visibleRounds = [1, 2, 3, 4];
+  const fallbackRoundLabels: Record<number, string> = {
+    1: 'Round of 16',
+    2: 'Quarter Finals',
+    3: 'Semi Finals',
+    4: 'Final',
+  };
+  const rowHeight = isCompact ? 58 : 72;
+  const cardHeight = isCompact ? 52 : 64;
+  const topOffset = isCompact ? 18 : 28;
+  const bridgeWidth = isCompact ? 14 : 16;
+  const totalRows = ROUND_MATCHUP_COUNTS[1] * 2 - 1;
+  const totalHeight = topOffset + totalRows * rowHeight + cardHeight;
 
   return (
     <div className="overflow-x-auto pb-4">
-      <div className="flex gap-4 sm:gap-6 min-w-max px-2">
-        {rounds.map((round) => {
-          const roundMatchups = round.matchups;
-          // Calculate spacing to vertically center matchups with connectors
-          const gapClass = round.round === 1 ? 'gap-2' : round.round === 2 ? 'gap-6' : round.round === 3 ? 'gap-14' : 'gap-0';
+      <div className="flex items-start min-w-max px-2">
+        {visibleRounds.map((roundNumber) => {
+          const round = roundsByNumber.get(roundNumber);
+          const roundLabel = round?.round_label || fallbackRoundLabels[roundNumber] || `Round ${roundNumber}`;
+          const roundMatchups = round?.matchups || [];
+          const expectedCount = ROUND_MATCHUP_COUNTS[roundNumber] || 0;
+          const renderedMatchups = roundMatchups.length > 0
+            ? roundMatchups
+            : Array.from({ length: expectedCount }, (_, idx) => ({
+                position: idx + 1,
+                user1: null,
+                user2: null,
+                user1_points: 0,
+                user2_points: 0,
+                winner_user_id: null,
+                status: 'pending' as const,
+              }));
+          const roundSlots = getBracketSlots(renderedMatchups.length);
+          const nextRound = roundsByNumber.get(roundNumber + 1);
+          const nextRenderedMatchups = nextRound?.matchups?.length
+            ? nextRound.matchups
+            : Array.from({ length: ROUND_MATCHUP_COUNTS[roundNumber + 1] || 0 }, (_, idx) => ({
+                position: idx + 1,
+                user1: null,
+                user2: null,
+                user1_points: 0,
+                user2_points: 0,
+                winner_user_id: null,
+                status: 'pending' as const,
+              }));
+          const nextSlots = getBracketSlots(nextRenderedMatchups.length);
 
           return (
-            <div key={round.round} className="flex flex-col">
-              {/* Round header */}
-              <div className="text-center mb-3">
-                <div className={`text-[10px] font-bold uppercase tracking-wider ${ROUND_COLORS[round.round] || 'text-white/40'}`}>
-                  {round.round_label}
+            <div key={roundNumber} className="flex items-start">
+              <div className="relative shrink-0 w-[112px] sm:w-[136px] md:w-[152px] lg:w-[160px]" style={{ height: totalHeight }}>
+                <div className="absolute top-0 left-0 right-0 text-center">
+                  <div className={`text-[10px] font-bold uppercase tracking-wider ${ROUND_COLORS[roundNumber] || 'text-white/40'}`}>
+                    {roundLabel}
+                  </div>
                 </div>
+                {renderedMatchups.map((matchup, index) => {
+                  const top = topOffset + roundSlots[index] * rowHeight;
+                  return (
+                    <div
+                      key={matchup.position}
+                      className="absolute left-0 right-0"
+                      style={{ top, height: cardHeight }}
+                    >
+                      <MatchupCard matchup={matchup} isMe={isMe} />
+                    </div>
+                  );
+                })}
               </div>
-              {/* Matchups */}
-              <div className={`flex flex-col ${gapClass} justify-center flex-1`} style={{ width: '140px' }}>
-                {roundMatchups.map((matchup) => (
-                  <MatchupCard key={matchup.position} matchup={matchup} isMe={isMe} />
-                ))}
-              </div>
+              <ConnectorBridge
+                fromSlots={roundSlots}
+                toSlots={nextSlots}
+                rowHeight={rowHeight}
+                cardHeight={cardHeight}
+                topOffset={topOffset}
+                bridgeWidth={bridgeWidth}
+              />
             </div>
           );
         })}
@@ -88,7 +235,7 @@ function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; is
             : finalMatchup.user2?.name;
 
           return (
-            <div className="flex flex-col justify-center items-center" style={{ width: '100px' }}>
+            <div className="flex flex-col justify-center items-center pl-2 sm:pl-4" style={{ width: '120px' }}>
               <span className="text-3xl mb-1">&#x1F3C6;</span>
               <span className="text-xs font-bold text-amber-400 text-center">{winnerName}</span>
               <span className="text-[9px] text-amber-400/60 mt-0.5">Weekend Champion</span>

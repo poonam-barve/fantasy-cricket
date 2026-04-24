@@ -116,7 +116,7 @@ def _get_match_participant_ids(db, match_id: int) -> set[int]:
 
 def _get_completed_match_ids(db) -> list[int]:
     rows = db.execute(
-        "SELECT id, match_date, match_time, status FROM matches ORDER BY id"
+        "SELECT id, match_date, match_time, status FROM matches ORDER BY match_date, match_time, id"
     ).fetchall()
     now = datetime.now(IST)
     completed_ids: list[int] = []
@@ -261,13 +261,20 @@ def _build_rank_movement_context(db, effective_match_points: dict[int, list[dict
     rank_change_by_match: dict[int, dict[int, int]] = {}
     previous_rank_map: dict[int, int] | None = None
     current_rank_map: dict[int, int] = {}
-    completed_match_ids = sorted(effective_match_points.keys())
+    completed_match_ids = [
+        match_id
+        for match_id in _get_completed_match_ids(db)
+        if match_id in effective_match_points
+    ]
 
     for match_id in completed_match_ids:
         for contestant in effective_match_points.get(match_id, []):
             cumulative_points[int(contestant["user_id"])] += float(contestant["points"])
 
         current_rank_map = _build_rank_map(active_users, cumulative_points)
+        # Compare the cumulative leaderboard after this match to the cumulative
+        # leaderboard immediately before it. This keeps arrows tied to total
+        # points progression, not update timing.
         if previous_rank_map is not None:
             delta_map: dict[int, int] = {}
             for user_id, current_rank in current_rank_map.items():

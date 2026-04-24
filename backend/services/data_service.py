@@ -730,13 +730,19 @@ def apply_backups_for_match(match_id: int | str, playing_ids: list[int], substit
 
             invalid_rows = [
                 row for row in user_team_rows
-                if int(row["player_id"]) in substitute_set or int(row["player_id"]) not in playing_set
+                if int(row["player_id"]) not in playing_set
             ]
             if not invalid_rows:
                 break
 
+            preferred_invalid_rows = [
+                row for row in invalid_rows
+                if int(row["player_id"]) not in substitute_set
+            ]
+            candidate_rows = preferred_invalid_rows or invalid_rows
+
             chosen_invalid_row = None
-            for invalid_row in invalid_rows:
+            for invalid_row in candidate_rows:
                 old_player_id = int(invalid_row["player_id"])
                 if can_swap_without_breaking_roles(role_counts, old_player_id, new_player_id):
                     chosen_invalid_row = invalid_row

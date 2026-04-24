@@ -243,7 +243,14 @@ class Tournament:
             return True
         return datetime.now(IST) >= match_datetime
 
-    def update_match_data(self, match_id, use_playing_xi=False, include_scorecards=True, force_refresh_playing_xi=False):
+    def update_match_data(
+        self,
+        match_id,
+        use_playing_xi=False,
+        include_scorecards=True,
+        force_refresh_playing_xi=False,
+        apply_backups=False,
+    ):
         match = self.matches.get(match_id)
         if not match:
             return
@@ -267,7 +274,7 @@ class Tournament:
             playing_ids = playing_xi.get("player_ids", [])
             substitute_ids = playing_xi.get("substitute_ids", [])
             print(f"[Playing XI] Match {match_id}: fetch result url={playing_xi.get('url')} players={len(playing_ids)}")
-            if len(playing_ids) == 22 and len(substitute_ids) == 10:
+            if apply_backups and len(playing_ids) == 22 and len(substitute_ids) == 10:
                 swaps_applied = data_service.apply_backups_for_match(match_id, playing_ids, substitute_ids)
                 if swaps_applied:
                     print(f"[Backups] Match {match_id}: applied {swaps_applied} backup swaps")
@@ -557,6 +564,7 @@ class Tournament:
                         use_playing_xi=True,
                         include_scorecards=False,
                         force_refresh_playing_xi=True,
+                        apply_backups=False,
                     )
                     if finalized_from_scorecard:
                         processed += 1
@@ -568,6 +576,7 @@ class Tournament:
                         use_playing_xi=True,
                         include_scorecards=True,
                         force_refresh_playing_xi=True,
+                        apply_backups=True,
                     )
                     if finalized_from_scorecard:
                         processed += 1
@@ -588,6 +597,7 @@ class Tournament:
                         use_playing_xi=True,
                         include_scorecards=True,
                         force_refresh_playing_xi=True,
+                        apply_backups=True,
                     )
                     if finalized_from_scorecard:
                         processed += 1
@@ -659,6 +669,7 @@ class Tournament:
                     use_playing_xi=True,
                     include_scorecards=False,
                     force_refresh_playing_xi=True,
+                    apply_backups=False,
                 )
                 refreshed += 1
             except Exception as exc:
