@@ -364,22 +364,235 @@ class Match:
         return None
 
     def parse_espn_bowling_dot_balls(self, soup: BeautifulSoup):
+        lines = [line.strip() for line in soup.get_text("\n").splitlines() if line.strip()]
+
+        def _apply_bowling_row(player_name, bowling_team, overs, maidens, runs, wickets, economy, dot_balls=None, player_id=None):
+            pid = player_id or self.get_player_id(player_name, bowling_team)
+            if not pid:
+                return False
+
+            player = self.get_or_create_player(pid)
+            if not player:
+                return False
+
+            player.team = bowling_team
+            player.played = True
+            player.overs = overs
+            player.maidens = maidens
+            player.runs_conceded = runs
+            player.wickets = wickets
+            player.economy = economy
+            if dot_balls is not None and player.dot_balls <= 0:
+                player.dot_balls = dot_balls
+            return True
+
+        def _parse_compact_bowling_row(line, bowling_team):
+            normalized = " ".join(str(line).strip().split())
+            compact_match = re.match(
+                r"^(?P<name>.+?)\s+(?P<overs>\d+(?:\.\d+)?)\s+(?P<maidens>\d+)\s+(?P<runs>\d+)\s+(?P<wickets>\d+)\s+(?P<economy>\d+(?:\.\d+)?)\s+(?P<dot_balls>\d+)\s+(?P<fours>\d+)\s+(?P<sixes>\d+)\s+(?P<wd>\d+)\s+(?P<nb>\d+)\s*$",
+                normalized,
+            )
+            if not compact_match:
+                return False
+
+            try:
+                name = clean_name(compact_match.group("name"))
+                overs = float(compact_match.group("overs"))
+                maidens = int(compact_match.group("maidens"))
+                runs = int(compact_match.group("runs"))
+                wickets = int(compact_match.group("wickets"))
+                economy = float(compact_match.group("economy"))
+                dot_balls = int(compact_match.group("dot_balls"))
+            except Exception:
+                return False
+
+            if not name or name.upper() in {"BOWLING", "O", "M", "R", "W", "ECON", "0S", "4S", "6S", "WD", "NB"}:
+                return False
+            if overs < 0 or overs > 4.0:
+                return False
+            if maidens < 0 or maidens > 4:
+                return False
+            if runs < 0 or runs > 80:
+                return False
+            if wickets < 0 or wickets > 5:
+                return False
+            if dot_balls < 0 or dot_balls > 24:
+                return False
+
+            return _apply_bowling_row(name, bowling_team, overs, maidens, runs, wickets, economy, dot_balls=dot_balls)
+
+        def _parse_pipe_bowling_row(line, bowling_team, has_dot_balls_column):
+            if "|" not in line:
+                return False
+
+            tokens = [token.strip() for token in line.split("|")]
+            tokens = [token for token in tokens if token]
+            if len(tokens) < 6:
+                return False
+
+            name = clean_name(tokens[0])
+            if not name or name.upper() in {"BOWLING", "O", "M", "R", "W", "ECON", "0S", "4S", "6S", "WD", "NB"}:
+                return False
+
+            numeric = tokens[1:]
+            try:
+                overs = float(numeric[0])
+                maidens = int(numeric[1])
+                runs = int(numeric[2])
+                wickets = int(numeric[3])
+                economy = float(numeric[4])
+            except Exception:
+                return False
+
+            dot_balls = None
+            if len(numeric) >= 10:
+                try:
+                    dot_balls = int(numeric[5])
+                except Exception:
+                    return False
+            elif has_dot_balls_column and len(numeric) >= 6:
+                try:
+                    dot_balls = int(numeric[5])
+                except Exception:
+                    dot_balls = None
+
+            if overs < 0 or overs > 4.0:
+                return False
+            if maidens < 0 or maidens > 4:
+                return False
+            if runs < 0 or runs > 80:
+                return False
+            if wickets < 0 or wickets > 5:
+                return False
+            if dot_balls is not None and (dot_balls < 0 or dot_balls > 24):
+                return False
+
+            return _apply_bowling_row(name, bowling_team, overs, maidens, runs, wickets, economy, dot_balls=dot_balls)
+
+        def parse_dot_ball_section(start_idx, end_idx):
+            parsed_any = False
+            for idx in range(start_idx, end_idx):
+                line = lines[idx]
+                match_obj = None
+                if re.match(r"^Bowling\b", line, flags=re.IGNORECASE):
+                    match_obj = re.match(
+                        r"^(?P<name>.+?)(?:\s+|\s*)(?P<overs>\d+(?:\.\d+)?)\s+(?P<maidens>\d+)\s+(?P<runs>\d+)\s+(?P<wickets>\d+)\s+(?P<economy>\d+(?:\.\d+)?)\s+(?P<dot_balls>\d+)\s+(?P<fours>\d+)\s+(?P<sixes>\d+)\s+(?P<wd>\d+)\s+(?P<nb>\d+)\s*$",
+                        line,
+                    )
+                    if not match_obj:
+                        match_obj = re.match(
+                            r"^(?P<name>.+?)(?:\s+|\s*)(?P<overs>\d+(?:\.\d+)?)\s+(?P<maidens>\d+)\s+(?P<runs>\d+)\s+(?P<wickets>\d+)\s+(?P<economy>\d+(?:\.\d+)?)\s+(?P<fours>\d+)\s+(?P<sixes>\d+)\s+(?P<wd>\d+)\s+(?P<nb>\d+)\s*$",
+                            line,
+                        )
+                else:
+                    match_obj = re.match(
+                        r"^(?P<name>.+?)(?:\s+|\s*)(?P<overs>\d+(?:\.\d+)?)\s+(?P<maidens>\d+)\s+(?P<runs>\d+)\s+(?P<wickets>\d+)\s+(?P<economy>\d+(?:\.\d+)?)\s+(?P<dot_balls>\d+)\s+(?P<fours>\d+)\s+(?P<sixes>\d+)\s+(?P<wd>\d+)\s+(?P<nb>\d+)\s*$",
+                        line,
+                    )
+                    if not match_obj:
+                        match_obj = re.match(
+                            r"^(?P<name>.+?)(?:\s+|\s*)(?P<overs>\d+(?:\.\d+)?)\s+(?P<maidens>\d+)\s+(?P<runs>\d+)\s+(?P<wickets>\d+)\s+(?P<economy>\d+(?:\.\d+)?)\s+(?P<fours>\d+)\s+(?P<sixes>\d+)\s+(?P<wd>\d+)\s+(?P<nb>\d+)\s*$",
+                            line,
+                        )
+
+                if not match_obj:
+                    continue
+
+                name = clean_name(match_obj.group("name"))
+                if not name or name.upper() in {"BOWLING", "O", "M", "R", "W", "ECON", "0S", "4S", "6S", "WD", "NB"}:
+                    continue
+
+                pid = self.get_player_id(name, self.team1)
+                if not pid:
+                    pid = self.get_player_id(name, self.team2)
+                if not pid:
+                    continue
+
+                player = self.get_or_create_player(pid)
+                if not player:
+                    continue
+                try:
+                    dot_balls_group = match_obj.groupdict().get("dot_balls")
+                    if dot_balls_group is not None:
+                        dot_balls = int(dot_balls_group)
+                        if dot_balls > 0:
+                            player.dot_balls = dot_balls
+                            parsed_any = True
+                except Exception:
+                    continue
+            return parsed_any
+
+        direct_parsed = False
+        for idx, line in enumerate(lines):
+            if not re.match(r"^Bowling\b", line, flags=re.IGNORECASE):
+                continue
+
+            section_end = len(lines)
+            for next_idx in range(idx + 1, len(lines)):
+                if re.fullmatch(r".+?\s+[Ii]nnings", lines[next_idx]):
+                    section_end = next_idx
+                    break
+
+            header_window = lines[idx : min(idx + 8, section_end)]
+            has_dot_balls_column = any(
+                re.search(
+                    r"\b0\s*[s]\b|\bdot\s+balls?\b",
+                    " ".join(str(line).strip().lower().split()),
+                    flags=re.IGNORECASE,
+                )
+                or " 0s " in f" {str(line).strip().lower()} "
+                for line in header_window
+            )
+
+            section_parsed = False
+            for row_idx in range(idx + 1, section_end):
+                if _parse_pipe_bowling_row(lines[row_idx], self.team1, has_dot_balls_column):
+                    section_parsed = True
+                    continue
+                if _parse_pipe_bowling_row(lines[row_idx], self.team2, has_dot_balls_column):
+                    section_parsed = True
+                    continue
+
+            direct_parsed = parse_dot_ball_section(idx, section_end) or section_parsed or direct_parsed
+
         temp_match = Match(self.match_id, self.team1, self.team2, self.registry, self.match_date)
-        if not temp_match.parse_espn_scorecard(soup):
-            return False
+        temp_parsed = temp_match.parse_espn_scorecard(soup)
 
         for pid, temp_player in temp_match.players.items():
-            if temp_player.dot_balls <= 0:
-                continue
             player = self.get_or_create_player(pid)
             if not player:
                 continue
             if temp_player.team and not player.team:
                 player.team = temp_player.team
             player.played = player.played or temp_player.played
-            player.dot_balls = temp_player.dot_balls
+            for attr in (
+                "runs",
+                "balls",
+                "fours",
+                "sixes",
+                "strike_rate",
+                "overs",
+                "maidens",
+                "runs_conceded",
+                "wickets",
+                "economy",
+                "catches",
+                "runout_direct",
+                "runout_indirect",
+                "stumpings",
+                "bowled",
+                "lbw",
+                "dismissal",
+                "is_out",
+            ):
+                current_value = getattr(player, attr, 0)
+                temp_value = getattr(temp_player, attr, 0)
+                if not current_value and temp_value:
+                    setattr(player, attr, temp_value)
+            if temp_player.dot_balls > 0 and player.dot_balls <= 0:
+                player.dot_balls = temp_player.dot_balls
 
-        return True
+        return direct_parsed or temp_parsed
 
     def parse_espn_scorecard(self, soup):
         lines = [line.strip() for line in soup.get_text("\n").splitlines() if line.strip()]
@@ -563,8 +776,59 @@ class Match:
             return (
                 is_float_text(lines[index + 1]) and is_int_text(lines[index + 2]) and
                 is_int_text(lines[index + 3]) and is_int_text(lines[index + 4]) and
-                is_float_text(lines[index + 5]) and is_int_text(lines[index + 6])
+                    is_float_text(lines[index + 5]) and is_int_text(lines[index + 6])
             )
+
+        def parse_compact_bowling_row(line, bowling_team):
+            normalized = " ".join(str(line).strip().split())
+            compact_match = re.match(
+                r"^(?P<name>.+?)\s+(?P<overs>\d+(?:\.\d+)?)\s+(?P<maidens>\d+)\s+(?P<runs>\d+)\s+(?P<wickets>\d+)\s+(?P<economy>\d+(?:\.\d+)?)\s+(?P<dot_balls>\d+)\s+(?P<fours>\d+)\s+(?P<sixes>\d+)\s+(?P<wd>\d+)\s+(?P<nb>\d+)\s*$",
+                normalized,
+            )
+            if not compact_match:
+                return False
+
+            try:
+                name = clean_name(compact_match.group("name"))
+                overs = float(compact_match.group("overs"))
+                maidens = int(compact_match.group("maidens"))
+                runs = int(compact_match.group("runs"))
+                wickets = int(compact_match.group("wickets"))
+                economy = float(compact_match.group("economy"))
+                dot_balls = int(compact_match.group("dot_balls"))
+            except Exception:
+                return False
+
+            if not name or name.upper() in {"BOWLING", "O", "M", "R", "W", "ECON", "0S", "4S", "6S", "WD", "NB"}:
+                return False
+            if overs < 0 or overs > 4.0:
+                return False
+            if maidens < 0 or maidens > 4:
+                return False
+            if runs < 0 or runs > 80:
+                return False
+            if wickets < 0 or wickets > 5:
+                return False
+            if dot_balls < 0 or dot_balls > 24:
+                return False
+
+            pid = self.get_player_id(name, bowling_team)
+            if not pid:
+                return False
+
+            player = self.get_or_create_player(pid)
+            if not player:
+                return False
+            player.team = bowling_team
+            player.played = True
+            player.overs = overs
+            player.maidens = maidens
+            player.runs_conceded = runs
+            player.wickets = wickets
+            player.economy = economy
+            if player.dot_balls <= 0:
+                player.dot_balls = dot_balls
+            return True
 
         def is_reasonable_bowling_row(index, has_dot_balls_column):
             try:
@@ -590,16 +854,20 @@ class Match:
 
             return True
 
-        def get_bowling_dot_balls(index):
-            try:
-                trailing_value = int(lines[index + 6])
-            except Exception:
+        def get_bowling_dot_balls(index, has_dot_balls_column):
+            if not has_dot_balls_column:
                 return None
 
-            # ESPN scorecards commonly expose dot balls as a trailing 0s column.
-            # Keep the fallback conservative so we do not misread unrelated rows.
-            if 0 <= trailing_value <= 24:
-                return trailing_value
+            # ESPN scorecards usually place dot balls immediately after economy,
+            # but some layouts can shift the visible cells slightly. Scan a small
+            # forward window and take the first plausible dot-ball integer.
+            for offset in range(6, min(11, len(lines) - index)):
+                candidate = lines[index + offset]
+                if not is_int_text(candidate):
+                    continue
+                trailing_value = int(candidate)
+                if 0 <= trailing_value <= 24:
+                    return trailing_value
             return None
 
         innings_headers = find_innings_headers()
@@ -648,7 +916,7 @@ class Match:
 
             # Parse DNB
             dnb_idx = find_between(header_pos, section_end, ("Did not bat", "Yet to bat", "Yet To Bat"))
-            bowling_idx = find_between(header_pos, section_end, ("Bowling", "BOWLING"))
+            bowling_idx = find_prefix_between(header_pos, section_end, "Bowling")
             fow_idx = find_prefix_between(header_pos, section_end, "fall of wickets")
             dnb_end = min(idx for idx in (fow_idx, bowling_idx, section_end) if idx != -1)
 
@@ -676,6 +944,10 @@ class Match:
                 )
                 idx = bowling_idx + 1
                 while idx < section_end:
+                    current_line = lines[idx]
+                    if parse_compact_bowling_row(current_line, bowling_team):
+                        idx += 1
+                        continue
                     if looks_like_bowler_row(idx, section_end):
                         if not is_reasonable_bowling_row(idx, has_dot_balls_column):
                             idx += 1
@@ -692,13 +964,69 @@ class Match:
                         player.maidens = int(lines[idx + 2])
                         player.runs_conceded = int(lines[idx + 3])
                         player.wickets = int(lines[idx + 4])
-                        dot_balls = get_bowling_dot_balls(idx)
-                        if dot_balls is not None and (has_dot_balls_column or player.dot_balls <= 0):
+                        dot_balls = get_bowling_dot_balls(idx, has_dot_balls_column)
+                        if dot_balls is None:
+                            # Some ESPN layouts omit the 0s header or insert a
+                            # stray numeric cell before dot balls. Scan the
+                            # small trailing window and take the first plausible
+                            # dot-ball value.
+                            for offset in range(6, min(11, section_end - idx)):
+                                candidate = lines[idx + offset]
+                                if not is_int_text(candidate):
+                                    continue
+                                trailing_value = int(candidate)
+                                if 0 <= trailing_value <= 24:
+                                    dot_balls = trailing_value
+                                    break
+                        if dot_balls is not None and player.dot_balls <= 0:
                             player.dot_balls = dot_balls
                         if player.overs > 0:
                             player.economy = round(player.runs_conceded / player.overs, 2)
                         idx += 7
                         continue
+                    line = lines[idx]
+                    inline_match = None
+                    if has_dot_balls_column:
+                        inline_match = re.match(
+                            r"^(?P<name>.+?)(?:\s+|\s*)(?P<overs>\d+(?:\.\d+)?)\s+(?P<maidens>\d+)\s+(?P<runs>\d+)\s+(?P<wickets>\d+)\s+(?P<economy>\d+(?:\.\d+)?)\s+(?P<dot_balls>\d+)\s+(?P<fours>\d+)\s+(?P<sixes>\d+)\s+(?P<wd>\d+)\s+(?P<nb>\d+)\s*$",
+                            line,
+                        )
+                    if not inline_match:
+                        inline_match = re.match(
+                            r"^(?P<name>.+?)(?:\s+|\s*)(?P<overs>\d+(?:\.\d+)?)\s+(?P<maidens>\d+)\s+(?P<runs>\d+)\s+(?P<wickets>\d+)\s+(?P<economy>\d+(?:\.\d+)?)\s+(?P<fours>\d+)\s+(?P<sixes>\d+)\s+(?P<wd>\d+)\s+(?P<nb>\d+)\s*$",
+                            line,
+                        )
+                    if inline_match:
+                        name = clean_name(inline_match.group("name"))
+                        if name and name.upper() not in {
+                            "BOWLING",
+                            "O",
+                            "M",
+                            "R",
+                            "W",
+                            "ECON",
+                            "0S",
+                            "4S",
+                            "6S",
+                            "WD",
+                            "NB",
+                        }:
+                            pid = self.get_player_id(name, bowling_team)
+                            if pid:
+                                player = self.get_or_create_player(pid)
+                                player.team = bowling_team
+                                player.played = True
+                                try:
+                                    player.overs = float(inline_match.group("overs"))
+                                    player.maidens = int(inline_match.group("maidens"))
+                                    player.runs_conceded = int(inline_match.group("runs"))
+                                    player.wickets = int(inline_match.group("wickets"))
+                                    player.economy = float(inline_match.group("economy"))
+                                    dot_balls_group = inline_match.groupdict().get("dot_balls")
+                                    if dot_balls_group is not None and player.dot_balls <= 0:
+                                        player.dot_balls = int(dot_balls_group)
+                                except Exception:
+                                    pass
                     idx += 1
 
         for team in (self.team1, self.team2):

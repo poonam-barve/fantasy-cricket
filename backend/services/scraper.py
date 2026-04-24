@@ -26,22 +26,32 @@ PLAYING_XI_CACHE: dict[int, dict] = {}
 PLAYING_XI_TTL_SECONDS = 60
 TOSS_INFO_CACHE: dict[int, dict] = {}
 TOSS_INFO_TTL_SECONDS = 60
+_ESPN_SESSION = requests.Session()
+_ESPN_SESSION.trust_env = False
+_ESPN_SESSION.headers.update(
+    {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Referer": "https://www.espn.com/",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+    }
+)
 
 
 def _session_get(url):
-    session = requests.Session()
-    session.trust_env = False
-    return session.get(
-        url,
-        timeout=20,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Referer": "https://www.espncricinfo.com/",
-            "Connection": "keep-alive",
-        },
-    )
+    return _ESPN_SESSION.get(url, timeout=20)
 
 
 def _copy_playing_xi_payload(payload: dict) -> dict:
@@ -194,32 +204,52 @@ def fetch_scorecard_html(match_id, team1: str | None = None, team2: str | None =
         except Exception:
             return None
 
-    url = build_espn_scorecard_url(int(espn_match_id))
-    try:
-        res = _session_get(url)
-        if res.status_code != 200:
-            if team1 and team2 and not force_refresh:
-                refreshed_match_id = resolve_espn_match_id(int(match_id), team1, team2, force_refresh=True)
-                if refreshed_match_id and refreshed_match_id != espn_match_id:
-                    refreshed_url = build_espn_scorecard_url(int(refreshed_match_id))
-                    refreshed_res = _session_get(refreshed_url)
-                    if refreshed_res.status_code == 200:
-                        return refreshed_res.text
-            return None
-        return res.text
-    except Exception as e:
-        print("Error fetching scorecard:", e)
-        if team1 and team2 and not force_refresh:
-            refreshed_match_id = resolve_espn_match_id(int(match_id), team1, team2, force_refresh=True)
-            if refreshed_match_id and refreshed_match_id != espn_match_id:
-                refreshed_url = build_espn_scorecard_url(int(refreshed_match_id))
-                try:
-                    refreshed_res = _session_get(refreshed_url)
-                    if refreshed_res.status_code == 200:
-                        return refreshed_res.text
-                except Exception:
-                    pass
+    def _try_fetch(resolved_match_id: int) -> str | None:
+        weak_fallback_html: str | None = None
+        strong_fallback_html: str | None = None
+        attempted = 0
+        successful = 0
+        for url in build_espn_scorecard_url_variants(resolved_match_id):
+            attempted += 1
+            try:
+                res = _session_get(url)
+            except Exception as exc:
+                continue
+
+            if not (200 <= res.status_code < 300):
+                continue
+
+            quality = _espn_scorecard_html_quality(res.text, team1, team2)
+            if quality >= 2:
+                successful += 1
+                strong_fallback_html = res.text
+                return res.text
+            if quality == 1 and weak_fallback_html is None:
+                successful += 1
+                weak_fallback_html = res.text
+            elif weak_fallback_html is None:
+                weak_fallback_html = res.text
+
+        if strong_fallback_html:
+            return strong_fallback_html
+
+        if weak_fallback_html:
+            return weak_fallback_html
+
         return None
+
+    fetched_html = _try_fetch(int(espn_match_id))
+    if fetched_html:
+        return fetched_html
+
+    if team1 and team2 and not force_refresh:
+        refreshed_match_id = resolve_espn_match_id(int(match_id), team1, team2, force_refresh=True)
+        if refreshed_match_id and refreshed_match_id != espn_match_id:
+            fetched_html = _try_fetch(int(refreshed_match_id))
+            if fetched_html:
+                return fetched_html
+
+    return None
 
 
 def fetch_cricbuzz_scorecard_html(match_id: int, team1: str | None = None, team2: str | None = None):
@@ -277,6 +307,54 @@ def build_espn_schedule_url() -> str:
 
 def build_espn_scorecard_url(espn_match_id: int) -> str:
     return f"https://www.espn.com/cricket/series/{ESPN_SERIES_ID}/scorecard/{int(espn_match_id)}/utils"
+
+
+def build_espn_scorecard_url_variants(espn_match_id: int) -> list[str]:
+    match_id = int(espn_match_id)
+    base_urls = [
+        f"https://www.espn.com/cricket/series/{ESPN_SERIES_ID}/scorecard/{match_id}",
+        f"https://www.espn.in/cricket/series/{ESPN_SERIES_ID}/scorecard/{match_id}",
+    ]
+
+    variants = []
+    for base_url in base_urls:
+        variants.extend([
+            f"{base_url}/utils",
+            base_url,
+            f"{base_url}/crossDomain",
+            f"{base_url}/Message",
+        ])
+
+    seen = set()
+    ordered_variants = []
+    for url in variants:
+        if url in seen:
+            continue
+        seen.add(url)
+        ordered_variants.append(url)
+    return ordered_variants
+
+
+def _espn_scorecard_html_quality(html_text: str | None, team1: str | None = None, team2: str | None = None) -> int:
+    if not html_text:
+        return 0
+
+    text = " ".join(BeautifulSoup(html_text, "html.parser").stripped_strings)
+    normalized = " ".join(text.lower().split())
+    if not normalized:
+        return 0
+
+    if not any(marker in normalized for marker in ("batsmen", "bowling", "extras", "total", "scorecard")):
+        return 0
+
+    if any(marker in normalized for marker in ("0s", "dot balls", "dot-balls", "bowling o m r w econ")):
+        return 2
+
+    return 1
+
+
+def _espn_scorecard_html_looks_useful(html_text: str | None, team1: str | None = None, team2: str | None = None) -> bool:
+    return _espn_scorecard_html_quality(html_text, team1, team2) > 0
 
 
 def _normalize_espn_match_key(match_id: int, team1: str, team2: str) -> tuple[int, frozenset[str]]:
