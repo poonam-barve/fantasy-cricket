@@ -11,18 +11,13 @@ const ROUND_COLORS: Record<number, string> = {
   4: 'text-green-400',
 };
 
-// Half-bracket matchup counts per round (each group has half the matchups)
-const HALF_MATCHUP_COUNTS: Record<number, number> = {
-  1: 4,  // Ro16: 4 matchups per group
-  2: 2,  // QF: 2 per group
-  3: 1,  // SF: 1 per group
-};
+const FULL_MATCHUP_COUNTS: Record<number, number> = { 1: 8, 2: 4, 3: 2, 4: 1 };
 
-function getHalfBracketSlots(matchupCount: number) {
+function getBracketSlots(matchupCount: number) {
   if (matchupCount <= 0) return [];
-  const totalRows = HALF_MATCHUP_COUNTS[1] * 2 - 1; // 7 rows for half bracket
+  const totalRows = FULL_MATCHUP_COUNTS[1] * 2 - 1; // 15 rows
   const step = totalRows / matchupCount;
-  return Array.from({ length: matchupCount }, (_, index) => Math.round((index + 0.5) * step - 0.5));
+  return Array.from({ length: matchupCount }, (_, i) => Math.round((i + 0.5) * step - 0.5));
 }
 
 function MatchupCard({ matchup, isMe, compact = false, tbdLabels }: { matchup: WeekendTournamentMatchup; isMe: (id: number) => boolean; compact?: boolean; tbdLabels?: [string, string] }) {
@@ -98,7 +93,7 @@ function Connector({
 }) {
   if (fromSlots.length === 0 || toSlots.length === 0) return null;
 
-  const totalRows = HALF_MATCHUP_COUNTS[1] * 2 - 1;
+  const totalRows = FULL_MATCHUP_COUNTS[1] * 2 - 1;
   const height = topOffset + totalRows * rowHeight + cardHeight;
 
   const paths = fromSlots.map((slot, index) => {
@@ -132,63 +127,94 @@ function makePlaceholders(count: number): WeekendTournamentMatchup[] {
   }));
 }
 
-/** Render one half-bracket (Ro16 → QF → SF), always left-to-right */
-function HalfBracket({
-  groupLabel,
-  groupColor,
-  matchupsByRound,
-  isMe,
-  isCompact,
-  rowHeight,
-  cardHeight,
-  topOffset,
-  bridgeWidth,
-  totalHeight,
-}: {
-  groupLabel: string;
-  groupColor: string;
-  matchupsByRound: Record<number, WeekendTournamentMatchup[]>;
-  isMe: (id: number) => boolean;
-  isCompact: boolean;
-  rowHeight: number;
-  cardHeight: number;
-  topOffset: number;
-  bridgeWidth: number;
-  totalHeight: number;
-}) {
-  const roundLabels: Record<number, string> = { 1: 'Ro16', 2: 'QF', 3: 'SF' };
-  const colWidth = isCompact ? 'w-[90px]' : 'w-[120px] sm:w-[140px]';
+function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; isMe: (id: number) => boolean }) {
+  if (rounds.length === 0) return <div className="text-center text-white/30 py-8 text-sm">Bracket not yet drawn</div>;
 
-  const columns = [1, 2, 3].map((roundNum) => {
-    const raw = matchupsByRound[roundNum];
-    const matchups = raw && raw.length > 0 ? raw : makePlaceholders(HALF_MATCHUP_COUNTS[roundNum]);
-    const slots = getHalfBracketSlots(matchups.length);
+  const roundsByNumber = new Map(rounds.map((r) => [r.round, r]));
+  const isCompact = typeof window !== 'undefined' && window.innerWidth < 640;
+  const rowHeight = isCompact ? 48 : 62;
+  const cardHeight = isCompact ? 40 : 54;
+  const topOffset = isCompact ? 18 : 24;
+  const bridgeWidth = isCompact ? 12 : 16;
+  const colWidth = isCompact ? 'w-[95px]' : 'w-[130px] sm:w-[148px]';
+  const totalRows = FULL_MATCHUP_COUNTS[1] * 2 - 1; // 15
+  const totalHeight = topOffset + totalRows * rowHeight + cardHeight;
+
+  const roundLabels: Record<number, string> = { 1: 'Ro16', 2: 'QF', 3: 'SF', 4: 'Final' };
+
+  // Build columns with all matchups (full 8→4→2→1 bracket)
+  const columns = [1, 2, 3, 4].map((roundNum) => {
+    const round = roundsByNumber.get(roundNum);
+    const raw = round?.matchups || [];
+    const expected = FULL_MATCHUP_COUNTS[roundNum];
+    const matchups = raw.length > 0 ? raw : makePlaceholders(expected);
+    const slots = getBracketSlots(matchups.length);
     return { roundNum, matchups, slots };
   });
 
+  // Determine Group A / Group B divider position for Ro16 column
+  // Group A = matchups 1-4 (top half), Group B = matchups 5-8 (bottom half)
+  const ro16Slots = columns[0].slots;
+  const groupDividerY = ro16Slots.length >= 8
+    ? topOffset + ((ro16Slots[3] + ro16Slots[4]) / 2) * rowHeight + cardHeight / 2
+    : null;
+
+  // Final winner
+  const finalMatchup = columns[3]?.matchups?.[0];
+  const finalDone = finalMatchup?.status === 'completed' && finalMatchup?.winner_user_id;
+  const winnerName = finalDone
+    ? (finalMatchup!.winner_user_id === finalMatchup!.user1?.id ? finalMatchup!.user1?.name : finalMatchup!.user2?.name)
+    : null;
+
   return (
-    <div>
-      <div className={`text-center mb-1 text-[10px] font-bold uppercase tracking-wider ${groupColor}`}>{groupLabel}</div>
-      <div className="flex items-start">
+    <div className="overflow-x-auto pb-4">
+      <div className="flex items-start min-w-max px-1">
         {columns.map((col, colIdx) => {
           const nextCol = columns[colIdx + 1];
+          const isRo16 = col.roundNum === 1;
+          const isFinal = col.roundNum === 4;
+
           return (
             <div key={col.roundNum} className="flex items-start">
               <div className={`relative shrink-0 ${colWidth}`} style={{ height: totalHeight }}>
+                {/* Round header */}
                 <div className="absolute top-0 left-0 right-0 text-center">
-                  <div className={`text-[9px] font-semibold uppercase tracking-wider ${ROUND_COLORS[col.roundNum] || 'text-white/40'}`}>
+                  <div className={`text-[9px] font-bold uppercase tracking-wider ${ROUND_COLORS[col.roundNum] || 'text-white/40'}`}>
                     {roundLabels[col.roundNum]}
                   </div>
                 </div>
+
+                {/* Group A / B labels for Ro16 */}
+                {isRo16 && groupDividerY !== null && (
+                  <>
+                    <div className="absolute left-0 text-[8px] font-bold uppercase tracking-widest text-cyan-400/60" style={{ top: topOffset - 2, transform: 'rotate(-90deg) translateX(-100%)', transformOrigin: 'top left' }}>
+                      Group A
+                    </div>
+                    <div className="absolute left-0 text-[8px] font-bold uppercase tracking-widest text-orange-400/60" style={{ top: groupDividerY + 4, transform: 'rotate(-90deg) translateX(-100%)', transformOrigin: 'top left' }}>
+                      Group B
+                    </div>
+                    {/* Divider line */}
+                    <div className="absolute left-2 right-2 border-t border-dashed border-white/10" style={{ top: groupDividerY }} />
+                  </>
+                )}
+
+                {/* Matchup cards */}
                 {col.matchups.map((matchup, index) => {
                   const top = topOffset + col.slots[index] * rowHeight;
                   return (
                     <div key={matchup.position} className="absolute left-0 right-0" style={{ top, height: cardHeight }}>
-                      <MatchupCard matchup={matchup} isMe={isMe} compact={isCompact} />
+                      <MatchupCard
+                        matchup={matchup}
+                        isMe={isMe}
+                        compact={isCompact}
+                        tbdLabels={isFinal ? ['Winner A', 'Winner B'] : undefined}
+                      />
                     </div>
                   );
                 })}
               </div>
+
+              {/* Connector lines to next round */}
               {nextCol && (
                 <Connector
                   fromSlots={col.slots}
@@ -202,89 +228,15 @@ function HalfBracket({
             </div>
           );
         })}
-      </div>
-    </div>
-  );
-}
 
-function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; isMe: (id: number) => boolean }) {
-  if (rounds.length === 0) return <div className="text-center text-white/30 py-8 text-sm">Bracket not yet drawn</div>;
-
-  const roundsByNumber = new Map(rounds.map((r) => [r.round, r]));
-
-  // Split matchups into Group A (positions 1-4) and Group B (positions 5-8)
-  const splitMatchups = (roundNum: number, halfSize: number) => {
-    const round = roundsByNumber.get(roundNum);
-    const all = round?.matchups || [];
-    const groupA = all.filter((m) => m.position <= halfSize);
-    const groupB = all.filter((m) => m.position > halfSize);
-    const groupBRenum = groupB.map((m, i) => ({ ...m, position: i + 1 }));
-    return { groupA, groupB: groupBRenum };
-  };
-
-  const ro16 = splitMatchups(1, 4);
-  const qf = splitMatchups(2, 2);
-  const sf = splitMatchups(3, 1);
-
-  const groupAByRound: Record<number, WeekendTournamentMatchup[]> = { 1: ro16.groupA, 2: qf.groupA, 3: sf.groupA };
-  const groupBByRound: Record<number, WeekendTournamentMatchup[]> = { 1: ro16.groupB, 2: qf.groupB, 3: sf.groupB };
-
-  const isCompact = typeof window !== 'undefined' && window.innerWidth < 640;
-  const rowHeight = isCompact ? 48 : 64;
-  const cardHeight = isCompact ? 40 : 58;
-  const topOffset = isCompact ? 18 : 24;
-  const bridgeWidth = isCompact ? 14 : 16;
-  const totalRows = HALF_MATCHUP_COUNTS[1] * 2 - 1;
-  const totalHeight = topOffset + totalRows * rowHeight + cardHeight;
-
-  // Final
-  const finalRound = roundsByNumber.get(4);
-  const finalMatchup = finalRound?.matchups?.[0] || null;
-  const finalDone = finalMatchup?.status === 'completed' && finalMatchup?.winner_user_id;
-  const winnerName = finalDone
-    ? (finalMatchup!.winner_user_id === finalMatchup!.user1?.id ? finalMatchup!.user1?.name : finalMatchup!.user2?.name)
-    : null;
-
-  const sharedProps = {
-    isMe,
-    isCompact,
-    rowHeight,
-    cardHeight,
-    topOffset,
-    bridgeWidth,
-    totalHeight,
-  };
-
-  return (
-    <div className="space-y-5">
-      {/* Group A */}
-      <div className="overflow-x-auto">
-        <HalfBracket groupLabel="Group A" groupColor="text-cyan-400" matchupsByRound={groupAByRound} {...sharedProps} />
-      </div>
-
-      {/* Final — full width, centered */}
-      <div className="flex flex-col items-center">
-        <div className={`text-[10px] font-bold uppercase tracking-wider mb-2 ${ROUND_COLORS[4]}`}>Final</div>
-        <div className="w-full max-w-xs">
-          <MatchupCard
-            matchup={finalMatchup || { position: 1, user1: null, user2: null, user1_points: 0, user2_points: 0, winner_user_id: null, status: 'pending' }}
-            isMe={isMe}
-            compact={isCompact}
-            tbdLabels={['Winner A', 'Winner B']}
-          />
-        </div>
+        {/* Winner column */}
         {winnerName && (
-          <div className="flex flex-col items-center mt-3">
+          <div className="flex flex-col items-center justify-center shrink-0 pl-2" style={{ height: totalHeight }}>
             <span className="text-3xl mb-1">&#x1F3C6;</span>
-            <span className="text-sm font-bold text-amber-400">{winnerName}</span>
-            <span className="text-[10px] text-amber-400/60 mt-0.5">Weekend Champion</span>
+            <span className="text-xs font-bold text-amber-400 text-center">{winnerName}</span>
+            <span className="text-[9px] text-amber-400/60 mt-0.5">Weekend Champion</span>
           </div>
         )}
-      </div>
-
-      {/* Group B */}
-      <div className="overflow-x-auto">
-        <HalfBracket groupLabel="Group B" groupColor="text-orange-400" matchupsByRound={groupBByRound} {...sharedProps} />
       </div>
     </div>
   );
