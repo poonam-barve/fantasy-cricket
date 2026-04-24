@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import client from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import type { WeekendTournament, WeekendTournamentRound, WeekendTournamentMatchup, WeekendTournamentHistory } from '../types';
@@ -132,11 +132,12 @@ function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; is
 
   const roundsByNumber = new Map(rounds.map((r) => [r.round, r]));
   const isCompact = typeof window !== 'undefined' && window.innerWidth < 640;
+  const scrollRef = useRef<HTMLDivElement>(null);
   const rowHeight = isCompact ? 48 : 62;
   const cardHeight = isCompact ? 40 : 54;
   const topOffset = isCompact ? 18 : 24;
-  const bridgeWidth = isCompact ? 12 : 16;
-  const colWidth = isCompact ? 'w-[95px]' : 'w-[130px] sm:w-[148px]';
+  const bridgeWidth = isCompact ? 6 : 16;
+  const colWidth = isCompact ? 'w-[80px]' : 'w-[130px] sm:w-[148px]';
   const totalRows = FULL_MATCHUP_COUNTS[1] * 2 - 1; // 15
   const totalHeight = topOffset + totalRows * rowHeight + cardHeight;
 
@@ -166,8 +167,23 @@ function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; is
     ? (finalMatchup!.winner_user_id === finalMatchup!.user1?.id ? finalMatchup!.user1?.name : finalMatchup!.user2?.name)
     : null;
 
+  // Find the latest round that has real matchups (not placeholders) and auto-scroll to it
+  const latestActiveRound = Math.max(...columns.filter((c) => {
+    const round = roundsByNumber.get(c.roundNum);
+    return round && round.matchups && round.matchups.length > 0;
+  }).map((c) => c.roundNum), 1);
+
+  useEffect(() => {
+    if (!isCompact || !scrollRef.current) return;
+    // Scroll so the latest active round is visible — scroll right enough to show it
+    const colW = 80;
+    const bw = 6;
+    const scrollTo = Math.max(0, (latestActiveRound - 2) * (colW + bw));
+    scrollRef.current.scrollLeft = scrollTo;
+  }, [latestActiveRound, isCompact]);
+
   return (
-    <div className="overflow-x-auto pb-4">
+    <div className="overflow-x-auto pb-4" ref={scrollRef}>
       <div className="flex items-start min-w-max px-1">
         {columns.map((col, colIdx) => {
           const nextCol = columns[colIdx + 1];
