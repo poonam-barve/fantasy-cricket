@@ -1,7 +1,13 @@
 import os
-import firebase_admin
-from firebase_admin import credentials, auth as firebase_auth
 from backend.config import FIREBASE_CREDENTIALS_PATH
+
+try:
+    import firebase_admin
+    from firebase_admin import credentials, auth as firebase_auth
+except ImportError:
+    firebase_admin = None
+    credentials = None
+    firebase_auth = None
 
 _initialized = False
 
@@ -9,6 +15,11 @@ _initialized = False
 def init_firebase():
     global _initialized
     if _initialized:
+        return
+
+    if firebase_admin is None or credentials is None:
+        print("WARNING: firebase-admin not installed. Auth will use dev mode.")
+        _initialized = True
         return
 
     if os.path.exists(FIREBASE_CREDENTIALS_PATH):
@@ -31,6 +42,8 @@ def init_firebase():
 
 
 def verify_firebase_token(id_token: str) -> dict | None:
+    if firebase_auth is None:
+        return None
     try:
         decoded = firebase_auth.verify_id_token(id_token)
         return decoded

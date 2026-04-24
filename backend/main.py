@@ -2,9 +2,18 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
-load_dotenv()
-import openpyxl
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+try:
+    import openpyxl
+except ImportError:
+    openpyxl = None
+
+if load_dotenv:
+    load_dotenv()
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -74,7 +83,9 @@ def seed_db_if_needed():
 
     workbook_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "FantasyCricket.xlsx")
     seeded_from_workbook = False
-    if os.path.exists(workbook_path):
+    if openpyxl is None:
+        print("openpyxl not installed, skipping workbook seed")
+    elif os.path.exists(workbook_path):
         print("Seeding database from FantasyCricket.xlsx")
         wb = openpyxl.load_workbook(workbook_path, read_only=True)
 
