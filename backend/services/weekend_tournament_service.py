@@ -265,11 +265,11 @@ def advance_round(tournament_id: int, completed_match_id: int) -> dict:
         print(f"[WEEKEND] Tournament #{tournament_id} completed! Winner: user #{winners[0]}")
         return {"status": "completed", "winner_user_id": winners[0]}
 
-    # Create next round pairings
+    # Create next round pairings — adjacent winners play each other (no reshuffle)
+    # Winners list is already ordered by match_position (from the ORDER BY above)
     next_round = current_round + 1
     next_match_id = _get_match_id_for_round(tournament, next_round)
 
-    random.shuffle(winners)
     num_matchups = len(winners) // 2
 
     for i in range(num_matchups):

@@ -36,22 +36,22 @@ The qualifying match is the **last match before Saturday** of that weekend:
 - If total is odd, the last player is dropped to keep pairings even
 - Bracket is seeded once the qualifying match is marked completed
 
-### Random 1v1 Draw — How It Works
+### Fixed Bracket Draw — How It Works
 
-The draw uses a **pure random shuffle** approach (not seeded brackets):
+The draw uses a **single random shuffle at seeding**, then follows a **fixed bracket path**:
 
 **Round 1 (after qualifier completes):**
 1. Collect the 16 qualified players (sorted by qualifier points initially)
 2. `random.shuffle()` the entire list — fully randomizes the order
 3. Pair adjacent entries: players at positions [0,1] form matchup 1, [2,3] form matchup 2, etc.
-4. This means the top qualifier could face the 2nd best, or the weakest — it's a lottery
+4. This creates two groups: **Group A** (matchups 1-4, left bracket) and **Group B** (matchups 5-8, right bracket)
 
 **Rounds 2-4 (after each weekend match completes):**
-1. Collect winners from the just-completed round
-2. `random.shuffle()` the winners again — fresh random draw
-3. Pair adjacent entries for the next round
+1. Collect winners from the just-completed round **in match_position order**
+2. Pair adjacent winners: winner of matchup 1 vs winner of matchup 2, winner of 3 vs 4, etc.
+3. **No reshuffle** — the bracket path is fixed from Round 1
 
-This means every round is a completely new random draw. There's no bracket path determined upfront — winners are reshuffled and re-paired each round.
+This means the bracket is determined at seeding time. Group A and Group B play independently until the Final, where each group's champion meets.
 
 ### Knockout Rounds (4 Weekend Matches)
 
@@ -68,7 +68,7 @@ This means every round is a completely new random draw. There's no bracket path 
 - Whoever scores **more fantasy points** in that match wins
 - **Tie-break**: user with higher overall leaderboard rank wins (lower rank number = better)
 - If a user **didn't submit a team** for a weekend match, they score 0 and lose
-- Pairings are **randomized** each round (not seeded)
+- Pairings follow a **fixed bracket** — adjacent winners play each other (no reshuffle after seeding)
 
 ### Winner
 
