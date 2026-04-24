@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import client from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import type { WeekendTournament, WeekendTournamentRound, WeekendTournamentMatchup, WeekendTournamentHistory } from '../types';
@@ -25,7 +25,7 @@ function getBracketSlots(matchupCount: number) {
   return Array.from({ length: matchupCount }, (_, index) => Math.round((index + 0.5) * step - 0.5));
 }
 
-function MatchupCard({ matchup, isMe }: { matchup: WeekendTournamentMatchup; isMe: (id: number) => boolean }) {
+function MatchupCard({ matchup, isMe, compact = false }: { matchup: WeekendTournamentMatchup; isMe: (id: number) => boolean; compact?: boolean }) {
   const done = matchup.status === 'completed';
   const live = matchup.status === 'live';
   const u1Winner = done && matchup.winner_user_id === matchup.user1?.id;
@@ -41,7 +41,7 @@ function MatchupCard({ matchup, isMe }: { matchup: WeekendTournamentMatchup; isM
   ) => {
     if (!user) {
       return (
-        <div className="flex items-center justify-between rounded-md border border-dashed border-white/10 px-2 py-2 text-xs text-white/20 italic">
+        <div className={`flex items-center justify-between rounded-md border border-dashed border-white/10 text-xs text-white/20 italic ${compact ? 'px-1.5 py-1.5' : 'px-2 py-2'}`}>
           <span>TBD</span>
           <span className="text-[9px] uppercase tracking-[0.18em] text-white/10">{positionLabel}</span>
         </div>
@@ -54,9 +54,9 @@ function MatchupCard({ matchup, isMe }: { matchup: WeekendTournamentMatchup; isM
         ? 'border-red-400/20 bg-red-500/12 text-red-50'
         : 'border-white/10 bg-white/[0.03] text-white';
     return (
-      <div className={`flex items-center justify-between rounded-md border px-2 py-2 transition-colors ${blockTone}`}>
+      <div className={`flex items-center justify-between rounded-md border transition-colors ${compact ? 'px-1.5 py-1.5' : 'px-2 py-2'} ${blockTone}`}>
         <div className="flex items-center gap-1 min-w-0">
-          <span className={`text-xs font-medium truncate ${isWinner ? 'text-green-200' : isLoser ? 'text-red-100' : 'text-white'}`}>
+          <span className={`font-medium truncate ${compact ? 'text-[10px]' : 'text-xs'} ${isWinner ? 'text-green-200' : isLoser ? 'text-red-100' : 'text-white'}`}>
             {user.name}
           </span>
           {me && <span className="px-1 py-0.5 text-[7px] font-bold bg-white/20 text-white rounded">YOU</span>}
@@ -64,7 +64,7 @@ function MatchupCard({ matchup, isMe }: { matchup: WeekendTournamentMatchup; isM
           {isLoser && done && <span className="px-1 py-0.5 text-[7px] font-bold rounded bg-red-500/20 text-red-100">OUT</span>}
         </div>
         {(done || live) && (
-          <span className={`text-[11px] font-bold ml-1 flex-shrink-0 ${isWinner ? 'text-green-100' : isLoser ? 'text-red-100/80' : 'text-white/50'}`}>{points}</span>
+          <span className={`font-bold ml-1 flex-shrink-0 ${compact ? 'text-[10px]' : 'text-[11px]'} ${isWinner ? 'text-green-100' : isLoser ? 'text-red-100/80' : 'text-white/50'}`}>{points}</span>
         )}
       </div>
     );
@@ -72,7 +72,7 @@ function MatchupCard({ matchup, isMe }: { matchup: WeekendTournamentMatchup; isM
 
   return (
     <div className={`rounded-xl border overflow-hidden ${live ? 'border-green-500/40 shadow-sm shadow-green-500/10' : hasResult ? 'border-white/15' : 'border-white/10'} bg-gradient-to-br from-white/[0.06] to-white/[0.03]`}>
-      <div className="space-y-1 p-2">
+      <div className={compact ? 'space-y-0.5 p-1.5' : 'space-y-1 p-2'}>
         {renderPlayer(matchup.user1, matchup.user1_points, u1Winner, done && !u1Winner, 'A')}
         {renderPlayer(matchup.user2, matchup.user2_points, u2Winner, done && !u2Winner, 'B')}
       </div>
@@ -114,7 +114,7 @@ function ConnectorBridge({
   }).filter(Boolean) as string[];
 
   return (
-    <div className="hidden sm:block relative shrink-0" style={{ width: bridgeWidth, height }}>
+    <div className="relative shrink-0" style={{ width: bridgeWidth, height }}>
       <svg className="absolute inset-0 h-full w-full overflow-visible" viewBox={`0 0 ${bridgeWidth} ${height}`} fill="none" aria-hidden="true">
         {paths.map((d, index) => (
           <path
@@ -133,6 +133,8 @@ function ConnectorBridge({
 
 function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; isMe: (id: number) => boolean }) {
   const [isCompact, setIsCompact] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 640 : false);
+  const finalRoundRef = useRef<HTMLDivElement | null>(null);
+  const didAutoScrollRef = useRef(false);
 
   useEffect(() => {
     const update = () => setIsCompact(window.innerWidth < 640);
@@ -151,12 +153,20 @@ function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; is
     3: 'Semi Finals',
     4: 'Final',
   };
-  const rowHeight = isCompact ? 58 : 72;
-  const cardHeight = isCompact ? 52 : 64;
-  const topOffset = isCompact ? 18 : 28;
-  const bridgeWidth = isCompact ? 14 : 16;
+  const rowHeight = isCompact ? 50 : 72;
+  const cardHeight = isCompact ? 42 : 64;
+  const topOffset = isCompact ? 8 : 28;
+  const bridgeWidth = isCompact ? 20 : 16;
   const totalRows = ROUND_MATCHUP_COUNTS[1] * 2 - 1;
   const totalHeight = topOffset + totalRows * rowHeight + cardHeight;
+  const finalMatchup = roundsByNumber.get(4)?.matchups?.[0];
+  const finalHasTwoUsers = Boolean(finalMatchup?.user1 && finalMatchup?.user2);
+
+  useEffect(() => {
+    if (!finalHasTwoUsers || didAutoScrollRef.current) return;
+    finalRoundRef.current?.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'end' });
+    didAutoScrollRef.current = true;
+  }, [finalHasTwoUsers]);
 
   return (
     <div className="overflow-x-auto pb-4">
@@ -193,8 +203,12 @@ function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; is
           const nextSlots = getBracketSlots(nextRenderedMatchups.length);
 
           return (
-            <div key={roundNumber} className="flex items-start">
-              <div className="relative shrink-0 w-[112px] sm:w-[136px] md:w-[152px] lg:w-[160px]" style={{ height: totalHeight }}>
+            <div
+              key={roundNumber}
+              ref={roundNumber === 4 ? finalRoundRef : undefined}
+              className="flex items-start"
+            >
+              <div className="relative shrink-0 w-[104px] sm:w-[136px] md:w-[152px] lg:w-[160px]" style={{ height: totalHeight }}>
                 <div className="absolute top-0 left-0 right-0 text-center">
                   <div className={`text-[10px] font-bold uppercase tracking-wider ${ROUND_COLORS[roundNumber] || 'text-white/40'}`}>
                     {roundLabel}
@@ -208,7 +222,7 @@ function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; is
                       className="absolute left-0 right-0"
                       style={{ top, height: cardHeight }}
                     >
-                      <MatchupCard matchup={matchup} isMe={isMe} />
+                      <MatchupCard matchup={matchup} isMe={isMe} compact={isCompact} />
                     </div>
                   );
                 })}
