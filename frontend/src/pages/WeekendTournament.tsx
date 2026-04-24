@@ -25,7 +25,7 @@ function getHalfBracketSlots(matchupCount: number) {
   return Array.from({ length: matchupCount }, (_, index) => Math.round((index + 0.5) * step - 0.5));
 }
 
-function MatchupCard({ matchup, isMe, compact = false }: { matchup: WeekendTournamentMatchup; isMe: (id: number) => boolean; compact?: boolean }) {
+function MatchupCard({ matchup, isMe, compact = false, tbdLabels }: { matchup: WeekendTournamentMatchup; isMe: (id: number) => boolean; compact?: boolean; tbdLabels?: [string, string] }) {
   const done = matchup.status === 'completed';
   const live = matchup.status === 'live';
   const u1Winner = done && matchup.winner_user_id === matchup.user1?.id;
@@ -38,11 +38,12 @@ function MatchupCard({ matchup, isMe, compact = false }: { matchup: WeekendTourn
     isWinner: boolean,
     isLoser: boolean,
     positionLabel: string,
+    tbdLabel?: string,
   ) => {
     if (!user) {
       return (
         <div className={`flex items-center justify-between rounded-md border border-dashed border-white/10 text-xs text-white/20 italic ${compact ? 'px-1.5 py-1.5' : 'px-2 py-2'}`}>
-          <span>TBD</span>
+          <span>{tbdLabel || 'TBD'}</span>
           <span className="text-[9px] uppercase tracking-[0.18em] text-white/10">{positionLabel}</span>
         </div>
       );
@@ -73,8 +74,8 @@ function MatchupCard({ matchup, isMe, compact = false }: { matchup: WeekendTourn
   return (
     <div className={`rounded-xl border overflow-hidden ${live ? 'border-green-500/40 shadow-sm shadow-green-500/10' : hasResult ? 'border-white/15' : 'border-white/10'} bg-gradient-to-br from-white/[0.06] to-white/[0.03]`}>
       <div className={compact ? 'space-y-0.5 p-1.5' : 'space-y-1 p-2'}>
-        {renderPlayer(matchup.user1, matchup.user1_points, u1Winner, done && !u1Winner, 'A')}
-        {renderPlayer(matchup.user2, matchup.user2_points, u2Winner, done && !u2Winner, 'B')}
+        {renderPlayer(matchup.user1, matchup.user1_points, u1Winner, done && !u1Winner, 'A', tbdLabels?.[0])}
+        {renderPlayer(matchup.user2, matchup.user2_points, u2Winner, done && !u2Winner, 'B', tbdLabels?.[1])}
       </div>
     </div>
   );
@@ -169,7 +170,8 @@ function HalfBracket({
   const colWidth = isCompact ? 'w-[100px]' : 'w-[130px] sm:w-[148px]';
 
   const columns = roundsOrder.map((roundNum) => {
-    const matchups = matchupsByRound[roundNum] || makePlaceholders(HALF_MATCHUP_COUNTS[roundNum]);
+    const raw = matchupsByRound[roundNum];
+    const matchups = raw && raw.length > 0 ? raw : makePlaceholders(HALF_MATCHUP_COUNTS[roundNum]);
     const slots = getHalfBracketSlots(matchups.length);
     return { roundNum, matchups, slots };
   });
@@ -318,11 +320,12 @@ function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; is
           <div className="relative" style={{ height: totalHeight }}>
             {/* Center the final card vertically */}
             <div className="absolute left-0 right-0" style={{ top: totalHeight / 2 - cardHeight / 2, height: cardHeight }}>
-              {finalMatchup ? (
-                <MatchupCard matchup={finalMatchup} isMe={isMe} compact={isCompact} />
-              ) : (
-                <MatchupCard matchup={{ position: 1, user1: null, user2: null, user1_points: 0, user2_points: 0, winner_user_id: null, status: 'pending' }} isMe={isMe} compact={isCompact} />
-              )}
+              <MatchupCard
+                matchup={finalMatchup || { position: 1, user1: null, user2: null, user1_points: 0, user2_points: 0, winner_user_id: null, status: 'pending' }}
+                isMe={isMe}
+                compact={isCompact}
+                tbdLabels={['Winner A', 'Winner B']}
+              />
             </div>
             {/* Winner below final */}
             {winnerName && (
