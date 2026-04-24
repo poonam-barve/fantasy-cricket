@@ -87,10 +87,8 @@ def setup_test_db():
         CREATE TABLE weekend_tournaments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             qualifying_match_id INTEGER NOT NULL REFERENCES matches(id),
-            weekend_match_1_id INTEGER NOT NULL REFERENCES matches(id),
-            weekend_match_2_id INTEGER NOT NULL REFERENCES matches(id),
-            weekend_match_3_id INTEGER NOT NULL REFERENCES matches(id),
-            weekend_match_4_id INTEGER NOT NULL REFERENCES matches(id),
+            weekend_match_ids TEXT NOT NULL DEFAULT '[]',
+            num_rounds INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'pending',
             winner_user_id INTEGER REFERENCES users(id),
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -229,10 +227,9 @@ def run_tests():
     # Verify tournament record
     t = conn.execute("SELECT * FROM weekend_tournaments WHERE id = ?", (tournament_id,)).fetchone()
     assert t["qualifying_match_id"] == 101, f"Qualifier should be M101, got M{t['qualifying_match_id']}"
-    assert t["weekend_match_1_id"] == 102
-    assert t["weekend_match_2_id"] == 103
-    assert t["weekend_match_3_id"] == 104
-    assert t["weekend_match_4_id"] == 105
+    import json as _json
+    assert _json.loads(t["weekend_match_ids"]) == [102, 103, 104, 105]
+    assert t["num_rounds"] == 4
     assert t["status"] == "pending"
     print(f"  PASS — Qualifier=M101, Weekend=M102-105, Status=pending")
 
@@ -503,12 +500,67 @@ def run_tests():
     assert len(backfilled) == 8, f"Expected 8 backfilled users, got {len(backfilled)}"
     print(f"  PASS — Backfilled users: {sorted(backfilled)}")
 
+    # ──────────────────────────────────────────
+    # TEST 11: 2-match weekend (4 players, 2 rounds)
+    # ──────────────────────────────────────────
+    print("\n[TEST 11] 2-match weekend (SF + Final)")
+    sat3 = (datetime.strptime(sat2, "%Y-%m-%d") + timedelta(days=7)).strftime("%Y-%m-%d")
+    fri3 = (datetime.strptime(sat3, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    conn.execute("INSERT INTO matches (id, team1, team2, match_date, match_time, status) VALUES (?, ?, ?, ?, ?, ?)",
+                 (301, "CSK", "MI", fri3, "19:30", "completed"))
+    conn.execute("INSERT INTO matches (id, team1, team2, match_date, match_time, status) VALUES (?, ?, ?, ?, ?, ?)",
+                 (302, "RCB", "KKR", sat3, "15:30", "completed"))
+    sun3 = (datetime.strptime(sat3, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    conn.execute("INSERT INTO matches (id, team1, team2, match_date, match_time, status) VALUES (?, ?, ?, ?, ?, ?)",
+                 (303, "DC", "GT", sun3, "15:30", "completed"))
+
+    # 4 users in qualifier
+    for i in range(1, 5):
+        conn.execute(
+            "INSERT INTO contestant_points (user_id, match_id, points, last_updated) VALUES (?, ?, ?, ?)",
+            (i, 301, 500 - i * 50, datetime.now().isoformat()),
+        )
+    conn.commit()
+
+    created3 = wts.detect_and_create_tournaments()
+    assert len(created3) == 1
+    t3_id = created3[0]
+    t3 = conn.execute("SELECT * FROM weekend_tournaments WHERE id = ?", (t3_id,)).fetchone()
+    import json as _json2
+    assert _json2.loads(t3["weekend_match_ids"]) == [302, 303]
+    assert t3["num_rounds"] == 2
+    print(f"  PASS — Tournament #{t3_id}: 2 weekend matches, 2 rounds")
+
+    result3 = wts.seed_bracket(t3_id)
+    assert result3["players"] == 4
+    assert result3["matchups"] == 2
+    print(f"  PASS — 4 players, 2 matchups in round 1 (SF)")
+
+    # Advance round 1
+    simulate_match_points(conn, 302, [1, 2, 3, 4])
+    r1 = wts.advance_round(t3_id, 302)
+    assert r1["status"] == "advanced"
+    assert r1["round"] == 2
+    assert r1["matchups"] == 1
+    print(f"  PASS — 2 winners advanced to Final")
+
+    # Advance final
+    finalists_r = conn.execute(
+        "SELECT user1_id, user2_id FROM weekend_tournament_brackets WHERE tournament_id = ? AND round = 2",
+        (t3_id,),
+    ).fetchone()
+    simulate_match_points(conn, 303, [finalists_r["user1_id"], finalists_r["user2_id"]])
+    r2 = wts.advance_round(t3_id, 303)
+    assert r2["status"] == "completed"
+    print(f"  PASS — 2-match tournament completed! Winner: User#{r2['winner_user_id']}")
+
     # Cleanup
     conn.close()
     os.remove(DB_PATH)
 
     print("\n" + "=" * 60)
-    print("ALL 10 TESTS PASSED")
+    print("ALL 11 TESTS PASSED")
     print("=" * 60)
 
 

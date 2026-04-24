@@ -184,6 +184,7 @@ export type WeekendTournament = {
   message?: string;
   qualifying_match_id?: number;
   weekend_match_ids?: number[];
+  num_rounds?: number;
   winner?: { user_id: number; name: string } | null;
   matches?: Record<string, { team1: string; team2: string; match_date: string; match_time: string; status: string }>;
   qualifiers?: WeekendTournamentQualifier[];

@@ -4,18 +4,31 @@ import client from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import type { WeekendTournament, WeekendTournamentRound, WeekendTournamentMatchup, WeekendTournamentHistory } from '../types';
 
-const ROUND_COLORS: Record<number, string> = {
-  1: 'text-blue-400',
-  2: 'text-purple-400',
-  3: 'text-amber-400',
-  4: 'text-green-400',
-};
+const ROUND_COLOR_LIST = ['text-blue-400', 'text-purple-400', 'text-amber-400', 'text-green-400'];
+function getRoundColor(roundNum: number, numRounds: number): string {
+  // Final is always green, earlier rounds get the other colors
+  if (roundNum === numRounds) return 'text-green-400';
+  return ROUND_COLOR_LIST[roundNum - 1] || 'text-white/40';
+}
 
-const FULL_MATCHUP_COUNTS: Record<number, number> = { 1: 8, 2: 4, 3: 2, 4: 1 };
+function getMatchupCounts(numRounds: number): Record<number, number> {
+  const counts: Record<number, number> = {};
+  for (let r = 1; r <= numRounds; r++) {
+    counts[r] = Math.pow(2, numRounds - r);
+  }
+  return counts;
+}
 
-function getBracketSlots(matchupCount: number) {
+function getRoundLabels(numRounds: number): Record<number, string> {
+  if (numRounds === 1) return { 1: 'Final' };
+  if (numRounds === 2) return { 1: 'SF', 2: 'Final' };
+  if (numRounds === 3) return { 1: 'QF', 2: 'SF', 3: 'Final' };
+  return { 1: 'Ro16', 2: 'QF', 3: 'SF', 4: 'Final' };
+}
+
+function getBracketSlots(matchupCount: number, maxMatchups: number) {
   if (matchupCount <= 0) return [];
-  const totalRows = FULL_MATCHUP_COUNTS[1] * 2 - 1; // 15 rows
+  const totalRows = maxMatchups * 2 - 1;
   const step = totalRows / matchupCount;
   return Array.from({ length: matchupCount }, (_, i) => Math.round((i + 0.5) * step - 0.5));
 }
@@ -83,6 +96,7 @@ function Connector({
   cardHeight,
   topOffset,
   bridgeWidth,
+  totalHeight,
 }: {
   fromSlots: number[];
   toSlots: number[];
@@ -90,11 +104,11 @@ function Connector({
   cardHeight: number;
   topOffset: number;
   bridgeWidth: number;
+  totalHeight: number;
 }) {
   if (fromSlots.length === 0 || toSlots.length === 0) return null;
 
-  const totalRows = FULL_MATCHUP_COUNTS[1] * 2 - 1;
-  const height = topOffset + totalRows * rowHeight + cardHeight;
+  const height = totalHeight;
 
   const paths = fromSlots.map((slot, index) => {
     const targetSlot = toSlots[Math.floor(index / 2)];
@@ -127,47 +141,51 @@ function makePlaceholders(count: number): WeekendTournamentMatchup[] {
   }));
 }
 
-function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; isMe: (id: number) => boolean }) {
-  if (rounds.length === 0) return <div className="text-center text-white/30 py-8 text-sm">Bracket not yet drawn</div>;
+function BracketDiagram({ rounds, isMe, numRounds }: { rounds: WeekendTournamentRound[]; isMe: (id: number) => boolean; numRounds: number }) {
+  if (rounds.length === 0 && numRounds === 0) return <div className="text-center text-white/30 py-8 text-sm">Bracket not yet drawn</div>;
 
+  const n = numRounds || 4;
   const roundsByNumber = new Map(rounds.map((r) => [r.round, r]));
   const isCompact = typeof window !== 'undefined' && window.innerWidth < 640;
   const scrollRef = useRef<HTMLDivElement>(null);
+  const matchupCounts = getMatchupCounts(n);
+  const roundLabels = getRoundLabels(n);
+  const maxMatchups = matchupCounts[1]; // first round has the most
+
   const rowHeight = isCompact ? 48 : 62;
   const cardHeight = isCompact ? 40 : 54;
   const topOffset = isCompact ? 18 : 24;
   const bridgeWidth = isCompact ? 6 : 16;
   const colWidth = isCompact ? 'w-[80px]' : 'w-[130px] sm:w-[148px]';
-  const totalRows = FULL_MATCHUP_COUNTS[1] * 2 - 1; // 15
+  const totalRows = maxMatchups * 2 - 1;
   const totalHeight = topOffset + totalRows * rowHeight + cardHeight;
 
-  const roundLabels: Record<number, string> = { 1: 'Ro16', 2: 'QF', 3: 'SF', 4: 'Final' };
-
-  // Build columns with all matchups (full 8→4→2→1 bracket)
-  const columns = [1, 2, 3, 4].map((roundNum) => {
+  // Build columns dynamically
+  const columns = Array.from({ length: n }, (_, i) => i + 1).map((roundNum) => {
     const round = roundsByNumber.get(roundNum);
     const raw = round?.matchups || [];
-    const expected = FULL_MATCHUP_COUNTS[roundNum];
+    const expected = matchupCounts[roundNum];
     const matchups = raw.length > 0 ? raw : makePlaceholders(expected);
-    const slots = getBracketSlots(matchups.length);
+    const slots = getBracketSlots(matchups.length, maxMatchups);
     return { roundNum, matchups, slots };
   });
 
-  // Determine Group A / Group B divider position for Ro16 column
-  // Group A = matchups 1-4 (top half), Group B = matchups 5-8 (bottom half)
-  const ro16Slots = columns[0].slots;
-  const groupDividerY = ro16Slots.length >= 8
-    ? topOffset + ((ro16Slots[3] + ro16Slots[4]) / 2) * rowHeight + cardHeight / 2
+  // Group A/B divider only for 4-round tournaments (8 matchups in Ro16)
+  const r1Slots = columns[0].slots;
+  const halfR1 = r1Slots.length / 2;
+  const groupDividerY = n >= 4 && r1Slots.length >= 8
+    ? topOffset + ((r1Slots[halfR1 - 1] + r1Slots[halfR1]) / 2) * rowHeight + cardHeight / 2
     : null;
 
   // Final winner
-  const finalMatchup = columns[3]?.matchups?.[0];
+  const lastCol = columns[n - 1];
+  const finalMatchup = lastCol?.matchups?.[0];
   const finalDone = finalMatchup?.status === 'completed' && finalMatchup?.winner_user_id;
   const winnerName = finalDone
     ? (finalMatchup!.winner_user_id === finalMatchup!.user1?.id ? finalMatchup!.user1?.name : finalMatchup!.user2?.name)
     : null;
 
-  // Find the latest round that has real matchups (not placeholders) and auto-scroll to it
+  // Auto-scroll to latest active round on mobile
   const latestActiveRound = Math.max(...columns.filter((c) => {
     const round = roundsByNumber.get(c.roundNum);
     return round && round.matchups && round.matchups.length > 0;
@@ -175,7 +193,6 @@ function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; is
 
   useEffect(() => {
     if (!isCompact || !scrollRef.current) return;
-    // Scroll so the latest active round is visible — scroll right enough to show it
     const colW = 80;
     const bw = 6;
     const scrollTo = Math.max(0, (latestActiveRound - 2) * (colW + bw));
@@ -187,21 +204,21 @@ function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; is
       <div className="flex items-start min-w-max px-1">
         {columns.map((col, colIdx) => {
           const nextCol = columns[colIdx + 1];
-          const isRo16 = col.roundNum === 1;
-          const isFinal = col.roundNum === 4;
+          const isFirstRound = col.roundNum === 1;
+          const isFinal = col.roundNum === n;
 
           return (
             <div key={col.roundNum} className="flex items-start">
               <div className={`relative shrink-0 ${colWidth}`} style={{ height: totalHeight }}>
                 {/* Round header */}
                 <div className="absolute top-0 left-0 right-0 text-center">
-                  <div className={`text-[9px] font-bold uppercase tracking-wider ${ROUND_COLORS[col.roundNum] || 'text-white/40'}`}>
+                  <div className={`text-[9px] font-bold uppercase tracking-wider ${getRoundColor(col.roundNum, n)}`}>
                     {roundLabels[col.roundNum]}
                   </div>
                 </div>
 
-                {/* Group A / B labels for Ro16 */}
-                {isRo16 && groupDividerY !== null && (
+                {/* Group A / B labels (only for 4-round brackets) */}
+                {isFirstRound && groupDividerY !== null && (
                   <>
                     <div className="absolute left-0 text-[8px] font-bold uppercase tracking-widest text-cyan-400/60" style={{ top: topOffset - 2, transform: 'rotate(-90deg) translateX(-100%)', transformOrigin: 'top left' }}>
                       Group A
@@ -209,7 +226,6 @@ function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; is
                     <div className="absolute left-0 text-[8px] font-bold uppercase tracking-widest text-orange-400/60" style={{ top: groupDividerY + 4, transform: 'rotate(-90deg) translateX(-100%)', transformOrigin: 'top left' }}>
                       Group B
                     </div>
-                    {/* Divider line */}
                     <div className="absolute left-2 right-2 border-t border-dashed border-white/10" style={{ top: groupDividerY }} />
                   </>
                 )}
@@ -223,7 +239,7 @@ function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; is
                         matchup={matchup}
                         isMe={isMe}
                         compact={isCompact}
-                        tbdLabels={isFinal ? ['Winner A', 'Winner B'] : undefined}
+                        tbdLabels={isFinal && n >= 4 ? ['Winner A', 'Winner B'] : undefined}
                       />
                     </div>
                   );
@@ -239,6 +255,7 @@ function BracketDiagram({ rounds, isMe }: { rounds: WeekendTournamentRound[]; is
                   cardHeight={cardHeight}
                   topOffset={topOffset}
                   bridgeWidth={bridgeWidth}
+                  totalHeight={totalHeight}
                 />
               )}
             </div>
@@ -267,11 +284,11 @@ export default function WeekendTournamentPage() {
   const { profile } = useAuth();
 
   const contestRules = [
-    'Weekend Battles run only when there are 4 scheduled matches across Saturday and Sunday.',
-    'The last match before Saturday becomes the qualifier and seeds the top 16 users.',
-    'Players are randomly drawn into two groups of 8: Group A (left) and Group B (right). The bracket is fixed from the draw — adjacent winners always play each other.',
-    'Each group plays Ro16, QF, and SF independently. The two group winners meet in the Final.',
-    'If scores are tied, the higher overall leaderboard rank wins. The Final winner is crowned Weekend Champion.',
+    'Weekend Battles run whenever there are matches on Saturday and/or Sunday. More matches = bigger bracket!',
+    'The last match before Saturday becomes the qualifier. Top 2^n users qualify, where n = number of weekend matches (e.g. 4 matches → 16 players, 3 → 8, 2 → 4).',
+    'Players are randomly drawn into a knockout bracket. The bracket is fixed from the draw — adjacent winners always play each other.',
+    'Each weekend match is one knockout round. Winners advance until the Final decides the Weekend Champion.',
+    'If scores are tied, the higher overall leaderboard rank wins the head-to-head.',
   ];
 
   const fetchData = async () => {
@@ -347,7 +364,7 @@ export default function WeekendTournamentPage() {
         <div className="text-center py-16">
           <span className="text-4xl mb-4 block">&#x1F3CF;</span>
           <p className="text-white/40 text-sm">No weekend competition available right now.</p>
-          <p className="text-white/25 text-xs mt-1">Competitions run on weekends with 4 matches (2 Sat + 2 Sun).</p>
+          <p className="text-white/25 text-xs mt-1">Competitions run on weekends with matches on Saturday and/or Sunday.</p>
         </div>
       ) : (
         <>
@@ -385,20 +402,23 @@ export default function WeekendTournamentPage() {
                     {tournament.qualifying_match_id ? getMatchLabel(tournament.qualifying_match_id) : ''}
                   </div>
                 </div>
-                {/* Weekend matches */}
-                {['Ro16', 'QF', 'SF', 'Final'].map((label, i) => {
-                  const mid = tournament.weekend_match_ids![i];
-                  const mStatus = tournament.matches?.[String(mid)]?.status || 'future';
-                  return (
-                    <div key={i} className="flex-1 text-center">
-                      <div className={`text-[9px] mb-1 ${ROUND_COLORS[i + 1] || 'text-white/30'}`}>{label}</div>
-                      <div className={`h-1.5 rounded-full ${
-                        mStatus === 'completed' ? 'bg-green-500' : mStatus === 'live' ? 'bg-green-500 animate-pulse' : 'bg-white/10'
-                      }`} />
-                      <div className="text-[8px] text-white/20 mt-1 truncate">{getMatchLabel(mid)}</div>
-                    </div>
-                  );
-                })}
+                {/* Weekend matches — dynamic labels */}
+                {(() => {
+                  const nr = tournament.num_rounds || tournament.weekend_match_ids?.length || 0;
+                  const labels = getRoundLabels(nr);
+                  return tournament.weekend_match_ids!.map((mid, i) => {
+                    const mStatus = tournament.matches?.[String(mid)]?.status || 'future';
+                    return (
+                      <div key={i} className="flex-1 text-center">
+                        <div className={`text-[9px] mb-1 ${getRoundColor(i + 1, nr)}`}>{labels[i + 1] || `R${i + 1}`}</div>
+                        <div className={`h-1.5 rounded-full ${
+                          mStatus === 'completed' ? 'bg-green-500' : mStatus === 'live' ? 'bg-green-500 animate-pulse' : 'bg-white/10'
+                        }`} />
+                        <div className="text-[8px] text-white/20 mt-1 truncate">{getMatchLabel(mid)}</div>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             )}
           </div>
@@ -432,7 +452,7 @@ export default function WeekendTournamentPage() {
           {tournament.brackets && tournament.brackets.length > 0 && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4 mb-4">
               <h3 className="text-sm font-semibold text-white mb-4">Bracket</h3>
-              <BracketDiagram rounds={tournament.brackets} isMe={isMe} />
+              <BracketDiagram rounds={tournament.brackets} isMe={isMe} numRounds={tournament.num_rounds || tournament.weekend_match_ids?.length || 4} />
             </div>
           )}
 

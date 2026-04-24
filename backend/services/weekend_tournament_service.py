@@ -1,11 +1,13 @@
 """
 Weekend Tournament Service — "Player of the Weekend"
 
-Detects weekends with 4 IPL matches (2 Sat + 2 Sun), picks the last match
-before Saturday as the qualifier, seeds a 16-player knockout bracket, and
-advances rounds as weekend matches complete.
+Detects weekends with IPL matches (1-4 on Sat+Sun), picks the last match
+before Saturday as the qualifier, seeds a 2^n player knockout bracket
+(where n = number of weekend matches), and advances rounds as weekend
+matches complete.
 """
 
+import json
 import random
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -14,7 +16,25 @@ from backend.config import IST
 from backend.database import get_db
 
 
-ROUND_LABELS = {1: "Round of 16", 2: "Quarter Finals", 3: "Semi Finals", 4: "Final"}
+def _get_round_labels(num_rounds: int) -> dict[int, str]:
+    """Generate round labels based on total number of rounds."""
+    if num_rounds == 1:
+        return {1: "Final"}
+    if num_rounds == 2:
+        return {1: "Semi Finals", 2: "Final"}
+    if num_rounds == 3:
+        return {1: "Quarter Finals", 2: "Semi Finals", 3: "Final"}
+    return {1: "Round of 16", 2: "Quarter Finals", 3: "Semi Finals", 4: "Final"}
+
+
+def _get_weekend_match_ids(tournament) -> list[int]:
+    """Extract weekend match IDs from tournament row."""
+    raw = tournament["weekend_match_ids"]
+    if raw and isinstance(raw, str):
+        return json.loads(raw)
+    if isinstance(raw, list):
+        return raw
+    return []
 
 
 # ──────────────────────────────────────────────
@@ -22,7 +42,7 @@ ROUND_LABELS = {1: "Round of 16", 2: "Quarter Finals", 3: "Semi Finals", 4: "Fin
 # ──────────────────────────────────────────────
 
 def detect_and_create_tournaments() -> list[int]:
-    """Scan match schedule for weekends with 4 matches. Create tournaments for any new ones found.
+    """Scan match schedule for weekends with matches. Create tournaments for any new ones found.
     Returns list of newly created tournament IDs."""
     db = get_db()
     matches = db.execute(
@@ -34,7 +54,7 @@ def detect_and_create_tournaments() -> list[int]:
     for m in matches:
         by_date[m["match_date"]].append({"id": m["id"], "date": m["match_date"], "time": m["match_time"]})
 
-    # Find Saturday-Sunday pairs with 2 matches each
+    # Find Saturdays with at least 1 weekend match (Sat or Sun)
     all_dates = sorted(by_date.keys())
     created_ids = []
 
@@ -49,19 +69,16 @@ def detect_and_create_tournaments() -> list[int]:
         sat_matches = by_date.get(sat, [])
         sun_matches = by_date.get(sun, [])
 
-        if len(sat_matches) < 2 or len(sun_matches) < 2:
-            continue
-
-        # Sort by time to get match order
+        # Collect all weekend matches sorted by date+time
         sat_matches.sort(key=lambda x: x["time"])
         sun_matches.sort(key=lambda x: x["time"])
+        weekend_matches = sat_matches + sun_matches
 
-        weekend_match_ids = [
-            sat_matches[0]["id"],  # Sat match 1 = Ro16
-            sat_matches[1]["id"],  # Sat match 2 = QF
-            sun_matches[0]["id"],  # Sun match 1 = SF
-            sun_matches[1]["id"],  # Sun match 2 = Final
-        ]
+        if len(weekend_matches) < 1:
+            continue
+
+        weekend_match_ids = [m["id"] for m in weekend_matches]
+        num_rounds = len(weekend_match_ids)
 
         # Find qualifying match: last match before Saturday
         qualifier = _find_qualifier_match(all_dates, by_date, sat)
@@ -79,11 +96,10 @@ def detect_and_create_tournaments() -> list[int]:
         db.execute(
             """
             INSERT INTO weekend_tournaments
-                (qualifying_match_id, weekend_match_1_id, weekend_match_2_id,
-                 weekend_match_3_id, weekend_match_4_id, status)
-            VALUES (?, ?, ?, ?, ?, 'pending')
+                (qualifying_match_id, weekend_match_ids, num_rounds, status)
+            VALUES (?, ?, ?, 'pending')
             """,
-            (qualifier["id"], *weekend_match_ids),
+            (qualifier["id"], json.dumps(weekend_match_ids), num_rounds),
         )
         db.commit()
 
@@ -93,7 +109,8 @@ def detect_and_create_tournaments() -> list[int]:
         ).fetchone()
         if row:
             created_ids.append(row["id"])
-            print(f"[WEEKEND] Created tournament #{row['id']} qualifier=M{qualifier['id']} weekend=M{weekend_match_ids}")
+            print(f"[WEEKEND] Created tournament #{row['id']} qualifier=M{qualifier['id']} "
+                  f"weekend=M{weekend_match_ids} rounds={num_rounds}")
 
     return created_ids
 
@@ -119,7 +136,7 @@ def _find_qualifier_match(all_dates, by_date, saturday_str):
 # ──────────────────────────────────────────────
 
 def seed_bracket(tournament_id: int) -> dict:
-    """After qualifying match completes, seed the bracket with top 16 players."""
+    """After qualifying match completes, seed the bracket with 2^n players."""
     db = get_db()
 
     tournament = db.execute(
@@ -128,23 +145,27 @@ def seed_bracket(tournament_id: int) -> dict:
     if not tournament:
         return {"error": "Tournament not found"}
 
+    match_ids = _get_weekend_match_ids(tournament)
+    num_rounds = tournament["num_rounds"] or len(match_ids)
+    num_players_needed = 2 ** num_rounds
+
     # Get qualifier results
     qualifier_match_id = tournament["qualifying_match_id"]
     qualifier_results = _get_match_contestant_points(db, qualifier_match_id)
 
-    # Get qualified user IDs (top 16 from qualifier)
+    # Get qualified user IDs (top N from qualifier)
     qualified = []
-    for entry in qualifier_results[:16]:
+    for entry in qualifier_results[:num_players_needed]:
         qualified.append({
             "user_id": entry["user_id"],
             "name": entry["name"],
             "qualifying_points": entry["points"],
         })
 
-    # If less than 16, backfill from overall leaderboard
-    if len(qualified) < 16:
+    # If less than needed, backfill from overall leaderboard
+    if len(qualified) < num_players_needed:
         qualified_ids = {q["user_id"] for q in qualified}
-        leaderboard_fill = _get_leaderboard_backfill(db, qualified_ids, 16 - len(qualified))
+        leaderboard_fill = _get_leaderboard_backfill(db, qualified_ids, num_players_needed - len(qualified))
         qualified.extend(leaderboard_fill)
 
     # Ensure we have an even number (at least 2)
@@ -155,15 +176,15 @@ def seed_bracket(tournament_id: int) -> dict:
     if len(qualified) % 2 != 0:
         qualified = qualified[:-1]
 
-    # Determine bracket size and rounds
+    # Determine bracket size
     num_players = len(qualified)
     num_matchups = num_players // 2
 
-    # Randomize pairings
+    # Randomize pairings (one-time shuffle — bracket is fixed from here)
     random.shuffle(qualified)
 
     # Create round 1 brackets
-    match_id_for_round_1 = tournament["weekend_match_1_id"]
+    match_id_for_round_1 = match_ids[0]
 
     for i in range(num_matchups):
         user1 = qualified[i * 2]
@@ -184,7 +205,8 @@ def seed_bracket(tournament_id: int) -> dict:
     )
     db.commit()
 
-    print(f"[WEEKEND] Seeded tournament #{tournament_id} with {num_players} players, {num_matchups} matchups")
+    print(f"[WEEKEND] Seeded tournament #{tournament_id} with {num_players} players, "
+          f"{num_matchups} matchups, {num_rounds} rounds")
     return {"tournament_id": tournament_id, "players": num_players, "matchups": num_matchups}
 
 
@@ -201,6 +223,9 @@ def advance_round(tournament_id: int, completed_match_id: int) -> dict:
     ).fetchone()
     if not tournament or tournament["status"] != "active":
         return {"error": "Tournament not active"}
+
+    match_ids = _get_weekend_match_ids(tournament)
+    num_rounds = len(match_ids)
 
     # Find which round this match belongs to
     current_round = _get_round_for_match(tournament, completed_match_id)
@@ -256,7 +281,7 @@ def advance_round(tournament_id: int, completed_match_id: int) -> dict:
         winners.append(winner)
 
     # Check if this was the final round
-    if current_round == 4 or len(winners) == 1:
+    if current_round == num_rounds or len(winners) == 1:
         db.execute(
             "UPDATE weekend_tournaments SET status = 'completed', winner_user_id = ? WHERE id = ?",
             (winners[0], tournament_id),
@@ -266,11 +291,11 @@ def advance_round(tournament_id: int, completed_match_id: int) -> dict:
         return {"status": "completed", "winner_user_id": winners[0]}
 
     # Create next round pairings — adjacent winners play each other (no reshuffle)
-    # Winners list is already ordered by match_position (from the ORDER BY above)
     next_round = current_round + 1
-    next_match_id = _get_match_id_for_round(tournament, next_round)
+    next_match_id = match_ids[next_round - 1]
 
     num_matchups = len(winners) // 2
+    round_labels = _get_round_labels(num_rounds)
 
     for i in range(num_matchups):
         db.execute(
@@ -283,7 +308,8 @@ def advance_round(tournament_id: int, completed_match_id: int) -> dict:
         )
 
     db.commit()
-    print(f"[WEEKEND] Advanced tournament #{tournament_id} to round {next_round} ({ROUND_LABELS.get(next_round, '')}), {num_matchups} matchups")
+    print(f"[WEEKEND] Advanced tournament #{tournament_id} to round {next_round} "
+          f"({round_labels.get(next_round, '')}), {num_matchups} matchups")
     return {"status": "advanced", "round": next_round, "matchups": num_matchups}
 
 
@@ -312,18 +338,14 @@ def on_match_completed(match_id: int):
         return
 
     # Check if this match is a weekend match in an active tournament
-    tournament = db.execute(
-        """
-        SELECT * FROM weekend_tournaments
-        WHERE status = 'active'
-          AND (weekend_match_1_id = ? OR weekend_match_2_id = ?
-               OR weekend_match_3_id = ? OR weekend_match_4_id = ?)
-        """,
-        (match_id, match_id, match_id, match_id),
-    ).fetchone()
-    if tournament:
-        print(f"[WEEKEND] Weekend match M{match_id} completed, advancing tournament #{tournament['id']}")
-        advance_round(tournament["id"], match_id)
+    active = db.execute(
+        "SELECT * FROM weekend_tournaments WHERE status = 'active'"
+    ).fetchall()
+    for t in active:
+        if match_id in _get_weekend_match_ids(t):
+            print(f"[WEEKEND] Weekend match M{match_id} completed, advancing tournament #{t['id']}")
+            advance_round(t["id"], match_id)
+            return
 
 
 # ──────────────────────────────────────────────
@@ -369,8 +391,6 @@ def get_tournament_history() -> list[dict]:
     rows = db.execute(
         """
         SELECT wt.id, wt.status, wt.qualifying_match_id,
-               wt.weekend_match_1_id, wt.weekend_match_2_id,
-               wt.weekend_match_3_id, wt.weekend_match_4_id,
                wt.winner_user_id, u.name AS winner_name,
                m.match_date AS qualifier_date
         FROM weekend_tournaments wt
@@ -418,17 +438,13 @@ def get_tournament_match_tags() -> dict[int, dict]:
             "is_qualifier": True,
             "round_label": "Qualifier",
         }
-        round_map = {
-            t["weekend_match_1_id"]: "Round of 16",
-            t["weekend_match_2_id"]: "Quarter Finals",
-            t["weekend_match_3_id"]: "Semi Finals",
-            t["weekend_match_4_id"]: "Final",
-        }
-        for mid, label in round_map.items():
+        match_ids = _get_weekend_match_ids(t)
+        labels = _get_round_labels(len(match_ids))
+        for i, mid in enumerate(match_ids):
             tags[mid] = {
                 "tournament_id": t["id"],
                 "is_qualifier": False,
-                "round_label": label,
+                "round_label": labels.get(i + 1, f"Round {i + 1}"),
             }
     return tags
 
@@ -440,10 +456,8 @@ def get_tournament_match_tags() -> dict[int, dict]:
 def _build_tournament_response(db, tournament) -> dict:
     """Build full tournament response with brackets and match info."""
     t = tournament
-    weekend_match_ids = [
-        t["weekend_match_1_id"], t["weekend_match_2_id"],
-        t["weekend_match_3_id"], t["weekend_match_4_id"],
-    ]
+    weekend_match_ids = _get_weekend_match_ids(t)
+    num_rounds = t["num_rounds"] or len(weekend_match_ids)
     all_match_ids = [t["qualifying_match_id"]] + weekend_match_ids
 
     # Fetch match info
@@ -476,13 +490,14 @@ def _build_tournament_response(db, tournament) -> dict:
     ).fetchall()
 
     # Group brackets by round
+    round_labels = _get_round_labels(num_rounds)
     rounds_data = {}
     for b in brackets:
         r = b["round"]
         if r not in rounds_data:
             rounds_data[r] = {
                 "round": r,
-                "round_label": ROUND_LABELS.get(r, f"Round {r}"),
+                "round_label": round_labels.get(r, f"Round {r}"),
                 "match_id": b["match_id"],
                 "matchups": [],
             }
@@ -543,6 +558,7 @@ def _build_tournament_response(db, tournament) -> dict:
         "status": t["status"],
         "qualifying_match_id": t["qualifying_match_id"],
         "weekend_match_ids": weekend_match_ids,
+        "num_rounds": num_rounds,
         "winner": winner,
         "matches": matches_info,
         "qualifiers": qualifiers,
@@ -552,7 +568,6 @@ def _build_tournament_response(db, tournament) -> dict:
 
 def _get_match_contestant_points(db, match_id: int) -> list[dict]:
     """Get contestant fantasy points for a match, sorted descending."""
-    # Try contestant_points table first
     rows = db.execute(
         """
         SELECT cp.user_id, u.name, cp.points
@@ -647,21 +662,8 @@ def _get_leaderboard_ranks(db) -> dict[int, int]:
 
 def _get_round_for_match(tournament, match_id: int) -> int | None:
     """Determine which round number a match_id corresponds to."""
-    mapping = {
-        tournament["weekend_match_1_id"]: 1,
-        tournament["weekend_match_2_id"]: 2,
-        tournament["weekend_match_3_id"]: 3,
-        tournament["weekend_match_4_id"]: 4,
-    }
-    return mapping.get(match_id)
-
-
-def _get_match_id_for_round(tournament, round_num: int) -> int:
-    """Get the IPL match ID for a given round number."""
-    mapping = {
-        1: tournament["weekend_match_1_id"],
-        2: tournament["weekend_match_2_id"],
-        3: tournament["weekend_match_3_id"],
-        4: tournament["weekend_match_4_id"],
-    }
-    return mapping[round_num]
+    match_ids = _get_weekend_match_ids(tournament)
+    for i, mid in enumerate(match_ids):
+        if mid == match_id:
+            return i + 1
+    return None

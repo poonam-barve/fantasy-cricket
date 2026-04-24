@@ -11,11 +11,16 @@ A weekly knockout tournament that runs across weekend IPL matches. When a weeken
 ### Weekend Detection
 
 A weekend tournament is triggered when:
-- Saturday has **2 IPL matches** (afternoon + evening)
-- Sunday has **2 IPL matches** (afternoon + evening)
+- Saturday and/or Sunday have **at least 1 IPL match** combined
 - There is **at least 1 match before Saturday** that week (the most recent one becomes the qualifier)
 
-If a weekend has fewer than 4 matches, no tournament runs that week.
+The number of weekend matches determines the bracket size:
+- **4 matches** → 16 players (2^4), 4 rounds (Ro16 → QF → SF → Final)
+- **3 matches** → 8 players (2^3), 3 rounds (QF → SF → Final)
+- **2 matches** → 4 players (2^2), 2 rounds (SF → Final)
+- **1 match** → 2 players (2^1), 1 round (Final only)
+
+This means **every weekend with matches gets a tournament**.
 
 Detection runs automatically on app boot and can be triggered manually via admin API.
 
@@ -53,14 +58,18 @@ The draw uses a **single random shuffle at seeding**, then follows a **fixed bra
 
 This means the bracket is determined at seeding time. Group A and Group B play independently until the Final, where each group's champion meets.
 
-### Knockout Rounds (4 Weekend Matches)
+### Knockout Rounds (Variable)
+
+Each weekend match maps to one knockout round. Example with 4 matches:
 
 | Round | Match | Matchups | Description |
 |-------|-------|----------|-------------|
-| Round of 16 | Saturday Match 1 | 8 x (1v1) | 16 players, 8 winners advance |
-| Quarter Finals | Saturday Match 2 | 4 x (1v1) | 8 players, 4 winners advance |
-| Semi Finals | Sunday Match 1 | 2 x (1v1) | 4 players, 2 winners advance |
-| Final | Sunday Match 2 | 1 x (1v1) | 2 players, 1 winner crowned |
+| Round of 16 | Weekend Match 1 | 8 x (1v1) | 16 players, 8 winners advance |
+| Quarter Finals | Weekend Match 2 | 4 x (1v1) | 8 players, 4 winners advance |
+| Semi Finals | Weekend Match 3 | 2 x (1v1) | 4 players, 2 winners advance |
+| Final | Weekend Match 4 | 1 x (1v1) | 2 players, 1 winner crowned |
+
+With fewer matches, the bracket is smaller (e.g. 2 matches = SF + Final with 4 players).
 
 ### 1v1 Rules
 
@@ -108,10 +117,8 @@ The final winner receives the title **"Player of the Weekend"** displayed on the
 |--------|------|-------------|
 | `id` | INTEGER PK | Auto-increment |
 | `qualifying_match_id` | INTEGER FK -> matches | Last match before Saturday (qualifier) |
-| `weekend_match_1_id` | INTEGER FK -> matches | Sat match 1 (Ro16) |
-| `weekend_match_2_id` | INTEGER FK -> matches | Sat match 2 (QF) |
-| `weekend_match_3_id` | INTEGER FK -> matches | Sun match 1 (SF) |
-| `weekend_match_4_id` | INTEGER FK -> matches | Sun match 2 (Final) |
+| `weekend_match_ids` | TEXT (JSON array) | List of weekend match IDs in round order |
+| `num_rounds` | INTEGER | Number of knockout rounds (1-4) |
 | `status` | TEXT | `pending` / `qualifying` / `active` / `completed` |
 | `winner_user_id` | INTEGER FK -> users | Winner (set when completed) |
 | `created_at` | TEXT | Timestamp |
@@ -280,7 +287,9 @@ Accessible from Dashboard quick actions (purple "Weekend" button).
 | User didn't submit team for weekend match | They score 0, opponent wins |
 | Tie in 1v1 points | Higher overall leaderboard rank wins |
 | Match marked "NR" (no result) | Not yet handled (TODO) |
-| Weekend has only 3 matches | No tournament that week |
+| Weekend has only 3 matches | 8-player bracket (3 rounds) |
+| Weekend has only 2 matches | 4-player bracket (2 rounds) |
+| Weekend has only 1 match | 2-player bracket (1 round — just the Final) |
 | No match before Saturday that week | No tournament that week |
 | Qualifier is on Wednesday/Thursday | Works — picks last match before Saturday |
 | Tournament already exists for a weekend | Skipped (UNIQUE constraint on qualifying_match_id) |

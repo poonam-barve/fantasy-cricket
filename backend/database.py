@@ -189,6 +189,39 @@ def _ensure_players_type_sqlite(conn):
         conn.execute("ALTER TABLE players ADD COLUMN type CHAR(1) DEFAULT NULL")
 
 
+def _ensure_weekend_tournaments_flexible_postgres(cursor):
+    cursor.execute("ALTER TABLE weekend_tournaments ADD COLUMN IF NOT EXISTS weekend_match_ids TEXT DEFAULT '[]'")
+    cursor.execute("ALTER TABLE weekend_tournaments ADD COLUMN IF NOT EXISTS num_rounds INTEGER DEFAULT 0")
+    # Backfill from old fixed columns if they exist
+    try:
+        cursor.execute("""
+            UPDATE weekend_tournaments
+            SET weekend_match_ids = '[' || weekend_match_1_id || ',' || weekend_match_2_id || ',' || weekend_match_3_id || ',' || weekend_match_4_id || ']',
+                num_rounds = 4
+            WHERE (weekend_match_ids IS NULL OR weekend_match_ids = '[]') AND weekend_match_1_id IS NOT NULL
+        """)
+    except Exception:
+        pass
+
+
+def _ensure_weekend_tournaments_flexible_sqlite(conn):
+    if not _sqlite_column_exists(conn, "weekend_tournaments", "weekend_match_ids"):
+        conn.execute("ALTER TABLE weekend_tournaments ADD COLUMN weekend_match_ids TEXT DEFAULT '[]'")
+    if not _sqlite_column_exists(conn, "weekend_tournaments", "num_rounds"):
+        conn.execute("ALTER TABLE weekend_tournaments ADD COLUMN num_rounds INTEGER DEFAULT 0")
+    # Backfill from old fixed columns if they exist
+    try:
+        if _sqlite_column_exists(conn, "weekend_tournaments", "weekend_match_1_id"):
+            conn.execute("""
+                UPDATE weekend_tournaments
+                SET weekend_match_ids = '[' || weekend_match_1_id || ',' || weekend_match_2_id || ',' || weekend_match_3_id || ',' || weekend_match_4_id || ']',
+                    num_rounds = 4
+                WHERE (weekend_match_ids IS NULL OR weekend_match_ids = '[]') AND weekend_match_1_id IS NOT NULL
+            """)
+    except Exception:
+        pass
+
+
 def _ensure_matches_venue_sqlite(conn):
     if not _sqlite_column_exists(conn, "matches", "venue"):
         conn.execute("ALTER TABLE matches ADD COLUMN venue TEXT DEFAULT NULL")
@@ -540,6 +573,7 @@ def init_db():
                 UNIQUE(tournament_id, round, match_position)
             )
         """)
+        _ensure_weekend_tournaments_flexible_postgres(cursor)
 
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_user_match ON user_teams(user_id, match_id)")
@@ -685,6 +719,7 @@ def init_db():
         _ensure_team_backups_sqlite(conn)
         _ensure_unknown_players_sqlite(conn)
         _ensure_players_type_sqlite(conn)
+        _ensure_weekend_tournaments_flexible_sqlite(conn)
         _ensure_indexes_sqlite(conn)
         conn.commit()
         conn.close()
