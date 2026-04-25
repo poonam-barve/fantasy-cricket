@@ -1,5 +1,4 @@
 import os
-from backend.config import FIREBASE_CREDENTIALS_PATH
 
 try:
     import firebase_admin
@@ -22,23 +21,16 @@ def init_firebase():
         _initialized = True
         return
 
-    if os.path.exists(FIREBASE_CREDENTIALS_PATH):
-        cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
+    creds_json = os.environ.get("FIREBASE_CREDENTIALS")
+    if creds_json:
+        import json
+        cred = credentials.Certificate(json.loads(creds_json))
         firebase_admin.initialize_app(cred)
         _initialized = True
-        print("Firebase Admin SDK initialized")
+        print("Firebase Admin SDK initialized from env")
     else:
-        # Try environment variable
-        creds_json = os.environ.get("FIREBASE_CREDENTIALS")
-        if creds_json:
-            import json
-            cred = credentials.Certificate(json.loads(creds_json))
-            firebase_admin.initialize_app(cred)
-            _initialized = True
-            print("Firebase Admin SDK initialized from env")
-        else:
-            print("WARNING: Firebase credentials not found. Auth will use dev mode.")
-            _initialized = True  # Mark as initialized to avoid retrying
+        print("WARNING: Firebase credentials not found. Auth will use dev mode.")
+        _initialized = True  # Mark as initialized to avoid retrying
 
 
 def verify_firebase_token(id_token: str) -> dict | None:

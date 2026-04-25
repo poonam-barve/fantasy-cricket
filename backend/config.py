@@ -36,8 +36,3 @@ TEAM_MAP = {
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_PATH = os.path.join(BASE_DIR, "fantasy.db")
 DATA_DIR = os.path.join(os.path.dirname(BASE_DIR), "data")
-
-FIREBASE_CREDENTIALS_PATH = os.environ.get(
-    "FIREBASE_CREDENTIALS_PATH",
-    os.path.join(BASE_DIR, "firebase-credentials.json"),
-)
