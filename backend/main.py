@@ -61,7 +61,6 @@ bootstrap_error = None
 bootstrap_ready = False
 bootstrap_warmup_complete = False
 bootstrap_warmup_error = None
-completed_recompute_started = False
 
 
 def seed_db_if_needed():
@@ -328,7 +327,6 @@ def _run_background_warmup():
             except Exception as exc:
                 print(f"[BOOT] Leaderboard cache prime failed: {exc}")
 
-            start_completed_match_recompute_if_needed()
 
             # Detect weekend tournaments
             try:
@@ -349,37 +347,6 @@ def _run_background_warmup():
             bootstrap_warmup_error = str(exc)
             print(f"[BOOT] Background warmup error: {exc}")
             time.sleep(30)
-
-def _seconds_until_next_completed_recompute() -> float:
-    now = datetime.now(IST)
-    candidates = [
-        now.replace(hour=19, minute=0, second=0, microsecond=0),
-        now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1),
-    ]
-    future_candidates = [candidate for candidate in candidates if candidate > now]
-    next_run = min(future_candidates)
-    return max((next_run - now).total_seconds(), 1.0)
-
-
-def start_completed_match_recompute_if_needed():
-    global completed_recompute_started
-    with bootstrap_lock:
-        if completed_recompute_started:
-            return
-        completed_recompute_started = True
-
-    def _run_completed_recompute_scheduler():
-        while True:
-            sleep_seconds = _seconds_until_next_completed_recompute()
-            time.sleep(sleep_seconds)
-            try:
-                now_label = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-                tournament.recompute_completed_matches(f"scheduled {now_label}")
-            except Exception as exc:
-                print(f"Completed matches scheduled recompute error: {exc}")
-
-    thread = threading.Thread(target=_run_completed_recompute_scheduler, daemon=True)
-    thread.start()
 
 
 @app.on_event("startup")
