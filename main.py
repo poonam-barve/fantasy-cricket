@@ -62,11 +62,11 @@ try:
         "https://www.googleapis.com/auth/drive"
     ]
     try:
-        if (TEST_MODE):
-            creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
-        else:
-            creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
-            creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        creds_json = os.environ.get("GOOGLE_CREDENTIALS")
+        if not creds_json:
+            raise RuntimeError("GOOGLE_CREDENTIALS env var is required")
+        creds_dict = json.loads(creds_json)
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
     except Exception as e:
         print("❌ creds failed")
         traceback.print_exc()
