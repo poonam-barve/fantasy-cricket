@@ -567,22 +567,11 @@ def _build_tournament_response(db, tournament) -> dict:
 
 
 def _get_match_contestant_points(db, match_id: int) -> list[dict]:
-    """Get contestant fantasy points for a match, sorted descending."""
-    rows = db.execute(
-        """
-        SELECT cp.user_id, u.name, cp.points
-        FROM contestant_points cp
-        JOIN users u ON u.id = cp.user_id
-        WHERE cp.match_id = ? AND u.is_active = 1
-        ORDER BY cp.points DESC
-        """,
-        (match_id,),
-    ).fetchall()
+    """Get contestant fantasy points for a match, sorted descending.
 
-    if rows:
-        return [{"user_id": r["user_id"], "name": r["name"], "points": round(float(r["points"]), 2)} for r in rows]
-
-    # Fallback: compute from user_teams + player_points
+    Always computes on-the-fly from user_teams + player_points to avoid
+    stale/incomplete data in the contestant_points cache table.
+    """
     team_rows = db.execute(
         """
         SELECT u.id AS user_id, u.name, ut.player_id,
