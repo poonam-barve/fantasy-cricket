@@ -15,10 +15,9 @@ except ImportError:
 if load_dotenv:
     load_dotenv()
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 
 from backend.config import IST
 from backend.database import init_db, get_db
@@ -413,19 +412,8 @@ def status():
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
 
 if os.path.isdir(STATIC_DIR):
-    # Serve static assets (js, css, images)
-    app.mount("/assets", StaticFiles(directory=os.path.join(STATIC_DIR, "assets")), name="static-assets")
-
-    # Catch-all: serve static files if they exist, otherwise index.html for React Router
-    @app.get("/{full_path:path}")
-    async def serve_spa(request: Request, full_path: str):
-        if full_path.startswith("api/"):
-            return {"detail": "Not found"}
-
-        # Check if it's a real file in dist/
-        file_path = os.path.join(STATIC_DIR, full_path)
-        if full_path and os.path.isfile(file_path):
-            return FileResponse(file_path)
-
-        # Otherwise serve index.html for React Router
-        return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    # Mount the built Vite app at the root. API routes are registered first,
+    # so /api/* remains handled by FastAPI and the SPA can handle client routes.
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="frontend")
+else:
+    print(f"Frontend build not found at {STATIC_DIR}; API-only mode enabled")
