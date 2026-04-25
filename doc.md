@@ -96,7 +96,7 @@ Every 60s:
 
 ### Production DB Access
 ```
-postgresql://fantasy_cricket_db_2vqs_user:gDgFuMoIEMkOnrFZHuZuNRuQDIa0dfJM@dpg-d74f8h75r7bs73cs96t0-a.oregon-postgres.render.com/fantasy_cricket_db_2vqs
+(credentials removed — use Render dashboard)
 ```
 
 ### Build & Deploy
