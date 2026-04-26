@@ -27,6 +27,7 @@ SCORES_RESPONSE_CACHE_LOCK = threading.Lock()
 SCORES_RESPONSE_CACHE = DoubleBufferCache()
 SCORES_CACHE_SCHEDULER_LOCK = threading.Lock()
 SCORES_CACHE_SCHEDULER_STARTED = False
+SCORES_PERSIST_LOCK = threading.Lock()
 
 
 def _empty_match_scores_payload(match_status: str = "live") -> dict:
@@ -138,53 +139,54 @@ def _persist_scores_snapshot_to_db(snapshot: dict[int, dict], match_ids: set[int
 
     target_match_ids = set(match_ids) if match_ids is not None else set(snapshot.keys())
 
-    for match_id, payload in snapshot.items():
-        if int(match_id) not in target_match_ids:
-            continue
-        match_status = str(payload.get("match_status") or "").strip().lower()
-        data_service.clear_points_for_match(int(match_id))
-
-        if match_status == "nr":
-            continue
-
-        player_rows = []
-        for player in payload.get("players", []):
-            player_id = player.get("player_id")
-            if player_id in (None, ""):
-                _log_scores_cache(
-                    f"skipping player row without player id for match={match_id}: {player}"
-                )
+    with SCORES_PERSIST_LOCK:
+        for match_id, payload in snapshot.items():
+            if int(match_id) not in target_match_ids:
                 continue
-            player_rows.append({
-                "MatchID": int(match_id),
-                "PlayerID": int(player_id),
-                "PlayerName": player.get("name", ""),
-                "Team": player.get("team", ""),
-                "Role": player.get("role", ""),
-                "Points": float(player.get("points", 0) or 0),
-                "LastUpdated": now_str,
-            })
+            match_status = str(payload.get("match_status") or "").strip().lower()
 
-        contestant_rows = []
-        for contestant in payload.get("contestants", []):
-            contestant_user_id = contestant.get("user_id") or contestant.get("id")
-            if contestant_user_id in (None, ""):
-                _log_scores_cache(
-                    f"skipping contestant row without user id for match={match_id}: {contestant}"
-                )
+            if match_status == "nr":
+                data_service.clear_points_for_match(int(match_id))
                 continue
-            contestant_rows.append({
-                "UserID": int(contestant_user_id),
-                "User": contestant.get("name", ""),
-                "MatchID": int(match_id),
-                "Points": float(contestant.get("points", 0) or 0),
-                "LastUpdated": now_str,
-            })
 
-        if player_rows:
-            data_service.save_player_points(player_rows)
-        if contestant_rows:
-            data_service.save_contestant_points(contestant_rows)
+            player_rows = []
+            for player in payload.get("players", []):
+                player_id = player.get("player_id")
+                if player_id in (None, ""):
+                    _log_scores_cache(
+                        f"skipping player row without player id for match={match_id}: {player}"
+                    )
+                    continue
+                player_rows.append({
+                    "MatchID": int(match_id),
+                    "PlayerID": int(player_id),
+                    "PlayerName": player.get("name", ""),
+                    "Team": player.get("team", ""),
+                    "Role": player.get("role", ""),
+                    "Points": float(player.get("points", 0) or 0),
+                    "LastUpdated": now_str,
+                })
+
+            contestant_rows = []
+            for contestant in payload.get("contestants", []):
+                contestant_user_id = contestant.get("user_id") or contestant.get("id")
+                if contestant_user_id in (None, ""):
+                    _log_scores_cache(
+                        f"skipping contestant row without user id for match={match_id}: {contestant}"
+                    )
+                    continue
+                contestant_rows.append({
+                    "UserID": int(contestant_user_id),
+                    "User": contestant.get("name", ""),
+                    "MatchID": int(match_id),
+                    "Points": float(contestant.get("points", 0) or 0),
+                    "LastUpdated": now_str,
+                })
+
+            if player_rows:
+                data_service.save_player_points(player_rows)
+            if contestant_rows:
+                data_service.save_contestant_points(contestant_rows)
 
 
 def _build_match_scores_payload(match_id: int, match_row, registry, players_data, db) -> dict | None:
