@@ -28,6 +28,8 @@ SCORES_RESPONSE_CACHE = DoubleBufferCache()
 SCORES_CACHE_SCHEDULER_LOCK = threading.Lock()
 SCORES_CACHE_SCHEDULER_STARTED = False
 SCORES_PERSIST_LOCK = threading.Lock()
+SCORES_REFRESH_INFLIGHT_LOCK = threading.Lock()
+SCORES_REFRESH_INFLIGHT: set[int] = set()
 
 
 def _empty_match_scores_payload(match_status: str = "live") -> dict:
@@ -127,6 +129,24 @@ def _ensure_score_payload_cached(match_id: int, match_row=None) -> dict | None:
         cached_payload = _wait_for_cached_score_payload(match_id)
 
     return cached_payload
+
+
+def _queue_scores_refresh(match_id: int) -> None:
+    with SCORES_REFRESH_INFLIGHT_LOCK:
+        if match_id in SCORES_REFRESH_INFLIGHT:
+            return
+        SCORES_REFRESH_INFLIGHT.add(match_id)
+
+    def run():
+        try:
+            refresh_scores_response_cache_once()
+        except Exception as exc:
+            _log_scores_cache(f"background refresh failed match={match_id}: {exc}")
+        finally:
+            with SCORES_REFRESH_INFLIGHT_LOCK:
+                SCORES_REFRESH_INFLIGHT.discard(match_id)
+
+    threading.Thread(target=run, daemon=True, name=f"scores-refresh-{match_id}").start()
 
 
 def _store_scores_response_cache(snapshot: dict[int, dict]) -> None:
@@ -366,6 +386,8 @@ def _build_completed_match_scores_payload(match_id: int, match_row, registry, pl
             use_db_points = False
 
     points_source = db_pp_lookup if use_db_points else (cached_pp_lookup or db_pp_lookup)
+    if match_status == "live":
+        points_source = cached_pp_lookup
 
     players = []
     if match_obj and getattr(match_obj, "players", None):
@@ -437,7 +459,8 @@ def _build_completed_match_scores_payload(match_id: int, match_row, registry, pl
             })
 
     players.sort(key=lambda x: x["points"], reverse=True)
-    contestants = _rank_contestants(_compute_contestants_from_player_points(db, match_id, points_source))
+    live_points_lookup = {str(player["player_id"]): float(player.get("points", 0)) for player in players}
+    contestants = _rank_contestants(_compute_contestants_from_player_points(db, match_id, live_points_lookup))
 
     return {
         "players": players,
@@ -951,6 +974,7 @@ async def match_scores(
     user: dict = Depends(get_current_user),
 ):
     db = get_db()
+    registry, players_data = _build_registry(db)
 
     # Get match info
     match_row = db.execute(
@@ -969,6 +993,13 @@ async def match_scores(
         _log_scores_cache(
             f"cache miss match={match_id} status={match_status or 'unknown'} live={SCORES_RESPONSE_CACHE.has_live()}"
         )
+        if match_status in {"live", "completed"}:
+            _queue_scores_refresh(match_id)
+            fallback_payload = _build_match_scores_payload(match_id, match_row, registry, players_data, db)
+            if fallback_payload is None and match_status == "completed":
+                fallback_payload = _build_completed_match_scores_payload(match_id, match_row, registry, players_data, db)
+            if fallback_payload is not None:
+                return fallback_payload
         raise HTTPException(status_code=503, detail="Score cache not ready")
 
     return cached_payload
@@ -1123,8 +1154,12 @@ def _load_match_and_points(db, match_id):
         pp_lookup = db_pp_lookup or cached_pp_lookup
         role_lookup = db_role_lookup or cached_role_lookup
     elif match_status == "live":
-        pp_lookup = cached_pp_lookup or db_pp_lookup
+        pp_lookup = cached_pp_lookup
         role_lookup = cached_role_lookup or db_role_lookup
+        if not pp_lookup:
+            # Live views should never fall back to stale DB points. If the live
+            # snapshot is not populated yet, let the caller treat it as not ready.
+            return match_row, cached_payload, {}, {}
     else:
         pp_lookup = db_pp_lookup or cached_pp_lookup
         role_lookup = db_role_lookup or cached_role_lookup
