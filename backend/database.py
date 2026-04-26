@@ -174,14 +174,13 @@ def _ensure_user_teams_updated_at_sqlite(conn):
 
 
 def _ensure_user_teams_updated_at_postgres(cursor):
-    cursor.execute("ALTER TABLE user_teams ADD COLUMN IF NOT EXISTS updated_at TEXT")
-    cursor.execute(
-        "UPDATE user_teams SET updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE updated_at IS NULL OR updated_at = ''"
-    )
+    # Postgres tables are created with updated_at already present. Avoid ALTERs
+    # during startup because they can deadlock with live request traffic.
+    return
 
 
 def _ensure_players_type_postgres(cursor):
-    cursor.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS type CHAR(1) DEFAULT NULL")
+    return
 
 
 def _ensure_players_type_sqlite(conn):
@@ -190,22 +189,7 @@ def _ensure_players_type_sqlite(conn):
 
 
 def _ensure_weekend_tournaments_flexible_postgres(cursor):
-    cursor.execute("ALTER TABLE weekend_tournaments ADD COLUMN IF NOT EXISTS weekend_match_ids TEXT DEFAULT '[]'")
-    cursor.execute("ALTER TABLE weekend_tournaments ADD COLUMN IF NOT EXISTS num_rounds INTEGER DEFAULT 0")
-    cursor.execute("ALTER TABLE weekend_tournaments ALTER COLUMN weekend_match_1_id DROP NOT NULL")
-    cursor.execute("ALTER TABLE weekend_tournaments ALTER COLUMN weekend_match_2_id DROP NOT NULL")
-    cursor.execute("ALTER TABLE weekend_tournaments ALTER COLUMN weekend_match_3_id DROP NOT NULL")
-    cursor.execute("ALTER TABLE weekend_tournaments ALTER COLUMN weekend_match_4_id DROP NOT NULL")
-    # Backfill from old fixed columns if they exist
-    try:
-        cursor.execute("""
-            UPDATE weekend_tournaments
-            SET weekend_match_ids = '[' || weekend_match_1_id || ',' || weekend_match_2_id || ',' || weekend_match_3_id || ',' || weekend_match_4_id || ']',
-                num_rounds = 4
-            WHERE (weekend_match_ids IS NULL OR weekend_match_ids = '[]') AND weekend_match_1_id IS NOT NULL
-        """)
-    except Exception:
-        pass
+    return
 
 
 def _ensure_weekend_tournaments_flexible_sqlite(conn):
