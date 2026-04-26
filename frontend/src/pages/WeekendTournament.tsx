@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import type { WeekendTournament, WeekendTournamentRound, WeekendTournamentMatchup, WeekendTournamentHistory } from '../types';
@@ -31,6 +32,33 @@ function getBracketSlots(matchupCount: number, maxMatchups: number) {
   const totalRows = maxMatchups * 2 - 1;
   const step = totalRows / matchupCount;
   return Array.from({ length: matchupCount }, (_, i) => Math.round((i + 0.5) * step - 0.5));
+}
+
+function parseBooleanish(value: string | null | undefined): boolean {
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+function useCompactPreviewMode() {
+  const location = useLocation();
+  const envCompact = parseBooleanish(import.meta.env.VITE_MOBILE_MODE);
+  const queryParams = new URLSearchParams(location.search);
+  const queryCompact = parseBooleanish(queryParams.get('mobile')) || parseBooleanish(queryParams.get('compact'));
+  const forcedCompact = envCompact || queryCompact;
+  const [isCompact, setIsCompact] = useState(() => forcedCompact || (typeof window !== 'undefined' && window.innerWidth < 640));
+
+  useEffect(() => {
+    if (forcedCompact) {
+      setIsCompact(true);
+      return;
+    }
+
+    const updateMode = () => setIsCompact(window.innerWidth < 640);
+    updateMode();
+    window.addEventListener('resize', updateMode);
+    return () => window.removeEventListener('resize', updateMode);
+  }, [forcedCompact]);
+
+  return isCompact;
 }
 
 function MatchupCard({ matchup, isMe, compact = false, tbdLabels }: { matchup: WeekendTournamentMatchup; isMe: (id: number) => boolean; compact?: boolean; tbdLabels?: [string, string] }) {
@@ -65,12 +93,15 @@ function MatchupCard({ matchup, isMe, compact = false, tbdLabels }: { matchup: W
     return (
       <div className={`flex items-center justify-between rounded-md border transition-colors ${compact ? 'px-1.5 py-1.5' : 'px-2 py-2'} ${blockTone}`}>
         <div className="flex items-center gap-1 min-w-0">
-          <span className={`font-medium truncate ${compact ? 'text-[10px]' : 'text-xs'} ${isWinner ? 'text-green-200' : isLoser ? 'text-red-100' : 'text-white'}`}>
-            {user.name}
-          </span>
-          {me && <span className="px-1 py-0.5 text-[7px] font-bold bg-white/20 text-white rounded">YOU</span>}
-          {isWinner && done && <span className="px-1 py-0.5 text-[7px] font-bold rounded bg-green-500/20 text-green-100">WIN</span>}
-          {isLoser && done && <span className="px-1 py-0.5 text-[7px] font-bold rounded bg-red-500/20 text-red-100">OUT</span>}
+          {me ? (
+            <span className="rounded bg-white/15 px-1.5 py-0.5 text-[7px] font-extrabold uppercase tracking-[0.22em] text-white">
+              YOU
+            </span>
+          ) : (
+            <span className={`font-medium truncate ${compact ? 'text-[10px]' : 'text-xs'} ${isWinner ? 'text-green-200' : isLoser ? 'text-red-100' : 'text-white'}`}>
+              {user.name}
+            </span>
+          )}
         </div>
         {(done || live) && (
           <span className={`font-bold ml-1 flex-shrink-0 ${compact ? 'text-[10px]' : 'text-[11px]'} ${isWinner ? 'text-green-100' : isLoser ? 'text-red-100/80' : 'text-white/50'}`}>{points}</span>
@@ -115,7 +146,8 @@ function Connector({
     if (targetSlot === undefined) return null;
     const sourceY = topOffset + slot * rowHeight + cardHeight / 2;
     const targetY = topOffset + targetSlot * rowHeight + cardHeight / 2;
-    return `M 0 ${sourceY} H 8 V ${targetY} H ${bridgeWidth}`;
+    const controlX = bridgeWidth / 2;
+    return `M 0 ${sourceY} C ${controlX} ${sourceY}, ${controlX} ${targetY}, ${bridgeWidth} ${targetY}`;
   }).filter(Boolean) as string[];
 
   return (
@@ -146,17 +178,17 @@ function BracketDiagram({ rounds, isMe, numRounds }: { rounds: WeekendTournament
 
   const n = numRounds || 4;
   const roundsByNumber = new Map(rounds.map((r) => [r.round, r]));
-  const isCompact = typeof window !== 'undefined' && window.innerWidth < 640;
+  const isCompact = useCompactPreviewMode();
   const scrollRef = useRef<HTMLDivElement>(null);
   const matchupCounts = getMatchupCounts(n);
   const roundLabels = getRoundLabels(n);
   const maxMatchups = matchupCounts[1]; // first round has the most
 
-  const rowHeight = isCompact ? 48 : 62;
-  const cardHeight = isCompact ? 40 : 54;
-  const topOffset = isCompact ? 18 : 24;
-  const bridgeWidth = isCompact ? 6 : 16;
-  const colWidth = isCompact ? 'w-[80px]' : 'w-[130px] sm:w-[148px]';
+  const rowHeight = isCompact ? 44 : 58;
+  const cardHeight = isCompact ? 36 : 50;
+  const topOffset = isCompact ? 16 : 22;
+  const bridgeWidth = isCompact ? 8 : 18;
+  const colWidth = isCompact ? 'w-[78px]' : 'w-[126px] sm:w-[146px]';
   const totalRows = maxMatchups * 2 - 1;
   const totalHeight = topOffset + totalRows * rowHeight + cardHeight;
 
@@ -176,6 +208,8 @@ function BracketDiagram({ rounds, isMe, numRounds }: { rounds: WeekendTournament
   const groupDividerY = n >= 4 && r1Slots.length >= 8
     ? topOffset + ((r1Slots[halfR1 - 1] + r1Slots[halfR1]) / 2) * rowHeight + cardHeight / 2
     : null;
+  const groupACenterY = groupDividerY !== null ? topOffset + (groupDividerY - topOffset) / 2 : null;
+  const groupBCenterY = groupDividerY !== null ? groupDividerY + (totalHeight - groupDividerY) / 2 : null;
 
   // Final winner
   const lastCol = columns[n - 1];
@@ -220,11 +254,15 @@ function BracketDiagram({ rounds, isMe, numRounds }: { rounds: WeekendTournament
                 {/* Group A / B labels (only for 4-round brackets) */}
                 {isFirstRound && groupDividerY !== null && (
                   <>
-                    <div className="absolute left-0 text-[8px] font-bold uppercase tracking-widest text-cyan-400/60" style={{ top: topOffset - 2, transform: 'rotate(-90deg) translateX(-100%)', transformOrigin: 'top left' }}>
-                      Group A
+                    <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: groupACenterY ?? topOffset }}>
+                      <span className="rounded-full border border-cyan-400/20 bg-[#07130d]/80 px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.22em] text-cyan-300/80 shadow-sm shadow-black/30">
+                        Group A
+                      </span>
                     </div>
-                    <div className="absolute left-0 text-[8px] font-bold uppercase tracking-widest text-orange-400/60" style={{ top: groupDividerY + 4, transform: 'rotate(-90deg) translateX(-100%)', transformOrigin: 'top left' }}>
-                      Group B
+                    <div className="absolute inset-x-0 flex justify-center pointer-events-none" style={{ top: groupBCenterY ?? groupDividerY }}>
+                      <span className="rounded-full border border-orange-400/20 bg-[#07130d]/80 px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.22em] text-orange-300/80 shadow-sm shadow-black/30">
+                        Group B
+                      </span>
                     </div>
                     <div className="absolute left-2 right-2 border-t border-dashed border-white/10" style={{ top: groupDividerY }} />
                   </>
