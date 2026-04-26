@@ -14,6 +14,8 @@ except ImportError:
 
 if load_dotenv:
     load_dotenv()
+    # Let a local override file win during development without affecting deploys.
+    load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env.local"), override=True)
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,7 +26,7 @@ from backend.config import IST
 from backend.database import init_db, get_db
 from backend.firebase_setup import init_firebase
 from backend.services import data_service
-from backend.services.scraper import compute_toss_time, sync_match_metadata_from_schedule
+from backend.services.scraper import compute_toss_time
 from backend.services.venue_stats import prime_today_venue_cache
 from backend.models.tournament import Tournament
 from backend.routes import auth, matches, players, teams, scores, leaderboard, admin, weekend_tournament
@@ -64,6 +66,10 @@ bootstrap_warmup_error = None
 
 
 def seed_db_if_needed():
+    if str(os.environ.get("SKIP_DB_SEED", "")).strip().lower() in {"1", "true", "yes"}:
+        print("Skipping database seed because SKIP_DB_SEED is enabled")
+        return
+
     db = get_db()
     counts = {
         "players": db.execute("SELECT COUNT(*) as cnt FROM players").fetchone(),
@@ -245,6 +251,56 @@ def normalize_player_types():
         print(f"Updated player types for {updated_rows} rows")
 
 
+def _load_todays_live_matches():
+    today_key = datetime.now(IST).strftime("%Y-%m-%d")
+    matches_data = data_service.get_cached_data("matches")
+    prepared_matches = []
+
+    for match in matches_data:
+        status, _ = matches.compute_runtime_match_status(
+            match["Date"],
+            match["Time"],
+            match.get("Status"),
+        )
+        match_copy = dict(match)
+        match_copy["status"] = status
+        prepared_matches.append(match_copy)
+
+    today_live_matches = [
+        match
+        for match in prepared_matches
+        if match.get("Date") == today_key and match.get("status") in {"lineups", "live"}
+    ]
+    live_match_ids = [int(match["MatchID"]) for match in today_live_matches]
+    return prepared_matches, today_live_matches, live_match_ids
+
+
+def _run_deferred_match_warmup():
+    try:
+        time.sleep(2)
+        print("[BOOT] Deferred match warmup starting")
+
+        try:
+            from backend.services.weekend_tournament_service import detect_and_create_tournaments
+            created = detect_and_create_tournaments()
+            if created:
+                print(f"[BOOT] Weekend tournaments created: {created}")
+            else:
+                print("[BOOT] No new weekend tournaments detected")
+        except Exception as exc:
+            print(f"[BOOT] Weekend tournament detection failed: {exc}")
+
+        try:
+            from backend.services.scraper import populate_match_venues
+            populate_match_venues(get_db())
+        except Exception as exc:
+            print(f"[BOOT] Venue backfill failed: {exc}")
+
+        print("[BOOT] Deferred match warmup complete")
+    except Exception as exc:
+        print(f"[BOOT] Deferred warmup error: {exc}")
+
+
 def bootstrap_app():
     global bootstrap_ready, bootstrap_error
     try:
@@ -281,23 +337,15 @@ def _run_background_warmup():
     while True:
         try:
             print("[BOOT] Background warmup starting")
-            sync_match_metadata_from_schedule(get_db())
             data_service.prime_static_cache()
 
-            match_rows = data_service.get_matches_api_rows()
-            for match in match_rows:
-                status, _ = matches.compute_runtime_match_status(
-                    match["match_date"],
-                    match["match_time"],
-                    match.get("status"),
-                )
-                match["status"] = status
-            prime_today_venue_cache(match_rows)
+            _, today_live_matches, live_match_ids = _load_todays_live_matches()
+            prime_today_venue_cache(today_live_matches)
 
             players_data = data_service.get_cached_data("players")
-            matches_data = data_service.get_cached_data("matches")
+            teams_data = data_service.get_teams_for_matches(live_match_ids)
 
-            tournament.initialize(players_data, matches_data, [])
+            tournament.initialize(players_data, today_live_matches, teams_data)
             tournament.start_lineup_cache_scheduler()
             tournament.start_toss_cache_scheduler()
             tournament.start_scheduler()
@@ -305,6 +353,7 @@ def _run_background_warmup():
             scores.start_scores_cache_scheduler()
             print("[BOOT] Starting leaderboard cache scheduler")
             leaderboard.start_leaderboard_cache_scheduler()
+
             print("[BOOT] Priming scores cache")
             try:
                 prime_summary = scores.refresh_scores_response_cache_once()
@@ -327,21 +376,12 @@ def _run_background_warmup():
             except Exception as exc:
                 print(f"[BOOT] Leaderboard cache prime failed: {exc}")
 
-
-            # Detect weekend tournaments
-            try:
-                from backend.services.weekend_tournament_service import detect_and_create_tournaments
-                created = detect_and_create_tournaments()
-                if created:
-                    print(f"[BOOT] Weekend tournaments created: {created}")
-                else:
-                    print("[BOOT] No new weekend tournaments detected")
-            except Exception as exc:
-                print(f"[BOOT] Weekend tournament detection failed: {exc}")
-
             bootstrap_warmup_complete = True
             bootstrap_warmup_error = None
-            print("Fantasy Cricket API background warmup complete")
+            print("Fantasy Cricket API initial warmup complete")
+
+            deferred_thread = threading.Thread(target=_run_deferred_match_warmup, daemon=True)
+            deferred_thread.start()
             return
         except Exception as exc:
             bootstrap_warmup_error = str(exc)

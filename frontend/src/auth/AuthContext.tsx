@@ -36,12 +36,13 @@ async function waitForBackendReady(): Promise<boolean> {
         headers: { 'Cache-Control': 'no-cache' },
       });
 
-      const status = String(res.data?.status || '').toLowerCase();
-      if (status === 'ok') {
+      const criticalReady = Boolean(res.data?.critical_ready);
+      if (criticalReady) {
         return true;
       }
 
-      if (status !== 'starting' && status !== 'warming') {
+      const status = String(res.data?.status || '').toLowerCase();
+      if (status !== 'starting') {
         return true;
       }
     } catch {

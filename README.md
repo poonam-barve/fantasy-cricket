@@ -541,6 +541,18 @@ npm install
 4. Save as `backend/firebase-credentials.json`
 5. Copy your Firebase web config to `frontend/src/auth/firebase.ts`
 
+### 2b. Local Environment
+
+Create a separate local env file for your machine:
+
+```bash
+# From project root
+copy .env.local.example .env.local
+```
+
+Then edit `.env.local` with your local values. This file is loaded automatically
+when the app starts locally.
+
 ### 3. Initialize Database
 
 ```bash
@@ -550,9 +562,43 @@ python -m backend.scripts.seed_db
 
 This creates `backend/fantasy.db` with sample players, matches, and a demo admin user.
 
+### Optional: Separate Local PostgreSQL DB
+
+If you want to test against PostgreSQL locally, start a separate local database and
+copy the current local SQLite snapshot into it:
+
+```bash
+# Start Postgres
+docker compose -f docker-compose.postgres.yml up -d
+
+# Point the app at local Postgres (PowerShell)
+$env:DATABASE_URL="postgresql://postgres@localhost:5432/FantasyDBLocal"
+
+# Copy the current local SQLite data into the local Postgres DB
+python -m backend.scripts.sync_sqlite_to_postgres
+```
+
+This keeps the app code unchanged while letting you exercise the same data model
+against a separate local PostgreSQL database. Live and local databases stay
+independent.
+
 ---
 
 ## Running Locally
+
+### One-Click Start
+```bash
+start.bat
+```
+
+This will:
+- create the local Postgres database if it does not already exist
+- create any missing tables
+- skip automatic workbook seeding during local startup
+- start the backend and frontend
+
+After the schema is created, you can restore a data-only backup into the empty
+database and then rerun the app if needed.
 
 ### Start Backend (Terminal 1)
 ```bash

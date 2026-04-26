@@ -21,7 +21,7 @@ from backend.database import get_db
 
 _lock = threading.Lock()
 
-CACHE: dict = {
+CACHE: dict[str, list[dict] | None] = {
     "players": None,
     "users": None,
     "matches": None,
@@ -155,14 +155,22 @@ def get_cached_data(sheet_name: str) -> list[dict]:
         return []
 
     with _lock:
-        if CACHE[sheet_name] is None:
-            if sheet_name == "players":
-                CACHE[sheet_name] = _cached_players()
-            elif sheet_name == "users":
-                CACHE[sheet_name] = _cached_users()
-            elif sheet_name == "matches":
-                CACHE[sheet_name] = _cached_matches()
-    return CACHE.get(sheet_name, [])
+        cached = CACHE[sheet_name]
+        if cached is not None:
+            return copy.deepcopy(cached)
+
+    if sheet_name == "players":
+        payload = _cached_players()
+    elif sheet_name == "users":
+        payload = _cached_users()
+    elif sheet_name == "matches":
+        payload = _cached_matches()
+    else:
+        payload = []
+
+    with _lock:
+        CACHE[sheet_name] = copy.deepcopy(payload)
+    return payload
 
 
 def _cached_players() -> list[dict]:

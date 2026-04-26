@@ -12,6 +12,7 @@ from backend.database import get_db
 from backend.models.match import Match, clean_team_name
 from backend.models.registry import PlayerRegistry
 from backend.services import data_service
+from backend.services.double_buffer_cache import DoubleBufferCache
 from backend.services.live_scores import append_missing_live_team_players
 from backend.services.scraper import fetch_playing_xi, fetch_scorecard_html, fetch_cricbuzz_scorecard_html
 from bs4 import BeautifulSoup
@@ -23,11 +24,7 @@ MATCH_DATA_CACHE_LOCK = threading.Lock()
 MATCH_DATA_REFRESH_INFLIGHT: set[tuple[int, bool]] = set()
 
 SCORES_RESPONSE_CACHE_LOCK = threading.Lock()
-SCORES_RESPONSE_CACHE = {
-    "matches": {},
-    "generated_at": 0.0,
-    "ready": False,
-}
+SCORES_RESPONSE_CACHE = DoubleBufferCache()
 SCORES_CACHE_SCHEDULER_LOCK = threading.Lock()
 SCORES_CACHE_SCHEDULER_STARTED = False
 
@@ -81,22 +78,20 @@ def _is_completed_score_target(match_row) -> bool:
 
 
 def invalidate_scores_response_cache():
-    with SCORES_RESPONSE_CACHE_LOCK:
-        SCORES_RESPONSE_CACHE["matches"] = {}
-        SCORES_RESPONSE_CACHE["generated_at"] = 0.0
-        SCORES_RESPONSE_CACHE["ready"] = False
+    SCORES_RESPONSE_CACHE.invalidate()
     _log_scores_cache("response cache invalidated")
 
 
 def _get_cached_score_payload(match_id: int) -> dict | None:
-    with SCORES_RESPONSE_CACHE_LOCK:
-        payload = SCORES_RESPONSE_CACHE["matches"].get(int(match_id))
-        return _copy_score_payload(payload)
+    snapshot = SCORES_RESPONSE_CACHE.read()
+    if not snapshot:
+        return None
+    payload = snapshot.get(int(match_id))
+    return _copy_score_payload(payload)
 
 
 def _get_scores_cache_version() -> int:
-    with SCORES_RESPONSE_CACHE_LOCK:
-        return int(float(SCORES_RESPONSE_CACHE["generated_at"] or 0.0) * 1000)
+    return 0
 
 
 def _wait_for_cached_score_payload(match_id: int, timeout_seconds: float = 8.0, poll_seconds: float = 0.25) -> dict | None:
@@ -108,11 +103,8 @@ def _wait_for_cached_score_payload(match_id: int, timeout_seconds: float = 8.0, 
         if cached_payload is not None:
             return cached_payload
 
-        with SCORES_RESPONSE_CACHE_LOCK:
-            ready = SCORES_RESPONSE_CACHE["ready"]
-
         if first_wait_log:
-            _log_scores_cache(f"waiting for cache match={match_id} ready={ready} timeout={timeout_seconds:.1f}s")
+            _log_scores_cache(f"waiting for cache match={match_id} live={SCORES_RESPONSE_CACHE.has_live()} timeout={timeout_seconds:.1f}s")
             first_wait_log = False
 
         time.sleep(poll_seconds)
@@ -137,21 +129,62 @@ def _ensure_score_payload_cached(match_id: int, match_row=None) -> dict | None:
 
 
 def _store_scores_response_cache(snapshot: dict[int, dict]) -> None:
-    with SCORES_RESPONSE_CACHE_LOCK:
-        SCORES_RESPONSE_CACHE["matches"] = copy.deepcopy(snapshot)
-        SCORES_RESPONSE_CACHE["generated_at"] = time.time()
-        SCORES_RESPONSE_CACHE["ready"] = True
+    SCORES_RESPONSE_CACHE.publish(snapshot)
     _log_scores_cache(f"response cache swapped matches={len(snapshot)}")
 
-    try:
-        from backend.routes.leaderboard import refresh_leaderboard_cache_once
 
-        summary = refresh_leaderboard_cache_once()
-        _log_scores_cache(
-            f"leaderboard cache refreshed leaderboard={summary['leaderboard']} points_table={summary['points_table']}"
-        )
-    except Exception as exc:
-        _log_scores_cache(f"leaderboard cache refresh failed: {exc}")
+def _persist_scores_snapshot_to_db(snapshot: dict[int, dict], match_ids: set[int] | None = None) -> None:
+    now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+
+    target_match_ids = set(match_ids) if match_ids is not None else set(snapshot.keys())
+
+    for match_id, payload in snapshot.items():
+        if int(match_id) not in target_match_ids:
+            continue
+        match_status = str(payload.get("match_status") or "").strip().lower()
+        data_service.clear_points_for_match(int(match_id))
+
+        if match_status == "nr":
+            continue
+
+        player_rows = []
+        for player in payload.get("players", []):
+            player_id = player.get("player_id")
+            if player_id in (None, ""):
+                _log_scores_cache(
+                    f"skipping player row without player id for match={match_id}: {player}"
+                )
+                continue
+            player_rows.append({
+                "MatchID": int(match_id),
+                "PlayerID": int(player_id),
+                "PlayerName": player.get("name", ""),
+                "Team": player.get("team", ""),
+                "Role": player.get("role", ""),
+                "Points": float(player.get("points", 0) or 0),
+                "LastUpdated": now_str,
+            })
+
+        contestant_rows = []
+        for contestant in payload.get("contestants", []):
+            contestant_user_id = contestant.get("user_id") or contestant.get("id")
+            if contestant_user_id in (None, ""):
+                _log_scores_cache(
+                    f"skipping contestant row without user id for match={match_id}: {contestant}"
+                )
+                continue
+            contestant_rows.append({
+                "UserID": int(contestant_user_id),
+                "User": contestant.get("name", ""),
+                "MatchID": int(match_id),
+                "Points": float(contestant.get("points", 0) or 0),
+                "LastUpdated": now_str,
+            })
+
+        if player_rows:
+            data_service.save_player_points(player_rows)
+        if contestant_rows:
+            data_service.save_contestant_points(contestant_rows)
 
 
 def _build_match_scores_payload(match_id: int, match_row, registry, players_data, db) -> dict | None:
@@ -285,6 +318,10 @@ def _build_completed_match_scores_payload(match_id: int, match_row, registry, pl
 
     match_obj = _get_completed_match_from_tournament(match_id)
     if not match_obj:
+        cached_payload = _get_cached_match_payload(match_id, False)
+        if cached_payload:
+            match_obj = cached_payload.get("match_obj")
+    if not match_obj:
         # Completed matches can lose their in-memory tournament object after restart
         # or a recompute cycle. Fall back to the same scorecard hydration path used
         # for live matches so the team tab still has per-player stat breakdowns.
@@ -412,10 +449,11 @@ def refresh_scores_response_cache_once() -> dict:
     db = get_db()
     registry, players_data = _build_registry(db)
     matches_data = data_service.get_cached_data("matches")
-    snapshot: dict[int, dict] = {}
+    snapshot: dict[int, dict] = SCORES_RESPONSE_CACHE.read() or {}
     eligible = 0
     refreshed = 0
     errors = 0
+    updated_match_ids: set[int] = set()
 
     _log_scores_cache(f"refresh tick start matches={len(matches_data)}")
 
@@ -426,14 +464,21 @@ def refresh_scores_response_cache_once() -> dict:
             if status == "future":
                 continue
             if status == "nr":
+                if snapshot.get(match_id, {}).get("match_status") == "nr":
+                    continue
                 snapshot[match_id] = _empty_match_scores_payload("nr")
+                updated_match_ids.add(match_id)
                 refreshed += 1
                 continue
             if status == "completed":
                 eligible += 1
+                existing_payload = snapshot.get(match_id)
+                if existing_payload and existing_payload.get("match_status") in {"completed", "nr"}:
+                    continue
                 payload = _build_completed_match_scores_payload(match_id, match_row, registry, players_data, db)
                 if payload is not None:
                     snapshot[match_id] = payload
+                    updated_match_ids.add(match_id)
                     refreshed += 1
                 continue
             if status == "live":
@@ -441,6 +486,7 @@ def refresh_scores_response_cache_once() -> dict:
                 payload = _build_match_scores_payload(match_id, match_row, registry, players_data, db)
                 if payload is not None:
                     snapshot[match_id] = payload
+                    updated_match_ids.add(match_id)
                     refreshed += 1
         except Exception as exc:
             errors += 1
@@ -448,6 +494,21 @@ def refresh_scores_response_cache_once() -> dict:
             traceback.print_exc()
 
     _store_scores_response_cache(snapshot)
+    if updated_match_ids:
+        try:
+            _persist_scores_snapshot_to_db(snapshot, updated_match_ids)
+        except Exception as exc:
+            _log_scores_cache(f"targeted persistence failed: {exc}")
+            traceback.print_exc()
+        try:
+            from backend.routes.leaderboard import refresh_leaderboard_cache_once
+
+            summary = refresh_leaderboard_cache_once()
+            _log_scores_cache(
+                f"leaderboard cache refreshed leaderboard={summary['leaderboard']} points_table={summary['points_table']}"
+            )
+        except Exception as exc:
+            _log_scores_cache(f"leaderboard cache refresh failed: {exc}")
     _log_scores_cache(
         f"refresh tick complete eligible={eligible} refreshed={refreshed} errors={errors} cached={len(snapshot)}"
     )
@@ -486,6 +547,35 @@ def start_scores_cache_scheduler():
     thread = threading.Thread(target=run, daemon=True, name="scores-cache-scheduler")
     thread.start()
     _log_scores_cache("scheduler thread started")
+
+
+def prewarm_non_live_match_payloads():
+    db = get_db()
+    registry, players_data = _build_registry(db)
+    matches_data = data_service.get_cached_data("matches")
+
+    warmed = 0
+    for match_row in matches_data:
+        status = _match_status_value(match_row)
+        if status not in {"completed", "nr", "future"}:
+            continue
+
+        match_id = int(match_row["MatchID"])
+        try:
+            payload = _hydrate_match_for_scores(
+                match_id,
+                match_row,
+                registry,
+                players_data,
+                include_playing_xi=False,
+            )
+            if payload:
+                warmed += 1
+        except Exception as exc:
+            _log_scores_cache(f"prewarm failed match={match_id}: {exc}")
+            traceback.print_exc()
+
+    return {"warmed": warmed, "matches": len(matches_data)}
 
 
 def _compute_contestants_from_player_points(db, match_id: int, pp_lookup: dict[str, float] | None = None) -> list[dict]:
@@ -716,6 +806,13 @@ def _get_completed_match_from_tournament(match_id: int):
     return copy.deepcopy(match_obj)
 
 
+def _get_cached_match_payload(match_id: int, include_playing_xi: bool = False) -> dict | None:
+    cache_key = (int(match_id), include_playing_xi)
+    with MATCH_DATA_CACHE_LOCK:
+        cached = MATCH_DATA_CACHE.get(cache_key)
+        return copy.deepcopy(cached) if cached is not None else None
+
+
 def _log_active_player_count(match_id: int, match_obj):
     active_players = [player for player in match_obj.players.values() if getattr(player, "played", False)]
     active_count = len(active_players)
@@ -867,7 +964,7 @@ async def match_scores(
     cached_payload = _ensure_score_payload_cached(match_id, match_row)
     if cached_payload is None:
         _log_scores_cache(
-            f"cache miss match={match_id} status={match_status or 'unknown'} ready={SCORES_RESPONSE_CACHE['ready']}"
+            f"cache miss match={match_id} status={match_status or 'unknown'} live={SCORES_RESPONSE_CACHE.has_live()}"
         )
         raise HTTPException(status_code=503, detail="Score cache not ready")
 

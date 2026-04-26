@@ -7,6 +7,7 @@ from backend.config import IST
 from backend.database import get_db
 from backend.middleware.auth import get_current_user
 from backend.services import data_service
+from backend.services.double_buffer_cache import DoubleBufferCache
 from backend.services.scraper import get_cached_toss_info
 from backend.services.venue_stats import (
     get_today_cached_venue_stats,
@@ -14,12 +15,9 @@ from backend.services.venue_stats import (
 )
 
 router = APIRouter(prefix="/api", tags=["matches"])
-MATCHES_CACHE_TTL_SECONDS = 20
 MATCHES_RESPONSE_CACHE = {
-    "matches": None,
-    "dashboard": None,
-    "generated_at": 0.0,
-    "today_key": "",
+    "matches": DoubleBufferCache(),
+    "dashboard": DoubleBufferCache(),
 }
 
 
@@ -73,32 +71,18 @@ async def dashboard_matches(user: dict = Depends(get_current_user)):
 
 
 def invalidate_matches_response_cache():
-    MATCHES_RESPONSE_CACHE["matches"] = None
-    MATCHES_RESPONSE_CACHE["dashboard"] = None
-    MATCHES_RESPONSE_CACHE["generated_at"] = 0.0
-    MATCHES_RESPONSE_CACHE["today_key"] = ""
+    MATCHES_RESPONSE_CACHE["matches"].invalidate()
+    MATCHES_RESPONSE_CACHE["dashboard"].invalidate()
 
 
 def refresh_matches_response_cache_once() -> dict:
     payload = _build_matches_payload()
-    today_key = datetime.now(IST).strftime("%Y-%m-%d")
-    MATCHES_RESPONSE_CACHE["matches"] = payload
-    MATCHES_RESPONSE_CACHE["dashboard"] = payload
-    MATCHES_RESPONSE_CACHE["generated_at"] = time.time()
-    MATCHES_RESPONSE_CACHE["today_key"] = today_key
+    MATCHES_RESPONSE_CACHE["matches"].publish(payload)
+    MATCHES_RESPONSE_CACHE["dashboard"].publish(payload)
     return {
         "matches": len(payload),
         "dashboard": len(payload),
-        "today_key": today_key,
     }
-
-
-def _is_matches_cache_valid(cache_key: str, today_key: str) -> bool:
-    if MATCHES_RESPONSE_CACHE.get(cache_key) is None:
-        return False
-    if MATCHES_RESPONSE_CACHE.get("today_key") != today_key:
-        return False
-    return (time.time() - MATCHES_RESPONSE_CACHE.get("generated_at", 0.0)) < MATCHES_CACHE_TTL_SECONDS
 
 
 def _build_matches_payload() -> list[dict]:
@@ -142,15 +126,13 @@ def _build_matches_payload() -> list[dict]:
 
 
 def _get_matches_payload(cache_key: str) -> list[dict]:
-    today_key = datetime.now(IST).strftime("%Y-%m-%d")
-    if _is_matches_cache_valid(cache_key, today_key):
-        return MATCHES_RESPONSE_CACHE[cache_key] or []
+    cached = MATCHES_RESPONSE_CACHE[cache_key].read()
+    if cached is not None:
+        return cached
 
     payload = _build_matches_payload()
-    MATCHES_RESPONSE_CACHE["matches"] = payload
-    MATCHES_RESPONSE_CACHE["dashboard"] = payload
-    MATCHES_RESPONSE_CACHE["generated_at"] = time.time()
-    MATCHES_RESPONSE_CACHE["today_key"] = today_key
+    MATCHES_RESPONSE_CACHE["matches"].publish(payload)
+    MATCHES_RESPONSE_CACHE["dashboard"].publish(payload)
     return payload
 
 

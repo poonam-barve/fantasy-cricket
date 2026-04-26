@@ -192,6 +192,10 @@ def _ensure_players_type_sqlite(conn):
 def _ensure_weekend_tournaments_flexible_postgres(cursor):
     cursor.execute("ALTER TABLE weekend_tournaments ADD COLUMN IF NOT EXISTS weekend_match_ids TEXT DEFAULT '[]'")
     cursor.execute("ALTER TABLE weekend_tournaments ADD COLUMN IF NOT EXISTS num_rounds INTEGER DEFAULT 0")
+    cursor.execute("ALTER TABLE weekend_tournaments ALTER COLUMN weekend_match_1_id DROP NOT NULL")
+    cursor.execute("ALTER TABLE weekend_tournaments ALTER COLUMN weekend_match_2_id DROP NOT NULL")
+    cursor.execute("ALTER TABLE weekend_tournaments ALTER COLUMN weekend_match_3_id DROP NOT NULL")
+    cursor.execute("ALTER TABLE weekend_tournaments ALTER COLUMN weekend_match_4_id DROP NOT NULL")
     # Backfill from old fixed columns if they exist
     try:
         cursor.execute("""
@@ -547,10 +551,10 @@ def init_db():
             CREATE TABLE IF NOT EXISTS weekend_tournaments (
                 id SERIAL PRIMARY KEY,
                 qualifying_match_id INTEGER NOT NULL REFERENCES matches(id),
-                weekend_match_1_id INTEGER NOT NULL REFERENCES matches(id),
-                weekend_match_2_id INTEGER NOT NULL REFERENCES matches(id),
-                weekend_match_3_id INTEGER NOT NULL REFERENCES matches(id),
-                weekend_match_4_id INTEGER NOT NULL REFERENCES matches(id),
+                weekend_match_1_id INTEGER REFERENCES matches(id),
+                weekend_match_2_id INTEGER REFERENCES matches(id),
+                weekend_match_3_id INTEGER REFERENCES matches(id),
+                weekend_match_4_id INTEGER REFERENCES matches(id),
                 status TEXT NOT NULL DEFAULT 'pending',
                 winner_user_id INTEGER REFERENCES users(id),
                 created_at TIMESTAMP NOT NULL DEFAULT NOW(),

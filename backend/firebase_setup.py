@@ -23,11 +23,15 @@ def init_firebase():
 
     creds_json = os.environ.get("FIREBASE_CREDENTIALS")
     if creds_json:
-        import json
-        cred = credentials.Certificate(json.loads(creds_json))
-        firebase_admin.initialize_app(cred)
+        try:
+            import json
+
+            cred = credentials.Certificate(json.loads(creds_json))
+            firebase_admin.initialize_app(cred)
+            print("Firebase Admin SDK initialized from env")
+        except Exception as exc:
+            print(f"WARNING: Firebase credentials invalid or unavailable. Auth will use dev mode. ({exc})")
         _initialized = True
-        print("Firebase Admin SDK initialized from env")
     else:
         print("WARNING: Firebase credentials not found. Auth will use dev mode.")
         _initialized = True  # Mark as initialized to avoid retrying
