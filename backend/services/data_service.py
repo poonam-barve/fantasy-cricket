@@ -262,12 +262,14 @@ def create_user(
     db = get_db()
     cur = db.execute(
         """INSERT INTO users (firebase_uid, email, name, mobile, role)
-           VALUES (?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?) RETURNING id""",
         (firebase_uid, email, name, mobile, role),
     )
+    inserted = cur.fetchone()
     db.commit()
     invalidate_cache("users")
-    return get_user_by_id(cur.lastrowid)
+    user_id = inserted["id"] if inserted and "id" in inserted else cur.lastrowid
+    return get_user_by_id(user_id)
 
 
 def update_user(user_id: int, **fields) -> None:

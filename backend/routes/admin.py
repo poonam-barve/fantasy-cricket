@@ -164,15 +164,15 @@ async def create_player(
 ):
     db = get_db()
     cursor = db.execute(
-        "INSERT INTO players (name, team, role, type, aliases) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO players (name, team, role, type, aliases) VALUES (?, ?, ?, ?, ?) RETURNING id",
         (body.name, body.team, body.role, body.type or None, body.aliases or ""),
     )
+    inserted = cursor.fetchone()
     db.commit()
     _refresh_admin_caches(tables={"players"}, refresh_schedule_map=True)
 
-    player = db.execute(
-        "SELECT * FROM players WHERE id = ?", (cursor.lastrowid,)
-    ).fetchone()
+    player_id = inserted["id"] if inserted and "id" in inserted else cursor.lastrowid
+    player = db.execute("SELECT * FROM players WHERE id = ?", (player_id,)).fetchone()
     return dict(player)
 
 
@@ -272,7 +272,7 @@ async def create_match(
     db = get_db()
     toss_time = body.toss_time if body.toss_time is not None else compute_toss_time(body.match_date, body.match_time)
     cursor = db.execute(
-        "INSERT INTO matches (team1, team2, match_date, match_time, status, toss_time) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO matches (team1, team2, match_date, match_time, status, toss_time) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
         (
             body.team1,
             body.team2,
@@ -282,12 +282,12 @@ async def create_match(
             toss_time,
         ),
     )
+    inserted = cursor.fetchone()
     db.commit()
     _refresh_admin_caches(tables={"matches"}, refresh_schedule_map=True)
 
-    match = db.execute(
-        "SELECT * FROM matches WHERE id = ?", (cursor.lastrowid,)
-    ).fetchone()
+    match_id = inserted["id"] if inserted and "id" in inserted else cursor.lastrowid
+    match = db.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
     return dict(match)
 
 
