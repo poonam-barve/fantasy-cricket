@@ -15,6 +15,7 @@ from backend.config import (
     ESPN_MATCH_ID_OFFSET,
     IST,
     TEAM_MAP,
+    get_current_datetime,
 )
 from backend.models.registry import PlayerRegistry
 from backend.services import data_service
@@ -167,7 +168,7 @@ def _should_attempt_playing_xi_fetch(match_date: str | None, match_time: str | N
     if not window_start:
         return True
 
-    return datetime.now(IST) >= window_start
+    return get_current_datetime() >= window_start
 
 
 def should_attempt_toss_fetch(match_date: str | None, match_time: str | None, toss_time: str | None = None) -> bool:
@@ -179,7 +180,7 @@ def should_attempt_toss_fetch(match_date: str | None, match_time: str | None, to
     if not window_start:
         return False
 
-    now = datetime.now(IST)
+    now = get_current_datetime()
     return window_start <= now < match_start
 
 
@@ -188,7 +189,7 @@ def _is_before_match_start(match_date: str | None, match_time: str | None) -> bo
     if not match_start:
         return False
 
-    return datetime.now(IST) < match_start
+    return get_current_datetime() < match_start
 
 
 def fetch_scorecard_html(match_id, team1: str | None = None, team2: str | None = None, match_date: str | None = None, force_refresh: bool = False):

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.config import IST
+from backend.config import IST, get_current_datetime
 from backend.middleware.auth import get_current_user
 from backend.database import get_db
 from backend.models.match import Match, clean_team_name
@@ -46,7 +46,7 @@ def _copy_score_payload(payload: dict | None) -> dict | None:
 
 
 def _log_scores_cache(message: str):
-    timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = get_current_datetime().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] [SCORES] {message}")
 
 
@@ -155,7 +155,7 @@ def _store_scores_response_cache(snapshot: dict[int, dict]) -> None:
 
 
 def _persist_scores_snapshot_to_db(snapshot: dict[int, dict], match_ids: set[int] | None = None) -> None:
-    now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    now_str = get_current_datetime().strftime("%Y-%m-%d %H:%M:%S")
 
     target_match_ids = set(match_ids) if match_ids is not None else set(snapshot.keys())
 
@@ -789,7 +789,7 @@ def _is_live_window(match_row) -> bool:
     except Exception:
         return False
 
-    now = datetime.now(IST)
+    now = get_current_datetime()
     toss_time = str(_row_value(match_row, "toss_time", "TossTime", default="") or "").strip()
     if toss_time:
         try:
@@ -816,7 +816,7 @@ def _is_completed_match(match_row) -> bool:
     except Exception:
         return False
 
-    return datetime.now(IST) >= match_datetime + timedelta(hours=5)
+    return get_current_datetime() >= match_datetime + timedelta(hours=5)
 
 
 def _get_completed_match_from_tournament(match_id: int):

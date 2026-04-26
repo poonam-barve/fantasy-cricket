@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from backend.middleware.auth import get_current_user
 from backend.database import get_db
-from backend.config import ROLES, IST
+from backend.config import ROLES, IST, get_current_datetime, get_current_date_key
 from backend.models.match import Match, clean_team_name
 from backend.models.registry import PlayerRegistry
 from backend.services import data_service
@@ -226,7 +226,7 @@ def _is_lineup_window_open(match_date: str, match_time: str, toss_time: str | No
     else:
         window_start = match_datetime - timedelta(minutes=30)
 
-    now = datetime.now(IST)
+    now = get_current_datetime()
     return window_start <= now < match_datetime
 
 
@@ -234,7 +234,7 @@ def _is_match_today(match_date: str | None) -> bool:
     if not match_date:
         return False
     try:
-        return match_date == datetime.now(IST).strftime("%Y-%m-%d")
+        return match_date == get_current_date_key()
     except Exception:
         return False
 

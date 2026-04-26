@@ -12,7 +12,7 @@ except ImportError:
     requests = None
     BeautifulSoup = None
 
-from backend.config import IST
+from backend.config import IST, get_current_date_key
 
 
 # Team -> home ground mapping
@@ -249,7 +249,7 @@ def invalidate_today_venue_cache() -> None:
 
 
 def prime_today_venue_cache(match_rows: list[dict]) -> dict[int, dict | None]:
-    today_key = datetime.now(IST).strftime("%Y-%m-%d")
+    today_key = get_current_date_key()
     by_match_id: dict[int, dict | None] = {}
 
     for match in match_rows:
@@ -269,7 +269,7 @@ def prime_today_venue_cache(match_rows: list[dict]) -> dict[int, dict | None]:
 
 
 def get_today_cached_venue_stats(match_id: int, match_date: str, status: str) -> dict | None:
-    today_key = datetime.now(IST).strftime("%Y-%m-%d")
+    today_key = get_current_date_key()
     if match_date != today_key or status != "future":
         return None
 

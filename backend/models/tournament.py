@@ -3,7 +3,7 @@ import threading
 import traceback
 from datetime import datetime, timedelta
 
-from backend.config import IST
+from backend.config import IST, get_current_datetime
 from backend.models.match import Match
 from backend.models.team import Team, Contestant
 from backend.models.registry import PlayerRegistry
@@ -241,7 +241,7 @@ class Tournament:
             match_datetime = IST.localize(match_datetime)
         except Exception:
             return True
-        return datetime.now(IST) >= match_datetime
+        return get_current_datetime() >= match_datetime
 
     def update_match_data(
         self,
@@ -324,7 +324,7 @@ class Tournament:
         except Exception:
             return None
 
-        now = datetime.now(IST)
+        now = get_current_datetime()
 
         stored_status = str(match_row.get("Status") or "").strip().lower()
         toss_time = str(match_row.get("TossTime") or match_row.get("toss_time") or "").strip()
@@ -414,7 +414,7 @@ class Tournament:
             contestant.calculate_points_for_match(match, self.player_roles)
 
     def persist_to_local(self):
-        now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+        now_str = get_current_datetime().strftime("%Y-%m-%d %H:%M:%S")
         data_service.delete_inactive_contestant_points()
         rows = []
         for contestant in self.contestants.values():
@@ -433,7 +433,7 @@ class Tournament:
             data_service.save_contestant_points(rows)
 
     def persist_player_points_to_local(self):
-        now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+        now_str = get_current_datetime().strftime("%Y-%m-%d %H:%M:%S")
         rows = []
         for match_id, pp in self.player_points.items():
             match = self.matches.get(match_id)
@@ -523,7 +523,7 @@ class Tournament:
         return processed
 
     def _scheduler_log(self, channel: str, message: str):
-        timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = get_current_datetime().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] [{channel}] {message}")
 
     def refresh_scores_once(self):

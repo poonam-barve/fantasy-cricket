@@ -47,6 +47,18 @@ class Match:
         candidates = self.registry.get_player_candidates(cleaned_name, team)
 
         if len(candidates) <= 1:
+            if not direct_pid:
+                try:
+                    data_service.log_unknown_player(
+                        cleaned_name,
+                        team,
+                        int(self.match_id),
+                        self.match_date,
+                        self.team1,
+                        self.team2,
+                    )
+                except Exception:
+                    pass
             return direct_pid
 
         playing_candidates = []

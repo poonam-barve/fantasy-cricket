@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends
 from collections import defaultdict
 
-from backend.config import IST
+from backend.config import IST, get_current_datetime
 from backend.middleware.auth import get_current_user
 from backend.database import get_db
 from backend.services.double_buffer_cache import DoubleBufferCache
@@ -104,7 +104,7 @@ def _get_completed_match_ids(db) -> list[int]:
     rows = db.execute(
         "SELECT id, match_date, match_time, status FROM matches ORDER BY match_date, match_time, id"
     ).fetchall()
-    now = datetime.now(IST)
+    now = get_current_datetime()
     completed_ids: list[int] = []
     for row in rows:
         status = str(row["status"] or "").strip().lower()

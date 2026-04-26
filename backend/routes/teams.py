@@ -6,7 +6,7 @@ import time
 
 from backend.middleware.auth import get_current_user
 from backend.database import get_db
-from backend.config import IST, ROLES
+from backend.config import IST, ROLES, get_current_datetime
 from backend.services import data_service
 router = APIRouter(prefix="/api/teams", tags=["teams"])
 
@@ -24,7 +24,7 @@ class SubmitTeamBody(BaseModel):
 
 
 def get_now():
-    return datetime.now(IST)
+    return get_current_datetime()
 
 
 def get_now_str():
@@ -57,7 +57,7 @@ def _is_lineup_window_open(match_date: str, match_time: str, toss_time: str | No
     else:
         window_start = match_datetime - timedelta(minutes=30)
 
-    now = datetime.now(IST)
+    now = get_current_datetime()
     return window_start <= now < match_datetime
 
 

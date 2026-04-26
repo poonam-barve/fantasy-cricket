@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
 
-from backend.config import IST
+from backend.config import IST, get_current_datetime, get_current_date_key
 from backend.database import get_db
 from backend.middleware.auth import get_current_user
 from backend.services import data_service
@@ -34,7 +34,7 @@ def compute_runtime_match_status(match_date: str, match_time: str, stored_status
     except Exception:
         return "future", False
 
-    now = datetime.now(IST)
+    now = get_current_datetime()
     normalized_status = (stored_status or "").strip().lower()
 
     if normalized_status in {"completed", "nr"}:
@@ -88,7 +88,7 @@ def refresh_matches_response_cache_once() -> dict:
 def _build_matches_payload() -> list[dict]:
     route_started = time.perf_counter()
     rows = data_service.get_matches_api_rows()
-    today_key = datetime.now(IST).strftime("%Y-%m-%d")
+    today_key = get_current_date_key()
     prepared_matches = []
     for row in rows:
         match = dict(row)

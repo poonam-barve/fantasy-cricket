@@ -4,22 +4,18 @@ import type { Match } from '../../types';
 
 type MissedPlayerRow = {
   match_id: number;
-  player_id: number;
   name: string;
   team: string;
-  role: string;
-  points: number;
-  owner_count: number;
+  match_date: string;
+  team1: string;
+  team2: string;
 };
 
 type MissedPlayersResponse = {
   match: Match | null;
   players: MissedPlayerRow[];
   missed_count: number;
-  total_missed_points: number;
 };
-
-const formatRole = (role: string) => (role === 'AllRounder' ? 'All Rounder' : role);
 
 export default function MissedPlayersPage() {
   const [matches, setMatches] = useState<Match[]>([]);
@@ -64,7 +60,8 @@ export default function MissedPlayersPage() {
 
   const rows = useMemo(() => data?.players || [], [data]);
   const selectedMatch = matches.find((match) => match.id === selectedMatchId) || data?.match || null;
-  const topMissed = rows[0];
+  const affectedMatches = useMemo(() => new Set(rows.map((row) => row.match_id)).size, [rows]);
+  const latestUnmapped = rows[0];
 
   const handleRefresh = async () => {
     if (!selectedMatchId) return;
@@ -102,7 +99,7 @@ export default function MissedPlayersPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Missed Players</h1>
-          <p className="text-sm text-gray-500">Players with zero owners in the selected match.</p>
+          <p className="text-sm text-gray-500">Parsed scorecard names that could not be matched to our player list.</p>
         </div>
         <div className="flex items-center gap-2">
           <select
@@ -136,12 +133,12 @@ export default function MissedPlayersPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-2xl shadow-sm p-5">
-          <p className="text-sm text-gray-500">Missed Players</p>
+          <p className="text-sm text-gray-500">Unmapped Players</p>
           <p className="text-3xl font-bold text-gray-800 mt-1">{data?.missed_count || 0}</p>
         </div>
         <div className="bg-white rounded-2xl shadow-sm p-5">
-          <p className="text-sm text-gray-500">Missed Points</p>
-          <p className="text-3xl font-bold text-gray-800 mt-1">{(data?.total_missed_points || 0).toFixed(2)}</p>
+          <p className="text-sm text-gray-500">Matches Affected</p>
+          <p className="text-3xl font-bold text-gray-800 mt-1">{affectedMatches}</p>
         </div>
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <p className="text-sm text-gray-500">Match</p>
@@ -156,12 +153,12 @@ export default function MissedPlayersPage() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-bold text-gray-800">Missed Players Table</h2>
-              <p className="text-sm text-gray-500">Players who were not picked by any active user in this match.</p>
+              <p className="text-sm text-gray-500">Parsed player names that still need a manual mapping in the registry.</p>
             </div>
-            {topMissed && (
+            {latestUnmapped && (
               <div className="text-right">
-                <p className="text-xs text-gray-400">Top missed player</p>
-                <p className="text-sm font-semibold text-gray-800">{topMissed.name}</p>
+                <p className="text-xs text-gray-400">Sample unmapped entry</p>
+                <p className="text-sm font-semibold text-gray-800">{latestUnmapped.name}</p>
               </div>
             )}
           </div>
@@ -173,36 +170,33 @@ export default function MissedPlayersPage() {
               <tr>
                 <th className="px-6 py-3">Player</th>
                 <th className="px-6 py-3">Team</th>
-                <th className="px-6 py-3">Role</th>
-                <th className="px-6 py-3 text-right">Points</th>
-                <th className="px-6 py-3 text-right">Owners</th>
+                <th className="px-6 py-3">Match</th>
+                <th className="px-6 py-3">Match Date</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {rows.map((row) => (
-                <tr key={`${row.match_id}-${row.player_id}`} className="hover:bg-gray-50 transition-colors">
+                <tr key={`${row.match_id}-${row.team}-${row.name}`} className="hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-medium text-gray-800">{row.name}</div>
-                    <div className="text-xs text-gray-400">Player #{row.player_id}</div>
                   </td>
                   <td className="px-6 py-4">
                     <span className="inline-block bg-indigo-100 text-indigo-700 text-xs font-semibold px-2 py-1 rounded-full">
                       {row.team}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-gray-600">{formatRole(row.role)}</td>
-                  <td className="px-6 py-4 text-right font-semibold text-gray-800">{row.points.toFixed(2)}</td>
-                  <td className="px-6 py-4 text-right">
-                    <span className="inline-flex items-center rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700">
-                      {row.owner_count}
-                    </span>
+                  <td className="px-6 py-4 text-gray-600">
+                    #{row.match_id} {row.team1} vs {row.team2}
+                  </td>
+                  <td className="px-6 py-4 text-gray-600">
+                    {row.match_date || 'Unknown'}
                   </td>
                 </tr>
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-10 text-center text-gray-400">
-                    No missed players for this match.
+                  <td colSpan={4} className="px-6 py-10 text-center text-gray-400">
+                    No unmapped scorecard players for this match.
                   </td>
                 </tr>
               )}

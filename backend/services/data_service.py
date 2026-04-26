@@ -14,6 +14,7 @@ import threading
 from datetime import datetime
 
 from backend.database import get_db
+from backend.config import get_current_datetime
 
 # ---------------------------------------------------------------------------
 # Lightweight in-process cache (mirrors the old JSON cache behaviour)
@@ -812,7 +813,7 @@ def save_team(mobile, name, match_id, selected_players, captain, vice_captain, p
     )
 
     # Insert new selections
-    updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    updated_at = get_current_datetime().strftime("%Y-%m-%d %H:%M:%S")
     for pid in selected_players:
         is_cap = 1 if str(pid) == str(captain) else 0
         is_vc = 1 if str(pid) == str(vice_captain) else 0
@@ -875,7 +876,7 @@ def save_contestant_points(rows: list[dict]) -> None:
         mobile = str(row.get("Mobile", ""))
         match_id = int(row["MatchID"])
         points = float(row["Points"])
-        last_updated = row.get("LastUpdated", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        last_updated = row.get("LastUpdated", get_current_datetime().strftime("%Y-%m-%d %H:%M:%S"))
 
         user = None
         if user_id is not None:
@@ -1005,7 +1006,7 @@ def save_player_points(rows: list[dict]) -> None:
         team = row.get("Team", "")
         role = row.get("Role", "")
         points = float(row["Points"])
-        last_updated = row.get("LastUpdated", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        last_updated = row.get("LastUpdated", get_current_datetime().strftime("%Y-%m-%d %H:%M:%S"))
 
         db.execute(
             """

@@ -5,32 +5,7 @@ import { useAuth } from '../auth/AuthContext';
 import type { Match } from '../types';
 import { getTeamTheme } from '../utils/teamTheme';
 import { DashboardSkeleton } from '../components/Skeleton';
-
-function useCountdown() {
-  const [now, setNow] = useState(Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
-
-  const getCountdown = useCallback((match: Match) => {
-    if (match.status !== 'future') return null;
-    const matchTime = new Date(`${match.match_date}T${match.match_time}`).getTime();
-    const diff = matchTime - now;
-    if (diff <= 0) return null;
-
-    const days = Math.floor(diff / 86400000);
-    const hours = Math.floor((diff % 86400000) / 3600000);
-    const mins = Math.floor((diff % 3600000) / 60000);
-
-    if (days > 0) return `${days}d ${hours}h`;
-    if (hours > 0) return `${hours}h ${mins}m`;
-    return `${mins}m`;
-  }, [now]);
-
-  return getCountdown;
-}
+import { useAppClock } from '../hooks/useAppClock';
 
 type MatchTab = 'today' | 'upcoming' | 'completed';
 type LiveTeamLineupInfo = {
@@ -53,7 +28,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<MatchTab>('today');
   const { profile, loading: authLoading } = useAuth();
-  const getCountdown = useCountdown();
+  const { todayIST, nowMs } = useAppClock();
   const prefetchedMatchIdsRef = useRef<Set<number>>(new Set());
 
   const loadDashboard = useCallback(async () => {
@@ -143,6 +118,21 @@ export default function DashboardPage() {
     };
   }, [authLoading, loadDashboard, profile]);
 
+  const getCountdown = useCallback((match: Match) => {
+    if (match.status !== 'future') return null;
+    const matchTime = new Date(`${match.match_date}T${match.match_time}`).getTime();
+    const diff = matchTime - nowMs;
+    if (diff <= 0) return null;
+
+    const days = Math.floor(diff / 86400000);
+    const hours = Math.floor((diff % 86400000) / 3600000);
+    const mins = Math.floor((diff % 3600000) / 60000);
+
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    return `${mins}m`;
+  }, [nowMs]);
+
   const formatDate = (dateStr: string, timeStr: string) => {
     try {
       const dt = new Date(`${dateStr}T${timeStr}`);
@@ -182,9 +172,6 @@ export default function DashboardPage() {
       setContestantsLoading(false);
     }
   };
-
-  // Get today's date in IST
-  const todayIST = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
   useEffect(() => {
     if (authLoading || !profile || matches.length === 0) {

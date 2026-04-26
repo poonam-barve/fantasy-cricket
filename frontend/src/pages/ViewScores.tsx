@@ -6,6 +6,7 @@ import type { PlayerScore, ContestantScore } from '../types';
 import { getTeamTheme } from '../utils/teamTheme';
 import RankShiftBadge from '../components/RankShiftBadge';
 import { ScoresSkeleton } from '../components/Skeleton';
+import { useAppClock } from '../hooks/useAppClock';
 
 interface TeamDiffEntry {
   player_id: number;
@@ -90,6 +91,7 @@ export default function ViewScoresPage() {
   const { matchId } = useParams<{ matchId: string }>();
   const [searchParams] = useSearchParams();
   const { profile } = useAuth();
+  const { getNow } = useAppClock();
   const [playerScores, setPlayerScores] = useState<PlayerScore[]>([]);
   const [contestants, setContestants] = useState<ContestantScore[]>([]);
   const [scorecard, setScorecard] = useState<ScorecardInnings[]>([]);
@@ -159,7 +161,7 @@ export default function ViewScoresPage() {
       setScoresSnapshotVersion(scoresRes.data.snapshot_version ?? null);
       const team = teamRes.data || [];
       setMyTeam(new Set(team.map((t: string | { player_name: string }) => typeof t === 'string' ? t : t.player_name)));
-      setLastUpdated(new Date());
+      setLastUpdated(getNow());
       return scoresRes.data;
     } catch { /* silent */ }
     finally { setLoading(false); }

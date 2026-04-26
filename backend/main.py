@@ -22,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from backend.config import IST
+from backend.config import IST, get_current_datetime, get_current_date_key, is_current_datetime_overridden
 from backend.database import init_db, get_db
 from backend.firebase_setup import init_firebase
 from backend.services import data_service
@@ -54,6 +54,18 @@ app.include_router(scores.router)
 app.include_router(leaderboard.router)
 app.include_router(admin.router)
 app.include_router(weekend_tournament.router)
+
+
+@app.get("/api/runtime/current-time")
+async def runtime_current_time():
+    now = get_current_datetime()
+    return {
+        "iso": now.isoformat(),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M"),
+        "timezone": "Asia/Kolkata",
+        "overridden": is_current_datetime_overridden(),
+    }
 
 # Tournament singleton
 tournament = Tournament()
@@ -200,7 +212,7 @@ def seed_db_if_needed():
             )
 
     if match_count == 0 and not seeded_from_workbook:
-        match_date = (datetime.now(IST) + timedelta(days=1)).strftime("%Y-%m-%d")
+        match_date = (get_current_datetime() + timedelta(days=1)).strftime("%Y-%m-%d")
         match_time = "19:30"
         db.execute(
             """
@@ -252,7 +264,7 @@ def normalize_player_types():
 
 
 def _load_todays_live_matches():
-    today_key = datetime.now(IST).strftime("%Y-%m-%d")
+    today_key = get_current_date_key()
     matches_data = data_service.get_cached_data("matches")
     prepared_matches = []
 

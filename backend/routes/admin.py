@@ -9,7 +9,7 @@ from backend.database import get_db, get_next_id
 from backend.config import ROLES
 from backend.services import data_service
 from backend.config import IST
-from backend.config import ROLES
+from backend.config import ROLES, get_current_datetime
 from backend.services import data_service
 from backend.services.scraper import compute_toss_time, invalidate_live_metadata_cache
 
@@ -20,8 +20,7 @@ tournament_ref = None
 
 
 def _now_str():
-    from datetime import datetime
-    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    return get_current_datetime().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def set_tournament(t):
@@ -590,7 +589,7 @@ async def missed_players(
         row = db.execute(
             """
             SELECT match_id
-            FROM player_points
+            FROM unknown_players
             GROUP BY match_id
             ORDER BY match_id DESC
             LIMIT 1
@@ -611,44 +610,34 @@ async def missed_players(
     rows = db.execute(
         """
         SELECT
-            pp.match_id,
-            pp.player_id,
-            p.name,
-            p.team,
-            p.role,
-            ROUND(COALESCE(pp.points, 0)::numeric, 2) AS points,
-            COUNT(DISTINCT ut.user_id) AS owner_count
-        FROM player_points pp
-        JOIN players p ON p.id = pp.player_id
-        LEFT JOIN user_teams ut
-          ON ut.match_id = pp.match_id
-         AND ut.player_id = pp.player_id
-        WHERE pp.match_id = ?
-        GROUP BY pp.match_id, pp.player_id, p.name, p.team, p.role, pp.points
-        HAVING COUNT(DISTINCT ut.user_id) = 0
-        ORDER BY points DESC, p.team ASC, p.role ASC, p.name ASC
+            name,
+            team,
+            match_id,
+            match_date,
+            team1,
+            team2
+        FROM unknown_players
+        WHERE match_id = ?
+        ORDER BY team ASC, name ASC
         """,
         (match_id,),
     ).fetchall()
-
-    total_missed_points = round(sum(float(row["points"] or 0) for row in rows), 2)
 
     return {
         "match": dict(match),
         "players": [
             {
                 "match_id": int(row["match_id"]),
-                "player_id": int(row["player_id"]),
                 "name": row["name"],
                 "team": row["team"],
-                "role": row["role"],
-                "points": float(row["points"] or 0),
-                "owner_count": int(row["owner_count"] or 0),
+                "match_date": row["match_date"],
+                "team1": row["team1"],
+                "team2": row["team2"],
             }
             for row in rows
         ],
         "missed_count": len(rows),
-        "total_missed_points": total_missed_points,
+        "total_missed_points": 0,
     }
 
 
