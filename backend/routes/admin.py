@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import List, List, Optional, List
 
 from backend.middleware.auth import require_admin
-from backend.database import get_db
+from backend.database import get_db, get_next_id
 from backend.config import ROLES
 from backend.services import data_service
 from backend.config import IST
@@ -163,16 +163,15 @@ async def create_player(
     user: dict = Depends(require_admin),
 ):
     db = get_db()
+    next_id = get_next_id("players")
     cursor = db.execute(
-        "INSERT INTO players (name, team, role, type, aliases) VALUES (?, ?, ?, ?, ?) RETURNING id",
-        (body.name, body.team, body.role, body.type or None, body.aliases or ""),
+        "INSERT INTO players (id, name, team, role, type, aliases) VALUES (?, ?, ?, ?, ?, ?)",
+        (next_id, body.name, body.team, body.role, body.type or None, body.aliases or ""),
     )
-    inserted = cursor.fetchone()
     db.commit()
     _refresh_admin_caches(tables={"players"}, refresh_schedule_map=True)
 
-    player_id = inserted["id"] if inserted and "id" in inserted else cursor.lastrowid
-    player = db.execute("SELECT * FROM players WHERE id = ?", (player_id,)).fetchone()
+    player = db.execute("SELECT * FROM players WHERE id = ?", (next_id,)).fetchone()
     return dict(player)
 
 
@@ -271,9 +270,11 @@ async def create_match(
 ):
     db = get_db()
     toss_time = body.toss_time if body.toss_time is not None else compute_toss_time(body.match_date, body.match_time)
+    next_id = get_next_id("matches")
     cursor = db.execute(
-        "INSERT INTO matches (team1, team2, match_date, match_time, status, toss_time) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+        "INSERT INTO matches (id, team1, team2, match_date, match_time, status, toss_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
+            next_id,
             body.team1,
             body.team2,
             body.match_date,
@@ -282,12 +283,10 @@ async def create_match(
             toss_time,
         ),
     )
-    inserted = cursor.fetchone()
     db.commit()
     _refresh_admin_caches(tables={"matches"}, refresh_schedule_map=True)
 
-    match_id = inserted["id"] if inserted and "id" in inserted else cursor.lastrowid
-    match = db.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
+    match = db.execute("SELECT * FROM matches WHERE id = ?", (next_id,)).fetchone()
     return dict(match)
 
 

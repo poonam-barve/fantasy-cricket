@@ -12,7 +12,6 @@ import re
 import sqlite3
 import threading
 from backend.config import DATABASE_PATH
-from psycopg2 import sql
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 _local = threading.local()
@@ -450,25 +449,10 @@ def _ensure_matches_metadata_postgres(cursor):
 
 
 def _ensure_autoincrement_postgres(cursor, table_name: str):
-    sequence_name = f"{table_name}_id_seq"
-    cursor.execute(
-        sql.SQL("CREATE SEQUENCE IF NOT EXISTS {}").format(sql.Identifier(sequence_name))
-    )
-    cursor.execute(
-        sql.SQL("ALTER TABLE {} ALTER COLUMN id SET DEFAULT nextval(%s::regclass)").format(
-            sql.Identifier(table_name)
-        ),
-        (sequence_name,),
-    )
-    cursor.execute(
-        sql.SQL("ALTER SEQUENCE {} OWNED BY {}.id").format(
-            sql.Identifier(sequence_name),
-            sql.Identifier(table_name),
-        )
-    )
-    cursor.execute(sql.SQL("SELECT COALESCE(MAX(id), 0) FROM {}").format(sql.Identifier(table_name)))
-    max_id = int(cursor.fetchone()[0] or 0)
-    cursor.execute("SELECT setval(%s, %s, %s)", (sequence_name, max_id if max_id > 0 else 1, max_id > 0))
+    # Keep startup schema initialization lightweight and non-blocking.
+    # ID generation for these tables is handled explicitly in the insert paths
+    # so we do not need to ALTER live tables at boot time.
+    return
 
 
 def get_db():
@@ -484,6 +468,12 @@ def get_db():
     elif _is_postgres() and getattr(_local.conn, "_is_closed", lambda: False)():
         _local.conn = PgConnectionWrapper(_postgres_dsn())
     return _local.conn
+
+
+def get_next_id(table_name: str) -> int:
+    db = get_db()
+    row = db.execute(f"SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM {table_name}").fetchone()
+    return int(row["next_id"] if row and "next_id" in row else row[0])
 
 
 def init_db():
