@@ -363,12 +363,13 @@ def _build_completed_match_scores_payload(match_id: int, match_row, registry, pl
         if len(db_pp_lookup) < match_player_count:
             use_db_points = False
 
+    points_source = db_pp_lookup if use_db_points else (cached_pp_lookup or db_pp_lookup)
+
     players = []
     if match_obj and getattr(match_obj, "players", None):
         for p in match_obj.players.values():
             pid_str = str(p.player_id)
             role = db_role_lookup.get(pid_str) or cached_role_lookup.get(pid_str) or registry.players.get(p.player_id, {}).get("Role")
-            points_source = db_pp_lookup if use_db_points else cached_pp_lookup
             calculated_points = float(points_source.get(pid_str, p.calculate_player_points(role) if role else 0))
             points = round(calculated_points, 2)
             players.append({
@@ -434,7 +435,7 @@ def _build_completed_match_scores_payload(match_id: int, match_row, registry, pl
             })
 
     players.sort(key=lambda x: x["points"], reverse=True)
-    contestants = _rank_contestants(_compute_contestants_from_player_points(db, match_id, db_pp_lookup or cached_pp_lookup))
+    contestants = _rank_contestants(_compute_contestants_from_player_points(db, match_id, points_source))
 
     return {
         "players": players,

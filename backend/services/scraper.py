@@ -1464,6 +1464,12 @@ def parse_playing_xi_from_sources(
 
     payload["announced"] = _is_playing_xi_announced(payload)
     payload["finalized"] = _is_finalized_playing_xi(payload)
+    if len(payload["substitute_ids"]) > 10:
+        print(
+            f"[Playing XI] source={payload.get('source') or 'unknown'} "
+            f"produced {len(payload['substitute_ids'])} substitute candidates; capping to 10"
+        )
+        payload["substitute_ids"] = payload["substitute_ids"][:10]
     return payload
 
 
