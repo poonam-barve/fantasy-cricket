@@ -12,6 +12,7 @@ import re
 import sqlite3
 import threading
 from backend.config import DATABASE_PATH
+from psycopg2 import sql
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 _local = threading.local()
