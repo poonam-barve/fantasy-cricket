@@ -589,7 +589,7 @@ class Tournament:
                     needs_persist = True
                     processed += 1
                 elif status == "completed":
-                    if match_id in computed_matches:
+                    if match_id in computed_matches or data_service.has_persisted_match_points(int(match_id)):
                         continue
                     self._scheduler_log("SCORE", f"match {match_id} completed -> revalidating")
                     finalized_from_scorecard = self.update_match_data(

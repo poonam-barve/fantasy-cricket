@@ -1887,7 +1887,12 @@ def fetch_playing_xi(
         source_url = parsed_payload["url"] or commentary_url
         playing_ids = parsed_payload["player_ids"]
         substitute_ids = parsed_payload["substitute_ids"]
-        print(f"[Playing XI] Match {match_id}: using {source_url} (total={len(playing_ids)})")
+        winning_source = parsed_payload.get("source") or ("commentary" if parsed_from_commentary and parsed_from_commentary.get("source") == "commentary" else "squads" if parsed_from_squads else "unknown")
+        print(
+            f"[Playing XI] Match {match_id}: final source={winning_source} "
+            f"url={source_url} playing={len(playing_ids)} subs={len(substitute_ids)} "
+            f"finalized={parsed_payload.get('finalized', False)}"
+        )
         for name in parsed_payload["unmatched_names"]:
             print(f"[Playing XI] Match {match_id}: player mapping not found for '{name}'")
         if parsed_payload["substitutes_available"]:

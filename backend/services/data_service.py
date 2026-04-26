@@ -887,30 +887,57 @@ def save_contestant_points(rows: list[dict]) -> None:
         if not user:
             continue
 
-        update_result = db.execute(
+        db.execute(
             """
-            UPDATE contestant_points
-            SET points = ?, last_updated = ?
-            WHERE user_id = ? AND match_id = ?
+            INSERT INTO contestant_points (user_id, match_id, points, last_updated)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, match_id) DO UPDATE SET
+                points = excluded.points,
+                last_updated = excluded.last_updated
             """,
-            (points, last_updated, user["id"], match_id),
+            (user["id"], match_id, points, last_updated),
         )
-        if getattr(update_result, "rowcount", None) == 0:
-            db.execute(
-                """
-                INSERT INTO contestant_points (user_id, match_id, points, last_updated)
-                VALUES (?, ?, ?, ?)
-                """,
-                (user["id"], match_id, points, last_updated),
-            )
 
     db.commit()
 
 
 def get_computed_match_ids() -> set[str]:
     db = get_db()
-    rows = db.execute("SELECT DISTINCT match_id FROM player_points").fetchall()
+    rows = db.execute(
+        """
+        SELECT DISTINCT match_id
+        FROM player_points
+        UNION
+        SELECT DISTINCT match_id
+        FROM contestant_points
+        """
+    ).fetchall()
     return {str(row["match_id"]) for row in rows}
+
+
+def has_persisted_match_points(match_id: int) -> bool:
+    db = get_db()
+    row = db.execute(
+        """
+        SELECT 1
+        FROM player_points
+        WHERE match_id = ?
+        LIMIT 1
+        """,
+        (int(match_id),),
+    ).fetchone()
+    if row:
+        return True
+    row = db.execute(
+        """
+        SELECT 1
+        FROM contestant_points
+        WHERE match_id = ?
+        LIMIT 1
+        """,
+        (int(match_id),),
+    ).fetchone()
+    return bool(row)
 
 
 def get_latest_player_points_update(match_id: int | None = None) -> str:
@@ -980,22 +1007,19 @@ def save_player_points(rows: list[dict]) -> None:
         points = float(row["Points"])
         last_updated = row.get("LastUpdated", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-        update_result = db.execute(
+        db.execute(
             """
-            UPDATE player_points
-            SET player_name = ?, team = ?, role = ?, points = ?, last_updated = ?
-            WHERE match_id = ? AND player_id = ?
+            INSERT INTO player_points
+                (match_id, player_id, player_name, team, role, points, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(match_id, player_id) DO UPDATE SET
+                player_name = excluded.player_name,
+                team = excluded.team,
+                role = excluded.role,
+                points = excluded.points,
+                last_updated = excluded.last_updated
             """,
-            (player_name, team, role, points, last_updated, match_id, player_id),
+            (match_id, player_id, player_name, team, role, points, last_updated),
         )
-        if getattr(update_result, "rowcount", None) == 0:
-            db.execute(
-                """
-                INSERT INTO player_points
-                    (match_id, player_id, player_name, team, role, points, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (match_id, player_id, player_name, team, role, points, last_updated),
-            )
 
     db.commit()

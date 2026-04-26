@@ -617,7 +617,7 @@ async def missed_players(
             p.name,
             p.team,
             p.role,
-            ROUND(COALESCE(pp.points, 0), 2) AS points,
+            ROUND(COALESCE(pp.points, 0)::numeric, 2) AS points,
             COUNT(DISTINCT ut.user_id) AS owner_count
         FROM player_points pp
         JOIN players p ON p.id = pp.player_id
