@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from 'react';
+import axios from 'axios';
 import type { User as FirebaseUser } from 'firebase/auth';
 import {
   signInWithEmailAndPassword,
@@ -23,37 +24,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const BOOT_WAIT_TIMEOUT_MS = 60_000;
-const BOOT_POLL_INTERVAL_MS = 1_500;
 const PROFILE_RETRY_INTERVAL_MS = 2_000;
-
-async function waitForBackendReady(): Promise<boolean> {
-  const startedAt = Date.now();
-
-  while (Date.now() - startedAt < BOOT_WAIT_TIMEOUT_MS) {
-    try {
-      const res = await client.get('/api/health', {
-        headers: { 'Cache-Control': 'no-cache' },
-      });
-
-      const criticalReady = Boolean(res.data?.critical_ready);
-      if (criticalReady) {
-        return true;
-      }
-
-      const status = String(res.data?.status || '').toLowerCase();
-      if (status !== 'starting') {
-        return true;
-      }
-    } catch {
-      // If the backend is still booting, keep polling.
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, BOOT_POLL_INTERVAL_MS));
-  }
-
-  return false;
-}
 
 type ProfileFetchResult = {
   profile: User | null;
@@ -71,11 +42,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     devLogin = false,
     firebaseUserOverride: FirebaseUser | null = null
   ): Promise<ProfileFetchResult> => {
-    const backendReady = await waitForBackendReady();
-    if (!backendReady) {
-      return { profile: null, backendReady: false };
-    }
-
     try {
       if (devLogin || (!firebaseUserOverride && isDevLoginEnabled())) {
         const res = await client.get('/api/auth/dev-login');
@@ -95,9 +61,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await client.get('/api/auth/me');
       setProfile(res.data);
       return { profile: res.data, backendReady: true };
-    } catch {
+    } catch (error) {
       setProfile(null);
-      return { profile: null, backendReady: true };
+      const backendReady = !(axios.isAxiosError(error) && !error.response);
+      return { profile: null, backendReady };
     }
   };
 
