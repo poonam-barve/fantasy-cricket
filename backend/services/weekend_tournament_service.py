@@ -29,12 +29,40 @@ def _get_round_labels(num_rounds: int) -> dict[int, str]:
 
 def _get_weekend_match_ids(tournament) -> list[int]:
     """Extract weekend match IDs from tournament row."""
-    raw = tournament["weekend_match_ids"]
-    if raw and isinstance(raw, str):
-        return json.loads(raw)
-    if isinstance(raw, list):
-        return raw
-    return []
+    if "weekend_match_ids" in tournament.keys():
+        raw = tournament["weekend_match_ids"]
+        if raw and isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return [int(mid) for mid in parsed if mid is not None]
+            except Exception:
+                pass
+        if isinstance(raw, list):
+            return [int(mid) for mid in raw if mid is not None]
+
+    legacy_ids = []
+    for suffix in range(1, 5):
+        key = f"weekend_match_{suffix}_id"
+        if key in tournament.keys():
+            mid = tournament[key]
+            if mid is not None:
+                legacy_ids.append(int(mid))
+    return legacy_ids
+
+
+def _get_tournament_num_rounds(tournament) -> int:
+    """Get the number of rounds, falling back to the number of weekend matches."""
+    if "num_rounds" in tournament.keys():
+        raw = tournament["num_rounds"]
+        if raw not in (None, ""):
+            try:
+                value = int(raw)
+                if value > 0:
+                    return value
+            except Exception:
+                pass
+    return len(_get_weekend_match_ids(tournament))
 
 
 # ──────────────────────────────────────────────
@@ -146,7 +174,7 @@ def seed_bracket(tournament_id: int) -> dict:
         return {"error": "Tournament not found"}
 
     match_ids = _get_weekend_match_ids(tournament)
-    num_rounds = tournament["num_rounds"] or len(match_ids)
+    num_rounds = _get_tournament_num_rounds(tournament) or len(match_ids)
     num_players_needed = 2 ** num_rounds
 
     # Get qualifier results
@@ -417,7 +445,14 @@ def get_upcoming_tournament() -> dict | None:
     """Get the next pending tournament that hasn't started yet."""
     db = get_db()
     tournament = db.execute(
-        "SELECT * FROM weekend_tournaments WHERE status = 'pending' ORDER BY id ASC LIMIT 1"
+        """
+        SELECT wt.*
+        FROM weekend_tournaments wt
+        LEFT JOIN matches m ON m.id = wt.qualifying_match_id
+        WHERE wt.status = 'pending'
+        ORDER BY m.match_date ASC, m.match_time ASC, wt.id ASC
+        LIMIT 1
+        """
     ).fetchone()
     if not tournament:
         return None
@@ -457,7 +492,7 @@ def _build_tournament_response(db, tournament) -> dict:
     """Build full tournament response with brackets and match info."""
     t = tournament
     weekend_match_ids = _get_weekend_match_ids(t)
-    num_rounds = t["num_rounds"] or len(weekend_match_ids)
+    num_rounds = _get_tournament_num_rounds(t) or len(weekend_match_ids)
     all_match_ids = [t["qualifying_match_id"]] + weekend_match_ids
 
     # Fetch match info
