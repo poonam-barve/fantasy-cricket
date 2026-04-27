@@ -1,0 +1,15 @@
+.git
+.github
+.vscode
+.env
+.env.*
+.pycache
+__pycache__
+venv
+frontend/node_modules
+frontend/dist
+backend/fantasy.db
+backend/fantasy.db-shm
+backend/fantasy.db-wal
+tmp_*
+*.pyc
