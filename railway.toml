@@ -5,4 +5,4 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# Use the Dockerfile CMD/ENTRYPOINT for startup.
+startCommand = "sh -c \"python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-10000}\""
