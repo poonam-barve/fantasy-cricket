@@ -44,7 +44,10 @@ class PlayerRegistry:
 
             for n in names:
                 normalized = self.normalize(n)
-                self.lookup[(team, normalized)] = pid
+                # Keep the first exact key we see so generic aliases like
+                # "Sharma" do not overwrite a more useful earlier mapping.
+                if (team, normalized) not in self.lookup:
+                    self.lookup[(team, normalized)] = pid
 
                 parts = normalized.split()
                 if len(parts) > 1:

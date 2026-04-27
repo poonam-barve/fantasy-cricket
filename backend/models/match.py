@@ -9,7 +9,7 @@ from backend.services import data_service
 
 def clean_name(name):
     name = re.sub(r"[\u2020\u2021*]", "", str(name))
-    name = re.sub(r"\s*\((?:c|wk|sub)\)\s*$", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"\s*\((?:c|wk|w|sub)\)\s*$", "", name, flags=re.IGNORECASE)
     return " ".join(name.split()).strip()
 
 
