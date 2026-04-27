@@ -8,7 +8,7 @@ from backend.middleware.auth import require_admin
 from backend.database import get_db, get_next_id
 from backend.config import ROLES, IST, get_current_datetime
 from backend.services import data_service
-from backend.services.scraper import compute_toss_time, invalidate_live_metadata_cache
+from backend.services.scraper import compute_toss_time
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -51,9 +51,6 @@ def _refresh_admin_caches(
     if tables & {"players", "matches", "user_teams", "team_backups", "contestant_points", "player_points", "users"}:
         data_service.invalidate_match_player_payloads()
 
-    if "matches" in tables and match_id is not None:
-        invalidate_live_metadata_cache(match_id)
-
     if "matches" in tables:
         _refresh_tournament_static_state(refresh_schedule_map=refresh_schedule_map)
     elif "players" in tables:
@@ -61,9 +58,8 @@ def _refresh_admin_caches(
 
     if "matches" in tables:
         try:
-            from backend.routes.matches import invalidate_matches_response_cache, refresh_matches_response_cache_once
+            from backend.routes.matches import refresh_matches_response_cache_once
 
-            invalidate_matches_response_cache()
             threading.Thread(
                 target=refresh_matches_response_cache_once,
                 daemon=True,
@@ -74,9 +70,8 @@ def _refresh_admin_caches(
 
     if tables & {"players", "matches", "users", "user_teams", "team_backups", "contestant_points", "player_points"}:
         try:
-            from backend.routes.scores import invalidate_scores_response_cache, refresh_scores_response_cache_once
+            from backend.routes.scores import refresh_scores_response_cache_once
 
-            invalidate_scores_response_cache()
             threading.Thread(
                 target=refresh_scores_response_cache_once,
                 daemon=True,
@@ -472,7 +467,6 @@ async def recalculate_match(
                     tournament_ref.persist_player_points_to_local()
                     tournament_ref.persist_to_local()
                     data_service.invalidate_match_player_payloads()
-                invalidate_live_metadata_cache(match_id)
 
                 _refresh_admin_caches(tables={"matches"}, refresh_schedule_map=True, match_id=match_id)
             except Exception as exc:

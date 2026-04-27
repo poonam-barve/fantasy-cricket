@@ -10,6 +10,7 @@ from backend.config import IST, get_current_datetime
 from backend.middleware.auth import get_current_user
 from backend.database import get_db
 from backend.services.double_buffer_cache import DoubleBufferCache
+from backend.services.cache_locks import CACHE_REFRESH_LOCK
 
 ENTRY_FEE = 50
 PRIZE_SPLIT = [0.50, 0.30, 0.20]  # 1st, 2nd, 3rd
@@ -439,37 +440,24 @@ def _build_points_table(db, effective_match_points: dict[int, list[dict]] | None
 
 
 def _wait_for_leaderboard_cache(timeout_seconds: float = 8.0, poll_seconds: float = 0.25) -> dict | None:
-    deadline = time.time() + timeout_seconds
-    first_wait_log = True
-
-    while time.time() < deadline:
-        cached_snapshot = _get_cached_leaderboard_snapshot()
-        if cached_snapshot is not None:
-            return cached_snapshot
-
-        if first_wait_log:
-            print(f"[LEADERBOARD] waiting for cache timeout={timeout_seconds:.1f}s")
-            first_wait_log = False
-
-        time.sleep(poll_seconds)
-
     return _get_cached_leaderboard_snapshot()
 
 
 def refresh_leaderboard_cache_once() -> dict:
-    db = get_db()
-    effective_match_points = _load_effective_match_points(db)
-    rank_context = _build_rank_movement_context(db, effective_match_points)
-    leaderboard = _build_leaderboard(db, effective_match_points, rank_context["current_rank_change"])
-    points_table = _build_points_table(db, effective_match_points, rank_context["rank_change_by_match"])
-    LEADERBOARD_CACHE.publish({
-        "leaderboard": leaderboard,
-        "points_table": points_table,
-    })
-    return {
-        "leaderboard": len(leaderboard),
-        "points_table": len(points_table),
-    }
+    with CACHE_REFRESH_LOCK:
+        db = get_db()
+        effective_match_points = _load_effective_match_points(db)
+        rank_context = _build_rank_movement_context(db, effective_match_points)
+        leaderboard = _build_leaderboard(db, effective_match_points, rank_context["current_rank_change"])
+        points_table = _build_points_table(db, effective_match_points, rank_context["rank_change_by_match"])
+        LEADERBOARD_CACHE.publish({
+            "leaderboard": leaderboard,
+            "points_table": points_table,
+        })
+        return {
+            "leaderboard": len(leaderboard),
+            "points_table": len(points_table),
+        }
 
 
 def start_leaderboard_cache_scheduler():
