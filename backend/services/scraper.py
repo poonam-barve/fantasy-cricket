@@ -1,6 +1,7 @@
 import json
 import re
 import time
+import threading
 from datetime import datetime, timedelta
 import requests
 from difflib import SequenceMatcher
@@ -25,6 +26,8 @@ CRICBUZZ_MATCH_ID_MAP: dict[int, int] = {}
 ESPN_MATCH_ID_MAP: dict[int, int] = {}
 PLAYING_XI_CACHE: dict[int, dict] = {}
 PLAYING_XI_TTL_SECONDS = 60
+PLAYING_XI_REFRESH_INFLIGHT: set[int] = set()
+PLAYING_XI_REFRESH_LOCK = threading.Lock()
 TOSS_INFO_CACHE: dict[int, dict] = {}
 TOSS_INFO_TTL_SECONDS = 60
 _ESPN_SESSION = requests.Session()
@@ -190,6 +193,59 @@ def _is_before_match_start(match_date: str | None, match_time: str | None) -> bo
         return False
 
     return get_current_datetime() < match_start
+
+
+def _playing_xi_refresh_inflight(match_id: int) -> bool:
+    with PLAYING_XI_REFRESH_LOCK:
+        return int(match_id) in PLAYING_XI_REFRESH_INFLIGHT
+
+
+def _acquire_playing_xi_refresh(match_id: int) -> bool:
+    with PLAYING_XI_REFRESH_LOCK:
+        match_key = int(match_id)
+        if match_key in PLAYING_XI_REFRESH_INFLIGHT:
+            return False
+        PLAYING_XI_REFRESH_INFLIGHT.add(match_key)
+        return True
+
+
+def _release_playing_xi_refresh(match_id: int) -> None:
+    with PLAYING_XI_REFRESH_LOCK:
+        PLAYING_XI_REFRESH_INFLIGHT.discard(int(match_id))
+
+
+def refresh_playing_xi_async(
+    match_id: int,
+    team1: str,
+    team2: str,
+    players_rows: list[dict],
+    match_date: str | None = None,
+    match_time: str | None = None,
+    toss_time: str | None = None,
+) -> bool:
+    """Schedule a background Playing XI refresh if one is not already running."""
+    if not _acquire_playing_xi_refresh(match_id):
+        return False
+
+    def _run():
+        try:
+            _fetch_playing_xi_impl(
+                match_id,
+                team1,
+                team2,
+                players_rows,
+                match_date=match_date,
+                match_time=match_time,
+                toss_time=toss_time,
+                force_refresh=True,
+            )
+        except Exception as exc:
+            print(f"[Playing XI] Match {match_id}: async refresh failed: {exc}")
+        finally:
+            _release_playing_xi_refresh(match_id)
+
+    threading.Thread(target=_run, daemon=True, name=f"playing-xi-refresh-{int(match_id)}").start()
+    return True
 
 
 def fetch_scorecard_html(match_id, team1: str | None = None, team2: str | None = None, match_date: str | None = None, force_refresh: bool = False):
@@ -1729,7 +1785,7 @@ def _extract_playing_xi_from_text(html: str, team1: str, team2: str, players_row
     return playing_ids, unmatched_names
 
 
-def fetch_playing_xi(
+def _fetch_playing_xi_impl(
     match_id: int,
     team1: str,
     team2: str,
@@ -1940,6 +1996,37 @@ def fetch_playing_xi(
         except Exception:
             pass
         return _copy_playing_xi_payload(payload)
+
+
+def fetch_playing_xi(
+    match_id: int,
+    team1: str,
+    team2: str,
+    players_rows: list[dict],
+    match_date: str | None = None,
+    match_time: str | None = None,
+    toss_time: str | None = None,
+    force_refresh: bool = False,
+) -> dict:
+    if not _acquire_playing_xi_refresh(match_id):
+        cached = PLAYING_XI_CACHE.get(int(match_id))
+        if cached:
+            return _copy_playing_xi_payload(cached["payload"])
+        return {"announced": False, "url": "", "player_ids": [], "substitute_ids": []}
+
+    try:
+        return _fetch_playing_xi_impl(
+            match_id,
+            team1,
+            team2,
+            players_rows,
+            match_date=match_date,
+            match_time=match_time,
+            toss_time=toss_time,
+            force_refresh=force_refresh,
+        )
+    finally:
+        _release_playing_xi_refresh(match_id)
 
 
 def fetch_toss_info(

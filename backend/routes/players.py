@@ -10,7 +10,7 @@ from backend.config import ROLES, IST, get_current_datetime, get_current_date_ke
 from backend.models.match import Match, clean_team_name
 from backend.models.registry import PlayerRegistry
 from backend.services import data_service
-from backend.services.scraper import fetch_cricbuzz_scorecard_html, fetch_playing_xi, fetch_scorecard_html, get_cached_toss_info
+from backend.services.scraper import fetch_cricbuzz_scorecard_html, fetch_playing_xi, fetch_scorecard_html, get_cached_toss_info, refresh_playing_xi_async
 from bs4 import BeautifulSoup
 
 router = APIRouter(prefix="/api", tags=["players"])
@@ -246,6 +246,21 @@ async def list_players(
     db = get_db()
 
     if match_id:
+        match = db.execute(
+            "SELECT * FROM matches WHERE id = ?",
+            (match_id,),
+        ).fetchone()
+        if not match:
+            return {"error": "Match not found"}
+
+        team1 = match["team1"]
+        team2 = match["team2"]
+        match_date = match["match_date"]
+        match_time = match["match_time"]
+        toss_time = match.get("toss_time") or match.get("TossTime")
+        lineup_window_open = _is_lineup_window_open(match_date, match_time, toss_time)
+        is_today_match = _is_match_today(match_date)
+
         cached_payload = data_service.get_cached_match_player_payload(match_id)
         if cached_payload is not None:
             players = [copy.deepcopy(player) for player in cached_payload["players"]]
@@ -253,19 +268,6 @@ async def list_players(
             match_date = cached_payload["match_date"]
             match_time = cached_payload["match_time"]
         else:
-            # Get the match to find teams
-            match = db.execute(
-                "SELECT * FROM matches WHERE id = ?", (match_id,)
-            ).fetchone()
-
-            if not match:
-                return {"error": "Match not found"}
-
-            team1 = match["team1"]
-            team2 = match["team2"]
-            match_date = match["match_date"]
-            match_time = match["match_time"]
-
             rows = db.execute(
                 """
                 SELECT
@@ -348,9 +350,27 @@ async def list_players(
         )
         if cached_playing_xi and cached_playing_xi.get("announced"):
             playing_xi_data = cached_playing_xi
+        elif lineup_window_open or is_today_match:
+            refresh_playing_xi_async(
+                match_id,
+                team1,
+                team2,
+                players,
+                match_date,
+                match_time,
+                toss_time,
+            )
+            refreshed_cache = data_service.get_cached_match_playing_xi(
+                match_id,
+                team1,
+                team2,
+                match_date,
+                match_time,
+            )
+            if refreshed_cache and refreshed_cache.get("announced"):
+                playing_xi_data = refreshed_cache
 
         toss_info = get_cached_toss_info(match_id) or {"announced": False, "team": None, "decision": None, "text": "", "url": ""}
-        lineup_window_open = _is_lineup_window_open(match_date, match_time)
 
         playing_ids = set(playing_xi_data["player_ids"])
         substitute_ids = set(playing_xi_data.get("substitute_ids", []))
