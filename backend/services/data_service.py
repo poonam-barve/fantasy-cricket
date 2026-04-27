@@ -15,6 +15,7 @@ from datetime import datetime
 
 from backend.database import get_db
 from backend.config import get_current_datetime
+from backend.services.cache_locks import CACHE_WRITE_LOCK
 
 # ---------------------------------------------------------------------------
 # Lightweight in-process cache (mirrors the old JSON cache behaviour)
@@ -44,18 +45,20 @@ def _rows_to_dicts(rows) -> list[dict]:
 
 def invalidate_cache(*sheet_names: str):
     keys = sheet_names or tuple(CACHE.keys())
-    with _lock:
-        for key in keys:
-            if key in CACHE:
-                CACHE[key] = None
+    with CACHE_WRITE_LOCK:
+        with _lock:
+            for key in keys:
+                if key in CACHE:
+                    CACHE[key] = None
 
 
 def invalidate_match_player_payloads(match_id: int | None = None) -> None:
-    with _lock:
-        if match_id is None:
-            PLAYER_MATCH_PAYLOAD_CACHE.clear()
-        else:
-            PLAYER_MATCH_PAYLOAD_CACHE.pop(int(match_id), None)
+    with CACHE_WRITE_LOCK:
+        with _lock:
+            if match_id is None:
+                PLAYER_MATCH_PAYLOAD_CACHE.clear()
+            else:
+                PLAYER_MATCH_PAYLOAD_CACHE.pop(int(match_id), None)
 
 
 def get_cached_match_player_payload(match_id: int) -> dict | None:
@@ -65,8 +68,9 @@ def get_cached_match_player_payload(match_id: int) -> dict | None:
 
 
 def set_cached_match_player_payload(match_id: int, payload: dict) -> None:
-    with _lock:
-        PLAYER_MATCH_PAYLOAD_CACHE[int(match_id)] = copy.deepcopy(payload)
+    with CACHE_WRITE_LOCK:
+        with _lock:
+            PLAYER_MATCH_PAYLOAD_CACHE[int(match_id)] = copy.deepcopy(payload)
 
 
 def _is_playing_xi_final(payload: dict | None) -> bool:
@@ -101,12 +105,13 @@ def set_cached_match_playing_xi(
     payload: dict,
 ) -> dict:
     cache_key = (int(match_id), team1, team2, match_date, match_time)
-    with _lock:
-        existing = PLAYING_XI_STATUS_CACHE.get(cache_key)
-        if _is_playing_xi_final(existing) and not _is_playing_xi_final(payload):
-            return copy.deepcopy(existing)
-        PLAYING_XI_STATUS_CACHE[cache_key] = copy.deepcopy(payload)
-        return copy.deepcopy(PLAYING_XI_STATUS_CACHE[cache_key])
+    with CACHE_WRITE_LOCK:
+        with _lock:
+            existing = PLAYING_XI_STATUS_CACHE.get(cache_key)
+            if _is_playing_xi_final(existing) and not _is_playing_xi_final(payload):
+                return copy.deepcopy(existing)
+            PLAYING_XI_STATUS_CACHE[cache_key] = copy.deepcopy(payload)
+            return copy.deepcopy(PLAYING_XI_STATUS_CACHE[cache_key])
 
 
 def is_cached_playing_xi_final(
@@ -130,9 +135,10 @@ def get_cached_last_match_xi(match_id: int, team: str) -> dict | None:
 
 def set_cached_last_match_xi(match_id: int, team: str, payload: dict) -> dict:
     cache_key = (int(match_id), team)
-    with _lock:
-        LAST_MATCH_XI_CACHE[cache_key] = copy.deepcopy(payload)
-        return copy.deepcopy(LAST_MATCH_XI_CACHE[cache_key])
+    with CACHE_WRITE_LOCK:
+        with _lock:
+            LAST_MATCH_XI_CACHE[cache_key] = copy.deepcopy(payload)
+            return copy.deepcopy(LAST_MATCH_XI_CACHE[cache_key])
 
 
 def prime_static_cache():

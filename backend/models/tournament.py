@@ -20,6 +20,12 @@ from backend.services import data_service
 from bs4 import BeautifulSoup
 
 DEBUG_PLAYER_ID = 0
+LINEUP_CACHE_SCHEDULER_LOCK = threading.Lock()
+LINEUP_CACHE_SCHEDULER_STARTED = False
+TOSS_CACHE_SCHEDULER_LOCK = threading.Lock()
+TOSS_CACHE_SCHEDULER_STARTED = False
+SCORE_SCHEDULER_LOCK = threading.Lock()
+SCORE_SCHEDULER_STARTED = False
 
 
 def build_player_role_map(players_data):
@@ -725,6 +731,13 @@ class Tournament:
         return {"eligible": len(toss_match_ids), "refreshed": refreshed, "announced": announced}
 
     def start_scheduler(self):
+        global SCORE_SCHEDULER_STARTED
+        with SCORE_SCHEDULER_LOCK:
+            if SCORE_SCHEDULER_STARTED:
+                self._scheduler_log("SCORE", "scheduler already started, skipping")
+                return
+            SCORE_SCHEDULER_STARTED = True
+
         def run():
             while True:
                 try:
@@ -742,6 +755,13 @@ class Tournament:
         thread.start()
 
     def start_lineup_cache_scheduler(self):
+        global LINEUP_CACHE_SCHEDULER_STARTED
+        with LINEUP_CACHE_SCHEDULER_LOCK:
+            if LINEUP_CACHE_SCHEDULER_STARTED:
+                self._scheduler_log("XI", "scheduler already started, skipping")
+                return
+            LINEUP_CACHE_SCHEDULER_STARTED = True
+
         def run():
             while True:
                 try:
@@ -756,6 +776,13 @@ class Tournament:
         thread.start()
 
     def start_toss_cache_scheduler(self):
+        global TOSS_CACHE_SCHEDULER_STARTED
+        with TOSS_CACHE_SCHEDULER_LOCK:
+            if TOSS_CACHE_SCHEDULER_STARTED:
+                self._scheduler_log("TOSS", "scheduler already started, skipping")
+                return
+            TOSS_CACHE_SCHEDULER_STARTED = True
+
         def run():
             while True:
                 try:

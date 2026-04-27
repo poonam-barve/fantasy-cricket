@@ -20,6 +20,7 @@ from backend.config import (
 )
 from backend.models.registry import PlayerRegistry
 from backend.services import data_service
+from backend.services.cache_locks import CACHE_WRITE_LOCK
 
 
 CRICBUZZ_MATCH_ID_MAP: dict[int, int] = {}
@@ -1894,11 +1895,12 @@ def _fetch_playing_xi_impl(
         if not squads_html and not commentary_html:
             print(f"[Playing XI] Match {match_id}: unable to fetch squads/commentary")
             payload = {"announced": False, "url": squads_url, "player_ids": [], "substitute_ids": []}
-            PLAYING_XI_CACHE[int(match_id)] = {
-                "payload": payload,
-                "fetched_at": now_ts,
-                "finalized": False,
-            }
+            with CACHE_WRITE_LOCK:
+                PLAYING_XI_CACHE[int(match_id)] = {
+                    "payload": payload,
+                    "fetched_at": now_ts,
+                    "finalized": False,
+                }
             try:
                 data_service.set_cached_match_playing_xi(
                     match_id, team1, team2, match_date or "", match_time or "", payload
@@ -1934,11 +1936,12 @@ def _fetch_playing_xi_impl(
         if not parsed_payload["announced"]:
             print(f"[Playing XI] Match {match_id}: Playing XI section not available yet")
             payload = {"announced": False, "url": parsed_payload.get("url", commentary_url), "player_ids": [], "substitute_ids": []}
-            PLAYING_XI_CACHE[int(match_id)] = {
-                "payload": payload,
-                "fetched_at": now_ts,
-                "finalized": False,
-            }
+            with CACHE_WRITE_LOCK:
+                PLAYING_XI_CACHE[int(match_id)] = {
+                    "payload": payload,
+                    "fetched_at": now_ts,
+                    "finalized": False,
+                }
             try:
                 data_service.set_cached_match_playing_xi(
                     match_id, team1, team2, match_date or "", match_time or "", payload
@@ -1969,11 +1972,12 @@ def _fetch_playing_xi_impl(
             "player_ids": list(playing_ids),
             "substitute_ids": list(substitute_ids),
         }
-        PLAYING_XI_CACHE[int(match_id)] = {
-            "payload": payload,
-            "fetched_at": now_ts,
-            "finalized": parsed_payload["finalized"],
-        }
+        with CACHE_WRITE_LOCK:
+            PLAYING_XI_CACHE[int(match_id)] = {
+                "payload": payload,
+                "fetched_at": now_ts,
+                "finalized": parsed_payload["finalized"],
+            }
         try:
             data_service.set_cached_match_playing_xi(
                 match_id, team1, team2, match_date or "", match_time or "", payload
@@ -1984,11 +1988,12 @@ def _fetch_playing_xi_impl(
     except Exception as e:
         print("Error fetching playing XI:", e)
         payload = {"announced": False, "url": commentary_url, "player_ids": [], "substitute_ids": []}
-        PLAYING_XI_CACHE[int(match_id)] = {
-            "payload": payload,
-            "fetched_at": now_ts,
-            "finalized": False,
-        }
+        with CACHE_WRITE_LOCK:
+            PLAYING_XI_CACHE[int(match_id)] = {
+                "payload": payload,
+                "fetched_at": now_ts,
+                "finalized": False,
+            }
         try:
             data_service.set_cached_match_playing_xi(
                 match_id, team1, team2, match_date or "", match_time or "", payload
@@ -2054,21 +2059,23 @@ def fetch_toss_info(
 
     if not should_attempt_toss_fetch(match_date, match_time, toss_time):
         payload = {"announced": False, "team": None, "decision": None, "text": "", "url": ""}
-        TOSS_INFO_CACHE[int(match_id)] = {
-            "payload": payload,
-            "fetched_at": now_ts,
-            "announced": False,
-        }
+        with CACHE_WRITE_LOCK:
+            TOSS_INFO_CACHE[int(match_id)] = {
+                "payload": payload,
+                "fetched_at": now_ts,
+                "announced": False,
+            }
         return _copy_toss_payload(payload)
 
     cricbuzz_match_id = data_service.get_stored_cricbuzz_match_id(int(match_id)) or resolve_cricbuzz_match_id(int(match_id), team1, team2)
     if not cricbuzz_match_id:
         payload = {"announced": False, "team": None, "decision": None, "text": "", "url": ""}
-        TOSS_INFO_CACHE[int(match_id)] = {
-            "payload": payload,
-            "fetched_at": now_ts,
-            "announced": False,
-        }
+        with CACHE_WRITE_LOCK:
+            TOSS_INFO_CACHE[int(match_id)] = {
+                "payload": payload,
+                "fetched_at": now_ts,
+                "announced": False,
+            }
         return _copy_toss_payload(payload)
 
     commentary_url = build_cricbuzz_commentary_url(cricbuzz_match_id)
@@ -2088,31 +2095,34 @@ def fetch_toss_info(
                             parsed = _extract_toss_info_from_html(retry_res.text, team1, team2)
                             if parsed:
                                 parsed["url"] = retry_url
-                                TOSS_INFO_CACHE[int(match_id)] = {
-                                    "payload": parsed,
-                                    "fetched_at": now_ts,
-                                    "announced": True,
-                                }
+                                with CACHE_WRITE_LOCK:
+                                    TOSS_INFO_CACHE[int(match_id)] = {
+                                        "payload": parsed,
+                                        "fetched_at": now_ts,
+                                        "announced": True,
+                                    }
                                 return _copy_toss_payload(parsed)
                 continue
             parsed = _extract_toss_info_from_html(res.text, team1, team2)
             if parsed:
                 parsed["url"] = url
-                TOSS_INFO_CACHE[int(match_id)] = {
-                    "payload": parsed,
-                    "fetched_at": now_ts,
-                    "announced": True,
-                }
+                with CACHE_WRITE_LOCK:
+                    TOSS_INFO_CACHE[int(match_id)] = {
+                        "payload": parsed,
+                        "fetched_at": now_ts,
+                        "announced": True,
+                    }
                 return _copy_toss_payload(parsed)
         except Exception as exc:
             print(f"[Toss] Match {match_id}: error fetching {url}: {exc}")
 
     payload = {"announced": False, "team": None, "decision": None, "text": "", "url": ""}
-    TOSS_INFO_CACHE[int(match_id)] = {
-        "payload": payload,
-        "fetched_at": now_ts,
-        "announced": False,
-    }
+    with CACHE_WRITE_LOCK:
+        TOSS_INFO_CACHE[int(match_id)] = {
+            "payload": payload,
+            "fetched_at": now_ts,
+            "announced": False,
+        }
     return _copy_toss_payload(payload)
 
 
@@ -2255,12 +2265,13 @@ def is_cached_toss_announced(match_id: int) -> bool:
 
 
 def invalidate_live_metadata_cache(match_id: int | None = None) -> None:
-    if match_id is None:
-        PLAYING_XI_CACHE.clear()
-        TOSS_INFO_CACHE.clear()
-        return
-    PLAYING_XI_CACHE.pop(int(match_id), None)
-    TOSS_INFO_CACHE.pop(int(match_id), None)
+    with CACHE_WRITE_LOCK:
+        if match_id is None:
+            PLAYING_XI_CACHE.clear()
+            TOSS_INFO_CACHE.clear()
+            return
+        PLAYING_XI_CACHE.pop(int(match_id), None)
+        TOSS_INFO_CACHE.pop(int(match_id), None)
 
 
 def populate_match_venues(db) -> None:

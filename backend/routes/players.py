@@ -371,6 +371,7 @@ async def list_players(
                 playing_xi_data = refreshed_cache
 
         toss_info = get_cached_toss_info(match_id) or {"announced": False, "team": None, "decision": None, "text": "", "url": ""}
+        is_today_match = _is_match_today(match_date)
 
         playing_ids = set(playing_xi_data["player_ids"])
         substitute_ids = set(playing_xi_data.get("substitute_ids", []))
@@ -380,7 +381,6 @@ async def list_players(
         }
         playing_xi_known = len(playing_ids) == 22
         substitutes_known = len(substitute_ids) == 10
-        is_today_match = _is_match_today(match_date)
         lineup_preview: dict[str, dict] = {}
         if is_today_match and not playing_xi_data["announced"]:
             for team in (team1, team2):

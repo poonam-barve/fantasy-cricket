@@ -444,10 +444,11 @@ def get_db():
         if _is_postgres():
             _local.conn = PgConnectionWrapper(_postgres_dsn())
         else:
-            conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+            conn = sqlite3.connect(DATABASE_PATH, timeout=30.0, check_same_thread=False)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA busy_timeout=30000")
             _local.conn = conn
     elif _is_postgres() and getattr(_local.conn, "_is_closed", lambda: False)():
         _local.conn = PgConnectionWrapper(_postgres_dsn())

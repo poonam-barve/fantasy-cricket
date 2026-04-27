@@ -4,6 +4,8 @@ import copy
 import threading
 from typing import Generic, TypeVar
 
+from backend.services.cache_locks import CACHE_WRITE_LOCK
+
 T = TypeVar("T")
 
 
@@ -25,13 +27,14 @@ class DoubleBufferCache(Generic[T]):
 
     def publish(self, payload: T) -> T:
         """Write to the update slot, then atomically swap it into live."""
-        with self._lock:
-            self._update = copy.deepcopy(payload)
-            self._live, self._update = self._update, self._live
-            return copy.deepcopy(self._live)
+        with CACHE_WRITE_LOCK:
+            with self._lock:
+                self._update = copy.deepcopy(payload)
+                self._live, self._update = self._update, self._live
+                return copy.deepcopy(self._live)
 
     def invalidate(self) -> None:
-        with self._lock:
-            self._live = None
-            self._update = None
-
+        with CACHE_WRITE_LOCK:
+            with self._lock:
+                self._live = None
+                self._update = None

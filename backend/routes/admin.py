@@ -1,15 +1,12 @@
 from collections import defaultdict
-from collections import defaultdict
+import threading
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from typing import List, List, Optional, List
+from typing import List, Optional
 
 from backend.middleware.auth import require_admin
 from backend.database import get_db, get_next_id
-from backend.config import ROLES
-from backend.services import data_service
-from backend.config import IST
-from backend.config import ROLES, get_current_datetime
+from backend.config import ROLES, IST, get_current_datetime
 from backend.services import data_service
 from backend.services.scraper import compute_toss_time, invalidate_live_metadata_cache
 
@@ -17,6 +14,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 # Tournament reference - will be set from main.py
 tournament_ref = None
+ADMIN_REFRESH_LOCK = threading.Lock()
 
 
 def _now_str():
@@ -66,7 +64,11 @@ def _refresh_admin_caches(
             from backend.routes.matches import invalidate_matches_response_cache, refresh_matches_response_cache_once
 
             invalidate_matches_response_cache()
-            refresh_matches_response_cache_once()
+            threading.Thread(
+                target=refresh_matches_response_cache_once,
+                daemon=True,
+                name="admin-matches-cache-refresh",
+            ).start()
         except Exception as exc:
             print(f"[ADMIN] matches cache refresh failed: {exc}")
 
@@ -75,9 +77,68 @@ def _refresh_admin_caches(
             from backend.routes.scores import invalidate_scores_response_cache, refresh_scores_response_cache_once
 
             invalidate_scores_response_cache()
-            refresh_scores_response_cache_once()
+            threading.Thread(
+                target=refresh_scores_response_cache_once,
+                daemon=True,
+                name="admin-scores-cache-refresh",
+            ).start()
         except Exception as exc:
             print(f"[ADMIN] scores cache refresh failed: {exc}")
+
+
+def _queue_admin_refresh(
+    *,
+    tables: set[str],
+    refresh_schedule_map: bool = False,
+    match_id: int | None = None,
+) -> None:
+    def _run():
+        with ADMIN_REFRESH_LOCK:
+            try:
+                _refresh_admin_caches(
+                    tables=tables,
+                    refresh_schedule_map=refresh_schedule_map,
+                    match_id=match_id,
+                )
+            except Exception as exc:
+                print(f"[ADMIN] background refresh failed: {exc}")
+
+    threading.Thread(target=_run, daemon=True, name="admin-cache-refresh").start()
+
+
+def _queue_tournament_match_refresh(
+    match_id: int,
+    explicit_status: str | None,
+) -> None:
+    if tournament_ref is None:
+        return
+
+    match_id_str = str(match_id)
+
+    def _run():
+        with ADMIN_REFRESH_LOCK:
+            try:
+                if explicit_status == "completed":
+                    tournament_ref.ensure_match_teams_loaded([match_id_str], force=True)
+                    tournament_ref.update_match_data(
+                        match_id_str,
+                        use_playing_xi=True,
+                        force_refresh_playing_xi=True,
+                    )
+                    tournament_ref.compute_player_points_for_match(match_id_str)
+                    tournament_ref.compute_points_for_match(match_id_str)
+                    tournament_ref.persist_player_points_to_local()
+                    tournament_ref.persist_to_local()
+                elif explicit_status in {"future", "live", "nr"}:
+                    tournament_ref.player_points.pop(match_id_str, None)
+                    for contestant in tournament_ref.contestants.values():
+                        contestant.points.pop(match_id_str, None)
+
+                _refresh_admin_caches(tables={"matches"}, refresh_schedule_map=True, match_id=match_id)
+            except Exception as exc:
+                print(f"[ADMIN] background tournament refresh failed for match {match_id}: {exc}")
+
+    threading.Thread(target=_run, daemon=True, name=f"admin-match-refresh-{match_id}").start()
 
 
 # --- User Management ---
@@ -346,21 +407,7 @@ async def update_match(
         data_service.clear_points_for_match(match_id)
         invalidate_live_metadata_cache(match_id)
     db.commit()
-    _refresh_admin_caches(tables={"matches"}, refresh_schedule_map=True, match_id=match_id)
-
-    if tournament_ref is not None:
-        match_id_str = str(match_id)
-        if explicit_status == "completed":
-            tournament_ref.ensure_match_teams_loaded([match_id_str], force=True)
-            tournament_ref.update_match_data(match_id_str, use_playing_xi=True, force_refresh_playing_xi=True)
-            tournament_ref.compute_player_points_for_match(match_id_str)
-            tournament_ref.compute_points_for_match(match_id_str)
-            tournament_ref.persist_player_points_to_local()
-            tournament_ref.persist_to_local()
-        elif explicit_status in {"future", "live", "nr"}:
-            tournament_ref.player_points.pop(match_id_str, None)
-            for contestant in tournament_ref.contestants.values():
-                contestant.points.pop(match_id_str, None)
+    _queue_tournament_match_refresh(match_id, explicit_status)
 
     updated = db.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
     return dict(updated)
@@ -405,23 +452,33 @@ async def recalculate_match(
 
     match_id_str = str(match_id)
 
-    _refresh_tournament_static_state()
-    tournament_ref.ensure_match_teams_loaded([match_id_str], force=True)
+    refreshed_status = current_status
 
-    # Fetch scorecard first so final match status can be refreshed from Cricbuzz.
-    tournament_ref.update_match_data(match_id_str, use_playing_xi=True, force_refresh_playing_xi=True)
-    updated_match_row = tournament_ref.match_rows.get(match_id_str, {})
-    refreshed_status = tournament_ref.get_match_status(updated_match_row)
+    def _run_recalculate():
+        nonlocal refreshed_status
+        with ADMIN_REFRESH_LOCK:
+            try:
+                _refresh_tournament_static_state()
+                tournament_ref.ensure_match_teams_loaded([match_id_str], force=True)
 
-    if refreshed_status == "completed":
-        tournament_ref.compute_player_points_for_match(match_id_str)
-        tournament_ref.compute_points_for_match(match_id_str)
-        tournament_ref.persist_player_points_to_local()
-        tournament_ref.persist_to_local()
-        data_service.invalidate_match_player_payloads()
-    invalidate_live_metadata_cache(match_id)
+                # Fetch scorecard first so final match status can be refreshed from Cricbuzz.
+                tournament_ref.update_match_data(match_id_str, use_playing_xi=True, force_refresh_playing_xi=True)
+                updated_match_row = tournament_ref.match_rows.get(match_id_str, {})
+                refreshed_status = tournament_ref.get_match_status(updated_match_row)
 
-    _refresh_admin_caches(tables={"matches"}, refresh_schedule_map=True, match_id=match_id)
+                if refreshed_status == "completed":
+                    tournament_ref.compute_player_points_for_match(match_id_str)
+                    tournament_ref.compute_points_for_match(match_id_str)
+                    tournament_ref.persist_player_points_to_local()
+                    tournament_ref.persist_to_local()
+                    data_service.invalidate_match_player_payloads()
+                invalidate_live_metadata_cache(match_id)
+
+                _refresh_admin_caches(tables={"matches"}, refresh_schedule_map=True, match_id=match_id)
+            except Exception as exc:
+                print(f"[ADMIN] background recalculate failed for match {match_id}: {exc}")
+
+    threading.Thread(target=_run_recalculate, daemon=True, name=f"admin-recalculate-{match_id}").start()
 
     return {
         "success": True,

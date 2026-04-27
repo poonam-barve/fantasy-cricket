@@ -13,6 +13,7 @@ from backend.models.match import Match, clean_team_name
 from backend.models.registry import PlayerRegistry
 from backend.services import data_service
 from backend.services.double_buffer_cache import DoubleBufferCache
+from backend.services.cache_locks import CACHE_WRITE_LOCK
 from backend.services.live_scores import append_missing_live_team_players
 from backend.services.scraper import fetch_playing_xi, fetch_scorecard_html, fetch_cricbuzz_scorecard_html
 from bs4 import BeautifulSoup
@@ -30,6 +31,7 @@ SCORES_CACHE_SCHEDULER_STARTED = False
 SCORES_PERSIST_LOCK = threading.Lock()
 SCORES_REFRESH_INFLIGHT_LOCK = threading.Lock()
 SCORES_REFRESH_INFLIGHT: set[int] = set()
+SCORES_REFRESH_LOCK = threading.Lock()
 
 
 def _empty_match_scores_payload(match_status: str = "live") -> dict:
@@ -472,78 +474,91 @@ def _build_completed_match_scores_payload(match_id: int, match_row, registry, pl
 
 
 def refresh_scores_response_cache_once() -> dict:
-    db = get_db()
-    registry, players_data = _build_registry(db)
-    matches_data = data_service.get_cached_data("matches")
-    snapshot: dict[int, dict] = SCORES_RESPONSE_CACHE.read() or {}
-    eligible = 0
-    refreshed = 0
-    errors = 0
-    updated_match_ids: set[int] = set()
+    if not SCORES_REFRESH_LOCK.acquire(blocking=False):
+        _log_scores_cache("refresh already running, skipping")
+        snapshot = SCORES_RESPONSE_CACHE.read() or {}
+        return {
+            "eligible": 0,
+            "refreshed": 0,
+            "errors": 0,
+            "matches": len(snapshot),
+        }
 
-    _log_scores_cache(f"refresh tick start matches={len(matches_data)}")
+    try:
+        db = get_db()
+        registry, players_data = _build_registry(db)
+        matches_data = data_service.get_cached_data("matches")
+        snapshot: dict[int, dict] = SCORES_RESPONSE_CACHE.read() or {}
+        eligible = 0
+        refreshed = 0
+        errors = 0
+        updated_match_ids: set[int] = set()
 
-    for match_row in matches_data:
-        match_id = int(match_row["MatchID"])
-        status = _match_status_value(match_row)
-        try:
-            if status == "future":
-                continue
-            if status == "nr":
-                if snapshot.get(match_id, {}).get("match_status") == "nr":
+        _log_scores_cache(f"refresh tick start matches={len(matches_data)}")
+
+        for match_row in matches_data:
+            match_id = int(match_row["MatchID"])
+            status = _match_status_value(match_row)
+            try:
+                if status == "future":
                     continue
-                snapshot[match_id] = _empty_match_scores_payload("nr")
-                updated_match_ids.add(match_id)
-                refreshed += 1
-                continue
-            if status == "completed":
-                eligible += 1
-                existing_payload = snapshot.get(match_id)
-                if existing_payload and existing_payload.get("match_status") in {"completed", "nr"}:
-                    continue
-                payload = _build_completed_match_scores_payload(match_id, match_row, registry, players_data, db)
-                if payload is not None:
-                    snapshot[match_id] = payload
+                if status == "nr":
+                    if snapshot.get(match_id, {}).get("match_status") == "nr":
+                        continue
+                    snapshot[match_id] = _empty_match_scores_payload("nr")
                     updated_match_ids.add(match_id)
                     refreshed += 1
-                continue
-            if status == "live":
-                eligible += 1
-                payload = _build_match_scores_payload(match_id, match_row, registry, players_data, db)
-                if payload is not None:
-                    snapshot[match_id] = payload
-                    updated_match_ids.add(match_id)
-                    refreshed += 1
-        except Exception as exc:
-            errors += 1
-            _log_scores_cache(f"match {match_id} refresh error: {exc}")
-            traceback.print_exc()
+                    continue
+                if status == "completed":
+                    eligible += 1
+                    existing_payload = snapshot.get(match_id)
+                    if existing_payload and existing_payload.get("match_status") in {"completed", "nr"}:
+                        continue
+                    payload = _build_completed_match_scores_payload(match_id, match_row, registry, players_data, db)
+                    if payload is not None:
+                        snapshot[match_id] = payload
+                        updated_match_ids.add(match_id)
+                        refreshed += 1
+                    continue
+                if status == "live":
+                    eligible += 1
+                    payload = _build_match_scores_payload(match_id, match_row, registry, players_data, db)
+                    if payload is not None:
+                        snapshot[match_id] = payload
+                        updated_match_ids.add(match_id)
+                        refreshed += 1
+            except Exception as exc:
+                errors += 1
+                _log_scores_cache(f"match {match_id} refresh error: {exc}")
+                traceback.print_exc()
 
-    _store_scores_response_cache(snapshot)
-    if updated_match_ids:
-        try:
-            _persist_scores_snapshot_to_db(snapshot, updated_match_ids)
-        except Exception as exc:
-            _log_scores_cache(f"targeted persistence failed: {exc}")
-            traceback.print_exc()
-        try:
-            from backend.routes.leaderboard import refresh_leaderboard_cache_once
+        _store_scores_response_cache(snapshot)
+        if updated_match_ids:
+            try:
+                _persist_scores_snapshot_to_db(snapshot, updated_match_ids)
+            except Exception as exc:
+                _log_scores_cache(f"targeted persistence failed: {exc}")
+                traceback.print_exc()
+            try:
+                from backend.routes.leaderboard import refresh_leaderboard_cache_once
 
-            summary = refresh_leaderboard_cache_once()
-            _log_scores_cache(
-                f"leaderboard cache refreshed leaderboard={summary['leaderboard']} points_table={summary['points_table']}"
-            )
-        except Exception as exc:
-            _log_scores_cache(f"leaderboard cache refresh failed: {exc}")
-    _log_scores_cache(
-        f"refresh tick complete eligible={eligible} refreshed={refreshed} errors={errors} cached={len(snapshot)}"
-    )
-    return {
-        "eligible": eligible,
-        "refreshed": refreshed,
-        "errors": errors,
-        "matches": len(matches_data),
-    }
+                summary = refresh_leaderboard_cache_once()
+                _log_scores_cache(
+                    f"leaderboard cache refreshed leaderboard={summary['leaderboard']} points_table={summary['points_table']}"
+                )
+            except Exception as exc:
+                _log_scores_cache(f"leaderboard cache refresh failed: {exc}")
+        _log_scores_cache(
+            f"refresh tick complete eligible={eligible} refreshed={refreshed} errors={errors} cached={len(snapshot)}"
+        )
+        return {
+            "eligible": eligible,
+            "refreshed": refreshed,
+            "errors": errors,
+            "matches": len(matches_data),
+        }
+    finally:
+        SCORES_REFRESH_LOCK.release()
 
 
 def start_scores_cache_scheduler():
@@ -897,9 +912,10 @@ def _build_live_match_payload(match_id: int, match_row, registry, players_data, 
         "playing_xi": playing_xi,
         "fetched_at": time.time(),
     }
-    with MATCH_DATA_CACHE_LOCK:
-        MATCH_DATA_CACHE[cache_key] = payload
-        MATCH_DATA_REFRESH_INFLIGHT.discard(cache_key)
+    with CACHE_WRITE_LOCK:
+        with MATCH_DATA_CACHE_LOCK:
+            MATCH_DATA_CACHE[cache_key] = payload
+            MATCH_DATA_REFRESH_INFLIGHT.discard(cache_key)
     return payload
 
 
@@ -916,8 +932,9 @@ def _refresh_live_match_payload_async(match_id: int, match_row, registry, player
             _build_live_match_payload(match_id, match_row, registry, players_data, include_playing_xi=include_playing_xi)
         except Exception as exc:
             print(f"[scores-cache] async refresh failed for match {match_id}: {exc}")
-            with MATCH_DATA_CACHE_LOCK:
-                MATCH_DATA_REFRESH_INFLIGHT.discard(cache_key)
+            with CACHE_WRITE_LOCK:
+                with MATCH_DATA_CACHE_LOCK:
+                    MATCH_DATA_REFRESH_INFLIGHT.discard(cache_key)
 
     threading.Thread(target=_run, daemon=True).start()
 
