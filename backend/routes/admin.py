@@ -131,6 +131,7 @@ def _queue_tournament_match_refresh(
                         tournament_ref.compute_points_for_match(match_id_str)
                         tournament_ref.persist_player_points_to_local()
                         tournament_ref.persist_to_local()
+                        tournament_ref.warm_today_last_completed_team_xi_previews()
                     elif explicit_status in {"future", "live", "nr"}:
                         tournament_ref.player_points.pop(match_id_str, None)
                         for contestant in tournament_ref.contestants.values():
@@ -473,6 +474,7 @@ async def recalculate_match(
                     tournament_ref.persist_player_points_to_local()
                     tournament_ref.persist_to_local()
                     data_service.invalidate_match_player_payloads()
+                    tournament_ref.warm_today_last_completed_team_xi_previews()
 
                 _refresh_admin_caches(tables={"matches"}, refresh_schedule_map=True, match_id=match_id)
             except Exception as exc:

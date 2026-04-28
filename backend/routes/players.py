@@ -216,7 +216,7 @@ def _load_last_completed_team_xi(
         "match_id": last_match_id,
         "team": team,
         "player_ids": team_order,
-        "impact_sub_player_ids": impact_sub_player_ids,
+        "impact_sub_player_ids": impact_sub_player_ids[:1],
     }
     return data_service.set_cached_last_match_xi(current_match_id, team, payload)
 

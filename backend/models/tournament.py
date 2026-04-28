@@ -638,8 +638,6 @@ class Tournament:
     def refresh_lineup_cache_once(self):
         matches_data = data_service.get_cached_data("matches")
         lineup_match_ids = []
-        today_key = get_current_date_key()
-        db = data_service.get_db()
 
         for m in matches_data:
             match_id = str(m["MatchID"])
@@ -655,17 +653,9 @@ class Tournament:
         self.ensure_match_teams_loaded(lineup_match_ids)
         refreshed = 0
         announced = 0
-        preview_warmed = 0
         for match_id in lineup_match_ids:
             try:
                 match_row = self.match_rows.get(match_id, {})
-                if (match_row.get("Date") or match_row.get("match_date")) == today_key:
-                    for team in (match_row.get("Team1", ""), match_row.get("Team2", "")):
-                        if not team:
-                            continue
-                        if warm_last_completed_team_xi_preview(db, int(match_id), team):
-                            preview_warmed += 1
-                            self._scheduler_log("XI", f"match {match_id} warmed last completed XI preview for {team}")
                 if data_service.is_cached_playing_xi_final(
                     int(match_id),
                     match_row.get("Team1", ""),
@@ -689,6 +679,7 @@ class Tournament:
                 self._scheduler_log("XI", f"match {match_id} refresh error: {exc}")
                 traceback.print_exc()
 
+        preview_warmed = self.warm_today_last_completed_team_xi_previews()
         return {
             "eligible": len(lineup_match_ids),
             "refreshed": refreshed,
@@ -696,6 +687,32 @@ class Tournament:
             "finalized": announced,
             "preview_warmed": preview_warmed,
         }
+
+    def warm_today_last_completed_team_xi_previews(self) -> int:
+        matches_data = data_service.get_cached_data("matches")
+        if not matches_data:
+            return 0
+
+        today_key = get_current_date_key()
+        db = data_service.get_db()
+        warmed = 0
+
+        for match_row in matches_data:
+            match_id = str(match_row["MatchID"])
+            status = self.get_match_status(match_row)
+            if status not in {"lineups", "live"}:
+                continue
+            if (match_row.get("Date") or match_row.get("match_date")) != today_key:
+                continue
+
+            for team in (match_row.get("Team1", ""), match_row.get("Team2", "")):
+                if not team:
+                    continue
+                if warm_last_completed_team_xi_preview(db, int(match_id), team):
+                    warmed += 1
+                    self._scheduler_log("XI", f"match {match_id} warmed last completed XI preview for {team}")
+
+        return warmed
 
     def refresh_toss_cache_once(self):
         matches_data = data_service.get_cached_data("matches")
