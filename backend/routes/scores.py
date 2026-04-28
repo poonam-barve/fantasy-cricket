@@ -100,7 +100,14 @@ def _get_scores_cache_version() -> int:
 
 
 def _wait_for_cached_score_payload(match_id: int, timeout_seconds: float = 8.0, poll_seconds: float = 0.25) -> dict | None:
-    return _get_cached_score_payload(match_id)
+    deadline = time.time() + timeout_seconds
+    while True:
+        cached_payload = _get_cached_score_payload(match_id)
+        if cached_payload is not None:
+            return cached_payload
+        if time.time() >= deadline:
+            return None
+        time.sleep(poll_seconds)
 
 
 def _ensure_score_payload_cached(match_id: int, match_row=None) -> dict | None:
@@ -109,8 +116,12 @@ def _ensure_score_payload_cached(match_id: int, match_row=None) -> dict | None:
         return cached_payload
 
     if match_row is not None and _match_status_value(match_row) in {"live", "completed"}:
-        _log_scores_cache(f"cache miss match={match_id} -> queueing refresh")
-        _queue_scores_refresh(match_id)
+        _log_scores_cache(f"cache miss match={match_id} -> refreshing cache on request")
+        try:
+            refresh_scores_response_cache_once()
+        except Exception as exc:
+            _log_scores_cache(f"request refresh failed match={match_id}: {exc}")
+        cached_payload = _wait_for_cached_score_payload(match_id)
 
     return cached_payload
 
@@ -1005,8 +1016,6 @@ async def match_scores(
         _log_scores_cache(
             f"cache miss match={match_id} status={match_status or 'unknown'} live={SCORES_RESPONSE_CACHE.has_live()}"
         )
-        if match_status in {"live", "completed"}:
-            _queue_scores_refresh(match_id)
         return _empty_match_scores_payload(match_status)
 
     return cached_payload
@@ -1132,8 +1141,6 @@ def _load_match_and_points(db, match_id):
     if not cached_payload and _match_status_value(match_row) == "live":
         registry, players_data = _build_registry(db)
         cached_payload = _get_live_cached_score_payload(match_id, match_row, registry, players_data, db)
-        if not cached_payload:
-            _queue_scores_refresh(match_id)
     if not cached_payload:
         return match_row, None, {}, {}
 
