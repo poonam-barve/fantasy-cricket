@@ -8,6 +8,7 @@ from backend.database import get_db
 from backend.middleware.auth import get_current_user
 from backend.services import data_service
 from backend.services.double_buffer_cache import DoubleBufferCache
+from backend.services.match_status import resolve_match_status
 from backend.services.scraper import get_cached_toss_info
 from backend.services.venue_stats import (
     get_today_cached_venue_stats,
@@ -26,30 +27,7 @@ def compute_match_status(match_date: str, match_time: str):
 
 
 def compute_runtime_match_status(match_date: str, match_time: str, stored_status: str | None):
-    try:
-        match_datetime = datetime.strptime(
-            f"{match_date} {match_time}", "%Y-%m-%d %H:%M"
-        )
-        match_datetime = IST.localize(match_datetime)
-    except Exception:
-        return "future", False
-
-    now = get_current_datetime()
-    normalized_status = (stored_status or "").strip().lower()
-
-    if normalized_status in {"completed", "nr"}:
-        return normalized_status, True
-
-    if now < match_datetime:
-        return "future", False
-
-    if normalized_status == "live":
-        return "live", True
-
-    if now >= match_datetime + timedelta(hours=5):
-        return "completed", True
-
-    return "live", True
+    return resolve_match_status(match_date, match_time, stored_status)
 
 
 @router.get("/matches")

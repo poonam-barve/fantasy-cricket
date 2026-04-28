@@ -14,6 +14,7 @@ from backend.models.registry import PlayerRegistry
 from backend.services import data_service
 from backend.services.double_buffer_cache import DoubleBufferCache
 from backend.services.cache_locks import acquire_cache_locks, get_cache_lock
+from backend.services.match_status import resolve_match_status_from_row
 from backend.services.live_scores import append_missing_live_team_players
 from backend.services.scraper import fetch_scorecard_html, fetch_cricbuzz_scorecard_html, refresh_playing_xi_cache
 from bs4 import BeautifulSoup
@@ -71,7 +72,8 @@ def _row_value(row, *keys, default=None):
 
 
 def _match_status_value(match_row) -> str:
-    return str(_row_value(match_row, "status", "Status", default="") or "").strip().lower()
+    status, _locked = resolve_match_status_from_row(match_row)
+    return status
 
 
 def _is_live_score_target(match_row) -> bool:
@@ -100,42 +102,14 @@ def _get_scores_cache_version() -> int:
 
 
 def _wait_for_cached_score_payload(match_id: int, timeout_seconds: float = 8.0, poll_seconds: float = 0.25) -> dict | None:
-    deadline = time.time() + timeout_seconds
-    while True:
-        cached_payload = _get_cached_score_payload(match_id)
-        if cached_payload is not None:
-            return cached_payload
-        if time.time() >= deadline:
-            return None
-        time.sleep(poll_seconds)
+    return _get_cached_score_payload(match_id)
 
 
 def _ensure_score_payload_cached(match_id: int, match_row=None) -> dict | None:
-    cached_payload = _wait_for_cached_score_payload(match_id)
-    if cached_payload is not None:
-        return cached_payload
-
-    if match_row is not None and _match_status_value(match_row) in {"live", "completed"}:
-        _log_scores_cache(f"cache miss match={match_id} -> refreshing cache on request")
-        try:
-            refresh_scores_response_cache_once()
-        except Exception as exc:
-            _log_scores_cache(f"request refresh failed match={match_id}: {exc}")
-        cached_payload = _wait_for_cached_score_payload(match_id)
-
-    return cached_payload
+    return _wait_for_cached_score_payload(match_id)
 
 
 def _get_live_cached_score_payload(match_id: int, match_row, registry, players_data, db) -> dict | None:
-    """Read a live score snapshot from the in-memory tournament cache only."""
-    try:
-        from backend.main import tournament
-
-        cached_match = tournament.matches.get(str(match_id))
-        if cached_match and getattr(cached_match, "players", None):
-            return _build_match_scores_payload(match_id, match_row, registry, players_data, db)
-    except Exception:
-        return None
     return None
 
 
@@ -534,6 +508,8 @@ def refresh_scores_response_cache_once() -> dict:
                             snapshot[match_id] = payload
                             updated_match_ids.add(match_id)
                             refreshed += 1
+                        else:
+                            _log_scores_cache(f"match {match_id} live -> payload unavailable")
                 except Exception as exc:
                     errors += 1
                     _log_scores_cache(f"match {match_id} refresh error: {exc}")
@@ -1011,8 +987,6 @@ async def match_scores(
 
     cached_payload = _ensure_score_payload_cached(match_id, match_row)
     if cached_payload is None:
-        cached_payload = _get_live_cached_score_payload(match_id, match_row, registry, players_data, db)
-    if cached_payload is None:
         _log_scores_cache(
             f"cache miss match={match_id} status={match_status or 'unknown'} live={SCORES_RESPONSE_CACHE.has_live()}"
         )
@@ -1138,9 +1112,6 @@ def _load_match_and_points(db, match_id):
         return None, None, {}, {}
 
     cached_payload = _ensure_score_payload_cached(match_id, match_row)
-    if not cached_payload and _match_status_value(match_row) == "live":
-        registry, players_data = _build_registry(db)
-        cached_payload = _get_live_cached_score_payload(match_id, match_row, registry, players_data, db)
     if not cached_payload:
         return match_row, None, {}, {}
 

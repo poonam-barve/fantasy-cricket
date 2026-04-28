@@ -17,6 +17,7 @@ from backend.services.scraper import (
     is_cached_toss_announced,
     refresh_playing_xi_cache,
 )
+from backend.services.match_status import resolve_match_status_from_row
 from backend.services import data_service
 from bs4 import BeautifulSoup
 
@@ -296,6 +297,8 @@ class Tournament:
                 if swaps_applied:
                     print(f"[Backups] Match {match_id}: applied {swaps_applied} backup swaps")
                     self.ensure_match_teams_loaded([match_id], force=True)
+                    data_service.invalidate_match_player_payloads()
+                    _invalidate_matches_response_cache()
             if playing_ids:
                 match.apply_playing_xi(playing_ids)
 
@@ -333,44 +336,8 @@ class Tournament:
         return False
 
     def get_match_status(self, match_row):
-        try:
-            match_datetime = datetime.strptime(
-                f"{match_row['Date']} {match_row['Time']}", "%Y-%m-%d %H:%M"
-            )
-            match_datetime = IST.localize(match_datetime)
-        except Exception:
-            return None
-
-        now = get_current_datetime()
-
-        stored_status = str(match_row.get("Status") or "").strip().lower()
-        toss_time = str(match_row.get("TossTime") or match_row.get("toss_time") or "").strip()
-        if toss_time:
-            try:
-                window_start = IST.localize(datetime.strptime(f"{match_row['Date']} {toss_time}", "%Y-%m-%d %H:%M"))
-            except Exception:
-                try:
-                    window_start = IST.localize(datetime.strptime(toss_time, "%Y-%m-%d %H:%M"))
-                except Exception:
-                    window_start = match_datetime - timedelta(minutes=30)
-        else:
-            window_start = match_datetime - timedelta(minutes=30)
-
-        if stored_status in {"completed", "nr"}:
-            return stored_status
-
-        if now < window_start:
-            return "future"
-        if now < match_datetime:
-            return "lineups"
-
-        if stored_status == "live":
-            return "live"
-
-        if now >= match_datetime + timedelta(hours=5):
-            return "completed"
-
-        return "live"
+        status, _locked = resolve_match_status_from_row(match_row)
+        return status
 
     def compute_player_points_for_match(self, match_id):
         match = self.matches.get(match_id)
@@ -581,7 +548,7 @@ class Tournament:
                         use_playing_xi=True,
                         include_scorecards=False,
                         force_refresh_playing_xi=True,
-                        apply_backups=False,
+                        apply_backups=True,
                     )
                     if finalized_from_scorecard:
                         processed += 1
@@ -686,7 +653,7 @@ class Tournament:
                     use_playing_xi=True,
                     include_scorecards=False,
                     force_refresh_playing_xi=True,
-                    apply_backups=False,
+                    apply_backups=True,
                 )
                 refreshed += 1
             except Exception as exc:
