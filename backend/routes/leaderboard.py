@@ -10,7 +10,6 @@ from backend.config import IST, get_current_datetime
 from backend.middleware.auth import get_current_user
 from backend.database import get_db
 from backend.services.double_buffer_cache import DoubleBufferCache
-from backend.services.cache_locks import CACHE_REFRESH_LOCK
 
 ENTRY_FEE = 50
 PRIZE_SPLIT = [0.50, 0.30, 0.20]  # 1st, 2nd, 3rd
@@ -20,7 +19,7 @@ NON_PARTICIPANT_ADJUSTMENT = {
 }
 
 router = APIRouter(prefix="/api", tags=["leaderboard"])
-LEADERBOARD_CACHE = DoubleBufferCache()
+LEADERBOARD_CACHE = DoubleBufferCache(lock_name="leaderboard_response")
 LEADERBOARD_CACHE_LOCK = threading.Lock()
 LEADERBOARD_CACHE_SCHEDULER_LOCK = threading.Lock()
 LEADERBOARD_CACHE_SCHEDULER_STARTED = False
@@ -444,20 +443,19 @@ def _wait_for_leaderboard_cache(timeout_seconds: float = 8.0, poll_seconds: floa
 
 
 def refresh_leaderboard_cache_once() -> dict:
-    with CACHE_REFRESH_LOCK:
-        db = get_db()
-        effective_match_points = _load_effective_match_points(db)
-        rank_context = _build_rank_movement_context(db, effective_match_points)
-        leaderboard = _build_leaderboard(db, effective_match_points, rank_context["current_rank_change"])
-        points_table = _build_points_table(db, effective_match_points, rank_context["rank_change_by_match"])
-        LEADERBOARD_CACHE.publish({
-            "leaderboard": leaderboard,
-            "points_table": points_table,
-        })
-        return {
-            "leaderboard": len(leaderboard),
-            "points_table": len(points_table),
-        }
+    db = get_db()
+    effective_match_points = _load_effective_match_points(db)
+    rank_context = _build_rank_movement_context(db, effective_match_points)
+    leaderboard = _build_leaderboard(db, effective_match_points, rank_context["current_rank_change"])
+    points_table = _build_points_table(db, effective_match_points, rank_context["rank_change_by_match"])
+    LEADERBOARD_CACHE.publish({
+        "leaderboard": leaderboard,
+        "points_table": points_table,
+    })
+    return {
+        "leaderboard": len(leaderboard),
+        "points_table": len(points_table),
+    }
 
 
 def start_leaderboard_cache_scheduler():

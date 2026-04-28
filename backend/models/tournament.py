@@ -651,11 +651,11 @@ class Tournament:
         self._scheduler_log("XI", f"tick matches={len(matches_data)} eligible={len(lineup_match_ids)}")
 
         if not lineup_match_ids:
-            return {"eligible": 0, "refreshed": 0, "finalized": 0}
+            return {"eligible": 0, "refreshed": 0, "announced": 0}
 
         self.ensure_match_teams_loaded(lineup_match_ids)
         refreshed = 0
-        finalized = 0
+        announced = 0
         for match_id in lineup_match_ids:
             try:
                 match_row = self.match_rows.get(match_id, {})
@@ -666,7 +666,7 @@ class Tournament:
                     match_row.get("Date", ""),
                     match_row.get("Time", ""),
                 ):
-                    finalized += 1
+                    announced += 1
                     self._scheduler_log("XI", f"match {match_id} already finalized, skipping")
                     continue
                 self._scheduler_log("XI", f"match {match_id} refreshing XI cache")
@@ -682,7 +682,7 @@ class Tournament:
                 self._scheduler_log("XI", f"match {match_id} refresh error: {exc}")
                 traceback.print_exc()
 
-        return {"eligible": len(lineup_match_ids), "refreshed": refreshed, "finalized": finalized}
+        return {"eligible": len(lineup_match_ids), "refreshed": refreshed, "announced": announced}
 
     def refresh_toss_cache_once(self):
         matches_data = data_service.get_cached_data("matches")

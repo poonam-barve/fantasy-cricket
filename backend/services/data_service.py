@@ -10,24 +10,31 @@ route modules continue to work without changes.
 from __future__ import annotations
 
 import copy
-import threading
 from datetime import datetime
 
 from backend.database import get_db
 from backend.config import get_current_datetime
-from backend.services.cache_locks import CACHE_WRITE_LOCK
+from backend.services.cache_locks import acquire_cache_locks, get_cache_lock
 
 # ---------------------------------------------------------------------------
 # Lightweight in-process cache (mirrors the old JSON cache behaviour)
 # ---------------------------------------------------------------------------
-
-_lock = threading.Lock()
 
 CACHE: dict[str, list[dict] | None] = {
     "players": None,
     "users": None,
     "matches": None,
 }
+
+STATIC_CACHE_DOMAIN = {
+    "players": "static:players",
+    "users": "static:users",
+    "matches": "static:matches",
+}
+
+PLAYER_MATCH_PAYLOAD_LOCK = get_cache_lock("player_match_payloads")
+PLAYING_XI_STATUS_LOCK = get_cache_lock("playing_xi_status")
+LAST_MATCH_XI_LOCK = get_cache_lock("last_match_xi")
 
 PLAYER_MATCH_PAYLOAD_CACHE: dict[int, dict] = {}
 PLAYING_XI_STATUS_CACHE: dict[tuple, dict] = {}
@@ -45,32 +52,30 @@ def _rows_to_dicts(rows) -> list[dict]:
 
 def invalidate_cache(*sheet_names: str):
     keys = sheet_names or tuple(CACHE.keys())
-    with CACHE_WRITE_LOCK:
-        with _lock:
-            for key in keys:
-                if key in CACHE:
-                    CACHE[key] = None
+    domains = [STATIC_CACHE_DOMAIN[key] for key in keys if key in STATIC_CACHE_DOMAIN]
+    with acquire_cache_locks(*domains):
+        for key in keys:
+            if key in CACHE:
+                CACHE[key] = None
 
 
 def invalidate_match_player_payloads(match_id: int | None = None) -> None:
-    with CACHE_WRITE_LOCK:
-        with _lock:
-            if match_id is None:
-                PLAYER_MATCH_PAYLOAD_CACHE.clear()
-            else:
-                PLAYER_MATCH_PAYLOAD_CACHE.pop(int(match_id), None)
+    with PLAYER_MATCH_PAYLOAD_LOCK:
+        if match_id is None:
+            PLAYER_MATCH_PAYLOAD_CACHE.clear()
+        else:
+            PLAYER_MATCH_PAYLOAD_CACHE.pop(int(match_id), None)
 
 
 def get_cached_match_player_payload(match_id: int) -> dict | None:
-    with _lock:
+    with PLAYER_MATCH_PAYLOAD_LOCK:
         payload = PLAYER_MATCH_PAYLOAD_CACHE.get(int(match_id))
         return copy.deepcopy(payload) if payload is not None else None
 
 
 def set_cached_match_player_payload(match_id: int, payload: dict) -> None:
-    with CACHE_WRITE_LOCK:
-        with _lock:
-            PLAYER_MATCH_PAYLOAD_CACHE[int(match_id)] = copy.deepcopy(payload)
+    with PLAYER_MATCH_PAYLOAD_LOCK:
+        PLAYER_MATCH_PAYLOAD_CACHE[int(match_id)] = copy.deepcopy(payload)
 
 
 def _is_playing_xi_final(payload: dict | None) -> bool:
@@ -83,6 +88,15 @@ def _is_playing_xi_final(payload: dict | None) -> bool:
     return len(player_ids) == 22 and len(substitute_ids) == 10
 
 
+def _is_playing_xi_announced(payload: dict | None) -> bool:
+    if not payload:
+        return False
+    if bool(payload.get("announced")):
+        return True
+    player_ids = payload.get("player_ids") or []
+    return len(player_ids) == 22
+
+
 def get_cached_match_playing_xi(
     match_id: int,
     team1: str,
@@ -91,7 +105,7 @@ def get_cached_match_playing_xi(
     match_time: str,
 ) -> dict | None:
     cache_key = (int(match_id), team1, team2, match_date, match_time)
-    with _lock:
+    with PLAYING_XI_STATUS_LOCK:
         payload = PLAYING_XI_STATUS_CACHE.get(cache_key)
         return copy.deepcopy(payload) if payload is not None else None
 
@@ -105,13 +119,12 @@ def set_cached_match_playing_xi(
     payload: dict,
 ) -> dict:
     cache_key = (int(match_id), team1, team2, match_date, match_time)
-    with CACHE_WRITE_LOCK:
-        with _lock:
-            existing = PLAYING_XI_STATUS_CACHE.get(cache_key)
-            if _is_playing_xi_final(existing) and not _is_playing_xi_final(payload):
-                return copy.deepcopy(existing)
-            PLAYING_XI_STATUS_CACHE[cache_key] = copy.deepcopy(payload)
-            return copy.deepcopy(PLAYING_XI_STATUS_CACHE[cache_key])
+    with PLAYING_XI_STATUS_LOCK:
+        existing = PLAYING_XI_STATUS_CACHE.get(cache_key)
+        if _is_playing_xi_final(existing) and not _is_playing_xi_final(payload):
+            return copy.deepcopy(existing)
+        PLAYING_XI_STATUS_CACHE[cache_key] = copy.deepcopy(payload)
+        return copy.deepcopy(PLAYING_XI_STATUS_CACHE[cache_key])
 
 
 def is_cached_playing_xi_final(
@@ -122,23 +135,34 @@ def is_cached_playing_xi_final(
     match_time: str,
 ) -> bool:
     cache_key = (int(match_id), team1, team2, match_date, match_time)
-    with _lock:
+    with PLAYING_XI_STATUS_LOCK:
         return _is_playing_xi_final(PLAYING_XI_STATUS_CACHE.get(cache_key))
+
+
+def is_cached_playing_xi_announced(
+    match_id: int,
+    team1: str,
+    team2: str,
+    match_date: str,
+    match_time: str,
+) -> bool:
+    cache_key = (int(match_id), team1, team2, match_date, match_time)
+    with PLAYING_XI_STATUS_LOCK:
+        return _is_playing_xi_announced(PLAYING_XI_STATUS_CACHE.get(cache_key))
 
 
 def get_cached_last_match_xi(match_id: int, team: str) -> dict | None:
     cache_key = (int(match_id), team)
-    with _lock:
+    with LAST_MATCH_XI_LOCK:
         payload = LAST_MATCH_XI_CACHE.get(cache_key)
         return copy.deepcopy(payload) if payload is not None else None
 
 
 def set_cached_last_match_xi(match_id: int, team: str, payload: dict) -> dict:
     cache_key = (int(match_id), team)
-    with CACHE_WRITE_LOCK:
-        with _lock:
-            LAST_MATCH_XI_CACHE[cache_key] = copy.deepcopy(payload)
-            return copy.deepcopy(LAST_MATCH_XI_CACHE[cache_key])
+    with LAST_MATCH_XI_LOCK:
+        LAST_MATCH_XI_CACHE[cache_key] = copy.deepcopy(payload)
+        return copy.deepcopy(LAST_MATCH_XI_CACHE[cache_key])
 
 
 def prime_static_cache():
@@ -161,10 +185,12 @@ def get_cached_data(sheet_name: str) -> list[dict]:
     if sheet_name not in CACHE:
         return []
 
-    with _lock:
-        cached = CACHE[sheet_name]
-        if cached is not None:
-            return copy.deepcopy(cached)
+    cache_lock_name = STATIC_CACHE_DOMAIN.get(sheet_name)
+    if cache_lock_name:
+        with acquire_cache_locks(cache_lock_name):
+            cached = CACHE[sheet_name]
+            if cached is not None:
+                return copy.deepcopy(cached)
 
     if sheet_name == "players":
         payload = _cached_players()
@@ -175,8 +201,9 @@ def get_cached_data(sheet_name: str) -> list[dict]:
     else:
         payload = []
 
-    with _lock:
-        CACHE[sheet_name] = copy.deepcopy(payload)
+    if cache_lock_name:
+        with acquire_cache_locks(cache_lock_name):
+            CACHE[sheet_name] = copy.deepcopy(payload)
     return payload
 
 

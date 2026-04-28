@@ -20,7 +20,7 @@ from backend.config import (
 )
 from backend.models.registry import PlayerRegistry
 from backend.services import data_service
-from backend.services.cache_locks import CACHE_WRITE_LOCK
+from backend.services.cache_locks import acquire_cache_locks, get_cache_lock
 
 
 CRICBUZZ_MATCH_ID_MAP: dict[int, int] = {}
@@ -31,6 +31,8 @@ PLAYING_XI_REFRESH_INFLIGHT: set[int] = set()
 PLAYING_XI_REFRESH_LOCK = threading.Lock()
 TOSS_INFO_CACHE: dict[int, dict] = {}
 TOSS_INFO_TTL_SECONDS = 60
+PLAYING_XI_CACHE_LOCK = get_cache_lock("scraper_playing_xi")
+TOSS_INFO_CACHE_LOCK = get_cache_lock("scraper_toss_info")
 _ESPN_SESSION = requests.Session()
 _ESPN_SESSION.trust_env = False
 _ESPN_SESSION.headers.update(
@@ -1796,7 +1798,8 @@ def _fetch_playing_xi_impl(
     toss_time: str | None = None,
     force_refresh: bool = False,
 ) -> dict:
-    cached = PLAYING_XI_CACHE.get(int(match_id))
+    with PLAYING_XI_CACHE_LOCK:
+        cached = PLAYING_XI_CACHE.get(int(match_id))
     now_ts = time.time()
     allow_cache_read = not _is_before_match_start(match_date, match_time)
     if not toss_time:
@@ -1815,8 +1818,9 @@ def _fetch_playing_xi_impl(
             except Exception:
                 pass
             return payload
-        # Keep retrying until the XI is exact. Partial data is useful for logs,
-        # but it should not stop another fetch from being attempted.
+        # Keep retrying until both the XI and substitutes are complete.
+        # A 22-player announcement should update the UI, but it should not stop
+        # us from checking for the 10 subs yet.
         if not force_refresh and allow_cache_read and now_ts - cached.get("fetched_at", 0) < PLAYING_XI_TTL_SECONDS:
             print(
                 f"[Playing XI] Match {match_id}: cached data incomplete "
@@ -1895,7 +1899,7 @@ def _fetch_playing_xi_impl(
         if not squads_html and not commentary_html:
             print(f"[Playing XI] Match {match_id}: unable to fetch squads/commentary")
             payload = {"announced": False, "url": squads_url, "player_ids": [], "substitute_ids": []}
-            with CACHE_WRITE_LOCK:
+            with PLAYING_XI_CACHE_LOCK:
                 PLAYING_XI_CACHE[int(match_id)] = {
                     "payload": payload,
                     "fetched_at": now_ts,
@@ -1936,7 +1940,7 @@ def _fetch_playing_xi_impl(
         if not parsed_payload["announced"]:
             print(f"[Playing XI] Match {match_id}: Playing XI section not available yet")
             payload = {"announced": False, "url": parsed_payload.get("url", commentary_url), "player_ids": [], "substitute_ids": []}
-            with CACHE_WRITE_LOCK:
+            with PLAYING_XI_CACHE_LOCK:
                 PLAYING_XI_CACHE[int(match_id)] = {
                     "payload": payload,
                     "fetched_at": now_ts,
@@ -1972,7 +1976,7 @@ def _fetch_playing_xi_impl(
             "player_ids": list(playing_ids),
             "substitute_ids": list(substitute_ids),
         }
-        with CACHE_WRITE_LOCK:
+        with PLAYING_XI_CACHE_LOCK:
             PLAYING_XI_CACHE[int(match_id)] = {
                 "payload": payload,
                 "fetched_at": now_ts,
@@ -1988,7 +1992,7 @@ def _fetch_playing_xi_impl(
     except Exception as e:
         print("Error fetching playing XI:", e)
         payload = {"announced": False, "url": commentary_url, "player_ids": [], "substitute_ids": []}
-        with CACHE_WRITE_LOCK:
+        with PLAYING_XI_CACHE_LOCK:
             PLAYING_XI_CACHE[int(match_id)] = {
                 "payload": payload,
                 "fetched_at": now_ts,
@@ -2014,7 +2018,8 @@ def fetch_playing_xi(
     force_refresh: bool = False,
 ) -> dict:
     if not _acquire_playing_xi_refresh(match_id):
-        cached = PLAYING_XI_CACHE.get(int(match_id))
+        with PLAYING_XI_CACHE_LOCK:
+            cached = PLAYING_XI_CACHE.get(int(match_id))
         if cached:
             return _copy_playing_xi_payload(cached["payload"])
         return {"announced": False, "url": "", "player_ids": [], "substitute_ids": []}
@@ -2043,7 +2048,8 @@ def fetch_toss_info(
     toss_time: str | None = None,
     force_refresh: bool = False,
 ) -> dict:
-    cached = TOSS_INFO_CACHE.get(int(match_id))
+    with TOSS_INFO_CACHE_LOCK:
+        cached = TOSS_INFO_CACHE.get(int(match_id))
     now_ts = time.time()
     if not toss_time:
         try:
@@ -2059,7 +2065,7 @@ def fetch_toss_info(
 
     if not should_attempt_toss_fetch(match_date, match_time, toss_time):
         payload = {"announced": False, "team": None, "decision": None, "text": "", "url": ""}
-        with CACHE_WRITE_LOCK:
+        with TOSS_INFO_CACHE_LOCK:
             TOSS_INFO_CACHE[int(match_id)] = {
                 "payload": payload,
                 "fetched_at": now_ts,
@@ -2070,7 +2076,7 @@ def fetch_toss_info(
     cricbuzz_match_id = data_service.get_stored_cricbuzz_match_id(int(match_id)) or resolve_cricbuzz_match_id(int(match_id), team1, team2)
     if not cricbuzz_match_id:
         payload = {"announced": False, "team": None, "decision": None, "text": "", "url": ""}
-        with CACHE_WRITE_LOCK:
+        with TOSS_INFO_CACHE_LOCK:
             TOSS_INFO_CACHE[int(match_id)] = {
                 "payload": payload,
                 "fetched_at": now_ts,
@@ -2095,7 +2101,7 @@ def fetch_toss_info(
                             parsed = _extract_toss_info_from_html(retry_res.text, team1, team2)
                             if parsed:
                                 parsed["url"] = retry_url
-                                with CACHE_WRITE_LOCK:
+                                with TOSS_INFO_CACHE_LOCK:
                                     TOSS_INFO_CACHE[int(match_id)] = {
                                         "payload": parsed,
                                         "fetched_at": now_ts,
@@ -2106,7 +2112,7 @@ def fetch_toss_info(
             parsed = _extract_toss_info_from_html(res.text, team1, team2)
             if parsed:
                 parsed["url"] = url
-                with CACHE_WRITE_LOCK:
+                with TOSS_INFO_CACHE_LOCK:
                     TOSS_INFO_CACHE[int(match_id)] = {
                         "payload": parsed,
                         "fetched_at": now_ts,
@@ -2117,7 +2123,7 @@ def fetch_toss_info(
             print(f"[Toss] Match {match_id}: error fetching {url}: {exc}")
 
     payload = {"announced": False, "team": None, "decision": None, "text": "", "url": ""}
-    with CACHE_WRITE_LOCK:
+    with TOSS_INFO_CACHE_LOCK:
         TOSS_INFO_CACHE[int(match_id)] = {
             "payload": payload,
             "fetched_at": now_ts,
@@ -2253,19 +2259,21 @@ def sync_match_metadata_from_schedule(db=None) -> dict[str, int]:
 
 
 def get_cached_toss_info(match_id: int) -> dict | None:
-    cached = TOSS_INFO_CACHE.get(int(match_id))
+    with TOSS_INFO_CACHE_LOCK:
+        cached = TOSS_INFO_CACHE.get(int(match_id))
     if not cached:
         return None
     return _copy_toss_payload(cached["payload"])
 
 
 def is_cached_toss_announced(match_id: int) -> bool:
-    cached = TOSS_INFO_CACHE.get(int(match_id))
+    with TOSS_INFO_CACHE_LOCK:
+        cached = TOSS_INFO_CACHE.get(int(match_id))
     return bool(cached and cached.get("announced"))
 
 
 def invalidate_live_metadata_cache(match_id: int | None = None) -> None:
-    with CACHE_WRITE_LOCK:
+    with acquire_cache_locks("scraper_playing_xi", "scraper_toss_info"):
         if match_id is None:
             PLAYING_XI_CACHE.clear()
             TOSS_INFO_CACHE.clear()

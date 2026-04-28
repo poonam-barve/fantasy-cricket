@@ -8,7 +8,6 @@ from backend.database import get_db
 from backend.middleware.auth import get_current_user
 from backend.services import data_service
 from backend.services.double_buffer_cache import DoubleBufferCache
-from backend.services.cache_locks import CACHE_REFRESH_LOCK
 from backend.services.scraper import get_cached_toss_info
 from backend.services.venue_stats import (
     get_today_cached_venue_stats,
@@ -17,8 +16,8 @@ from backend.services.venue_stats import (
 
 router = APIRouter(prefix="/api", tags=["matches"])
 MATCHES_RESPONSE_CACHE = {
-    "matches": DoubleBufferCache(),
-    "dashboard": DoubleBufferCache(),
+    "matches": DoubleBufferCache(lock_name="matches_response"),
+    "dashboard": DoubleBufferCache(lock_name="matches_response"),
 }
 
 
@@ -77,14 +76,13 @@ def invalidate_matches_response_cache():
 
 
 def refresh_matches_response_cache_once() -> dict:
-    with CACHE_REFRESH_LOCK:
-        payload = _build_matches_payload()
-        MATCHES_RESPONSE_CACHE["matches"].publish(payload)
-        MATCHES_RESPONSE_CACHE["dashboard"].publish(payload)
-        return {
-            "matches": len(payload),
-            "dashboard": len(payload),
-        }
+    payload = _build_matches_payload()
+    MATCHES_RESPONSE_CACHE["matches"].publish(payload)
+    MATCHES_RESPONSE_CACHE["dashboard"].publish(payload)
+    return {
+        "matches": len(payload),
+        "dashboard": len(payload),
+    }
 
 
 def _build_matches_payload() -> list[dict]:

@@ -13,8 +13,7 @@ from backend.models.match import Match, clean_team_name
 from backend.models.registry import PlayerRegistry
 from backend.services import data_service
 from backend.services.double_buffer_cache import DoubleBufferCache
-from backend.services.cache_locks import CACHE_REFRESH_LOCK
-from backend.services.cache_locks import CACHE_WRITE_LOCK
+from backend.services.cache_locks import acquire_cache_locks, get_cache_lock
 from backend.services.live_scores import append_missing_live_team_players
 from backend.services.scraper import fetch_playing_xi, fetch_scorecard_html, fetch_cricbuzz_scorecard_html
 from bs4 import BeautifulSoup
@@ -22,11 +21,11 @@ from bs4 import BeautifulSoup
 router = APIRouter(prefix="/api/scores", tags=["scores"])
 LIVE_MATCH_CACHE_TTL_SECONDS = 30
 MATCH_DATA_CACHE: dict[tuple[int, bool], dict] = {}
-MATCH_DATA_CACHE_LOCK = threading.Lock()
+MATCH_DATA_CACHE_LOCK = get_cache_lock("scores_match_data")
 MATCH_DATA_REFRESH_INFLIGHT: set[tuple[int, bool]] = set()
 
 SCORES_RESPONSE_CACHE_LOCK = threading.Lock()
-SCORES_RESPONSE_CACHE = DoubleBufferCache()
+SCORES_RESPONSE_CACHE = DoubleBufferCache(lock_name="scores_response")
 SCORES_CACHE_SCHEDULER_LOCK = threading.Lock()
 SCORES_CACHE_SCHEDULER_STARTED = False
 SCORES_PERSIST_LOCK = threading.Lock()
@@ -468,7 +467,7 @@ def refresh_scores_response_cache_once() -> dict:
         }
 
     try:
-        with CACHE_REFRESH_LOCK:
+        with acquire_cache_locks("scraper_playing_xi", "scores_match_data", "scores_response", "leaderboard_response"):
             db = get_db()
             registry, players_data = _build_registry(db)
             matches_data = data_service.get_cached_data("matches")
@@ -896,10 +895,9 @@ def _build_live_match_payload(match_id: int, match_row, registry, players_data, 
         "playing_xi": playing_xi,
         "fetched_at": time.time(),
     }
-    with CACHE_WRITE_LOCK:
-        with MATCH_DATA_CACHE_LOCK:
-            MATCH_DATA_CACHE[cache_key] = payload
-            MATCH_DATA_REFRESH_INFLIGHT.discard(cache_key)
+    with MATCH_DATA_CACHE_LOCK:
+        MATCH_DATA_CACHE[cache_key] = payload
+        MATCH_DATA_REFRESH_INFLIGHT.discard(cache_key)
     return payload
 
 
@@ -916,9 +914,8 @@ def _refresh_live_match_payload_async(match_id: int, match_row, registry, player
             _build_live_match_payload(match_id, match_row, registry, players_data, include_playing_xi=include_playing_xi)
         except Exception as exc:
             print(f"[scores-cache] async refresh failed for match {match_id}: {exc}")
-            with CACHE_WRITE_LOCK:
-                with MATCH_DATA_CACHE_LOCK:
-                    MATCH_DATA_REFRESH_INFLIGHT.discard(cache_key)
+            with MATCH_DATA_CACHE_LOCK:
+                MATCH_DATA_REFRESH_INFLIGHT.discard(cache_key)
 
     threading.Thread(target=_run, daemon=True).start()
 

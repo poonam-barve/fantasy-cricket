@@ -9,6 +9,7 @@ from backend.database import get_db, get_next_id
 from backend.config import ROLES, IST, get_current_datetime
 from backend.services import data_service
 from backend.services.scraper import compute_toss_time
+from backend.services.cache_locks import acquire_cache_locks
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -113,23 +114,29 @@ def _queue_tournament_match_refresh(
     def _run():
         with ADMIN_REFRESH_LOCK:
             try:
-                if explicit_status == "completed":
-                    tournament_ref.ensure_match_teams_loaded([match_id_str], force=True)
-                    tournament_ref.update_match_data(
-                        match_id_str,
-                        use_playing_xi=True,
-                        force_refresh_playing_xi=True,
-                    )
-                    tournament_ref.compute_player_points_for_match(match_id_str)
-                    tournament_ref.compute_points_for_match(match_id_str)
-                    tournament_ref.persist_player_points_to_local()
-                    tournament_ref.persist_to_local()
-                elif explicit_status in {"future", "live", "nr"}:
-                    tournament_ref.player_points.pop(match_id_str, None)
-                    for contestant in tournament_ref.contestants.values():
-                        contestant.points.pop(match_id_str, None)
+                with acquire_cache_locks(
+                    "scraper_playing_xi",
+                    "scores_match_data",
+                    "scores_response",
+                    "leaderboard_response",
+                ):
+                    if explicit_status == "completed":
+                        tournament_ref.ensure_match_teams_loaded([match_id_str], force=True)
+                        tournament_ref.update_match_data(
+                            match_id_str,
+                            use_playing_xi=True,
+                            force_refresh_playing_xi=True,
+                        )
+                        tournament_ref.compute_player_points_for_match(match_id_str)
+                        tournament_ref.compute_points_for_match(match_id_str)
+                        tournament_ref.persist_player_points_to_local()
+                        tournament_ref.persist_to_local()
+                    elif explicit_status in {"future", "live", "nr"}:
+                        tournament_ref.player_points.pop(match_id_str, None)
+                        for contestant in tournament_ref.contestants.values():
+                            contestant.points.pop(match_id_str, None)
 
-                _refresh_admin_caches(tables={"matches"}, refresh_schedule_map=True, match_id=match_id)
+                    _refresh_admin_caches(tables={"matches"}, refresh_schedule_map=True, match_id=match_id)
             except Exception as exc:
                 print(f"[ADMIN] background tournament refresh failed for match {match_id}: {exc}")
 
@@ -400,7 +407,6 @@ async def update_match(
     explicit_status = (body.status or "").strip().lower() if body.status is not None else None
     if schedule_changed or teams_changed or explicit_status in {"future", "live", "nr"}:
         data_service.clear_points_for_match(match_id)
-        invalidate_live_metadata_cache(match_id)
     db.commit()
     _queue_tournament_match_refresh(match_id, explicit_status)
 
