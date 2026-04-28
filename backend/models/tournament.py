@@ -3,7 +3,7 @@ import threading
 import traceback
 from datetime import datetime, timedelta
 
-from backend.config import IST, get_current_datetime
+from backend.config import IST, get_current_datetime, get_current_date_key
 from backend.models.match import Match
 from backend.models.team import Team, Contestant
 from backend.models.registry import PlayerRegistry
@@ -28,6 +28,25 @@ TOSS_CACHE_SCHEDULER_LOCK = threading.Lock()
 TOSS_CACHE_SCHEDULER_STARTED = False
 SCORE_SCHEDULER_LOCK = threading.Lock()
 SCORE_SCHEDULER_STARTED = False
+
+
+def _is_complete_last_match_xi(payload) -> bool:
+    if not payload:
+        return False
+    player_ids = payload.get("player_ids") or []
+    impact_sub_player_ids = payload.get("impact_sub_player_ids") or []
+    return len(player_ids) == 11 and len(impact_sub_player_ids) == 1
+
+
+def warm_last_completed_team_xi_preview(db, current_match_id: int, team: str) -> bool:
+    cached = data_service.get_cached_last_match_xi(int(current_match_id), team)
+    if _is_complete_last_match_xi(cached):
+        return False
+
+    from backend.routes.players import _load_last_completed_team_xi
+
+    payload = _load_last_completed_team_xi(db, int(current_match_id), team)
+    return bool(payload)
 
 
 def build_player_role_map(players_data):
@@ -619,6 +638,8 @@ class Tournament:
     def refresh_lineup_cache_once(self):
         matches_data = data_service.get_cached_data("matches")
         lineup_match_ids = []
+        today_key = get_current_date_key()
+        db = data_service.get_db()
 
         for m in matches_data:
             match_id = str(m["MatchID"])
@@ -634,9 +655,17 @@ class Tournament:
         self.ensure_match_teams_loaded(lineup_match_ids)
         refreshed = 0
         announced = 0
+        preview_warmed = 0
         for match_id in lineup_match_ids:
             try:
                 match_row = self.match_rows.get(match_id, {})
+                if (match_row.get("Date") or match_row.get("match_date")) == today_key:
+                    for team in (match_row.get("Team1", ""), match_row.get("Team2", "")):
+                        if not team:
+                            continue
+                        if warm_last_completed_team_xi_preview(db, int(match_id), team):
+                            preview_warmed += 1
+                            self._scheduler_log("XI", f"match {match_id} warmed last completed XI preview for {team}")
                 if data_service.is_cached_playing_xi_final(
                     int(match_id),
                     match_row.get("Team1", ""),
@@ -660,7 +689,13 @@ class Tournament:
                 self._scheduler_log("XI", f"match {match_id} refresh error: {exc}")
                 traceback.print_exc()
 
-        return {"eligible": len(lineup_match_ids), "refreshed": refreshed, "announced": announced}
+        return {
+            "eligible": len(lineup_match_ids),
+            "refreshed": refreshed,
+            "announced": announced,
+            "finalized": announced,
+            "preview_warmed": preview_warmed,
+        }
 
     def refresh_toss_cache_once(self):
         matches_data = data_service.get_cached_data("matches")

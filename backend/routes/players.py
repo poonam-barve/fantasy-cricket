@@ -10,7 +10,12 @@ from backend.config import ROLES, IST, get_current_datetime, get_current_date_ke
 from backend.models.match import Match, clean_team_name
 from backend.models.registry import PlayerRegistry
 from backend.services import data_service
-from backend.services.scraper import fetch_cricbuzz_scorecard_html, fetch_scorecard_html, get_cached_toss_info
+from backend.services.scraper import (
+    fetch_cricbuzz_scorecard_html,
+    fetch_scorecard_html,
+    get_cached_toss_info,
+    refresh_playing_xi_cache,
+)
 from bs4 import BeautifulSoup
 
 router = APIRouter(prefix="/api", tags=["players"])
@@ -150,6 +155,20 @@ def _load_last_completed_team_xi(
         last_match_date,
         last_match_time,
     )
+    if not cached_playing_xi or not cached_playing_xi.get("announced"):
+        try:
+            cached_playing_xi = refresh_playing_xi_cache(
+                last_match_id,
+                last_team1,
+                last_team2,
+                last_players,
+                last_match_date,
+                last_match_time,
+                last_toss_time,
+            )
+        except Exception:
+            cached_playing_xi = None
+
     if cached_playing_xi and cached_playing_xi.get("announced"):
         playing_xi = cached_playing_xi
     else:
@@ -197,7 +216,7 @@ def _load_last_completed_team_xi(
         "match_id": last_match_id,
         "team": team,
         "player_ids": team_order,
-        "impact_sub_player_ids": impact_sub_player_ids[:1],
+        "impact_sub_player_ids": impact_sub_player_ids,
     }
     return data_service.set_cached_last_match_xi(current_match_id, team, payload)
 
