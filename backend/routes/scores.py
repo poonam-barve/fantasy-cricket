@@ -104,7 +104,28 @@ def _wait_for_cached_score_payload(match_id: int, timeout_seconds: float = 8.0, 
 
 
 def _ensure_score_payload_cached(match_id: int, match_row=None) -> dict | None:
-    return _wait_for_cached_score_payload(match_id)
+    cached_payload = _wait_for_cached_score_payload(match_id)
+    if cached_payload is not None:
+        return cached_payload
+
+    if match_row is not None and _match_status_value(match_row) in {"live", "completed"}:
+        _log_scores_cache(f"cache miss match={match_id} -> queueing refresh")
+        _queue_scores_refresh(match_id)
+
+    return cached_payload
+
+
+def _get_live_cached_score_payload(match_id: int, match_row, registry, players_data, db) -> dict | None:
+    """Read a live score snapshot from the in-memory tournament cache only."""
+    try:
+        from backend.main import tournament
+
+        cached_match = tournament.matches.get(str(match_id))
+        if cached_match and getattr(cached_match, "players", None):
+            return _build_match_scores_payload(match_id, match_row, registry, players_data, db)
+    except Exception:
+        return None
+    return None
 
 
 def _queue_scores_refresh(match_id: int) -> None:
@@ -979,9 +1000,13 @@ async def match_scores(
 
     cached_payload = _ensure_score_payload_cached(match_id, match_row)
     if cached_payload is None:
+        cached_payload = _get_live_cached_score_payload(match_id, match_row, registry, players_data, db)
+    if cached_payload is None:
         _log_scores_cache(
             f"cache miss match={match_id} status={match_status or 'unknown'} live={SCORES_RESPONSE_CACHE.has_live()}"
         )
+        if match_status in {"live", "completed"}:
+            _queue_scores_refresh(match_id)
         return _empty_match_scores_payload(match_status)
 
     return cached_payload
@@ -1104,6 +1129,11 @@ def _load_match_and_points(db, match_id):
         return None, None, {}, {}
 
     cached_payload = _ensure_score_payload_cached(match_id, match_row)
+    if not cached_payload and _match_status_value(match_row) == "live":
+        registry, players_data = _build_registry(db)
+        cached_payload = _get_live_cached_score_payload(match_id, match_row, registry, players_data, db)
+        if not cached_payload:
+            _queue_scores_refresh(match_id)
     if not cached_payload:
         return match_row, None, {}, {}
 
