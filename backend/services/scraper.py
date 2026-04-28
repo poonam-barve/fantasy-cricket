@@ -232,7 +232,7 @@ def refresh_playing_xi_async(
 
     def _run():
         try:
-            _fetch_playing_xi_impl(
+            refresh_playing_xi_cache(
                 match_id,
                 team1,
                 team2,
@@ -240,7 +240,6 @@ def refresh_playing_xi_async(
                 match_date=match_date,
                 match_time=match_time,
                 toss_time=toss_time,
-                force_refresh=True,
             )
         except Exception as exc:
             print(f"[Playing XI] Match {match_id}: async refresh failed: {exc}")
@@ -249,6 +248,34 @@ def refresh_playing_xi_async(
 
     threading.Thread(target=_run, daemon=True, name=f"playing-xi-refresh-{int(match_id)}").start()
     return True
+
+
+def refresh_playing_xi_cache(
+    match_id: int,
+    team1: str,
+    team2: str,
+    players_rows: list[dict],
+    match_date: str | None = None,
+    match_time: str | None = None,
+    toss_time: str | None = None,
+) -> dict:
+    """Refresh and persist Playing XI data for scheduler/admin use."""
+    if not _acquire_playing_xi_refresh(match_id):
+        return _get_cached_playing_xi_payload(match_id) or {"announced": False, "url": "", "player_ids": [], "substitute_ids": []}
+
+    try:
+        return _fetch_playing_xi_impl(
+            match_id,
+            team1,
+            team2,
+            players_rows,
+            match_date=match_date,
+            match_time=match_time,
+            toss_time=toss_time,
+            force_refresh=True,
+        )
+    finally:
+        _release_playing_xi_refresh(match_id)
 
 
 def fetch_scorecard_html(match_id, team1: str | None = None, team2: str | None = None, match_date: str | None = None, force_refresh: bool = False):
@@ -2017,26 +2044,24 @@ def fetch_playing_xi(
     toss_time: str | None = None,
     force_refresh: bool = False,
 ) -> dict:
-    if not _acquire_playing_xi_refresh(match_id):
-        with PLAYING_XI_CACHE_LOCK:
-            cached = PLAYING_XI_CACHE.get(int(match_id))
-        if cached:
-            return _copy_playing_xi_payload(cached["payload"])
-        return {"announced": False, "url": "", "player_ids": [], "substitute_ids": []}
+    # UI/API callers should only read the current cache snapshot.
+    # Scheduler/admin code should call refresh_playing_xi_cache() instead.
+    with PLAYING_XI_CACHE_LOCK:
+        cached = PLAYING_XI_CACHE.get(int(match_id))
+    if cached:
+        return _copy_playing_xi_payload(cached["payload"])
 
-    try:
-        return _fetch_playing_xi_impl(
-            match_id,
-            team1,
-            team2,
-            players_rows,
-            match_date=match_date,
-            match_time=match_time,
-            toss_time=toss_time,
-            force_refresh=force_refresh,
-        )
-    finally:
-        _release_playing_xi_refresh(match_id)
+    persisted = data_service.get_cached_match_playing_xi(
+        match_id,
+        team1,
+        team2,
+        match_date or "",
+        match_time or "",
+    )
+    if persisted:
+        return _copy_playing_xi_payload(persisted)
+
+    return {"announced": False, "url": "", "player_ids": [], "substitute_ids": []}
 
 
 def fetch_toss_info(

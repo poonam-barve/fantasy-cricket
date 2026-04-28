@@ -15,7 +15,7 @@ from backend.services import data_service
 from backend.services.double_buffer_cache import DoubleBufferCache
 from backend.services.cache_locks import acquire_cache_locks, get_cache_lock
 from backend.services.live_scores import append_missing_live_team_players
-from backend.services.scraper import fetch_playing_xi, fetch_scorecard_html, fetch_cricbuzz_scorecard_html
+from backend.services.scraper import fetch_scorecard_html, fetch_cricbuzz_scorecard_html, refresh_playing_xi_cache
 from bs4 import BeautifulSoup
 
 router = APIRouter(prefix="/api/scores", tags=["scores"])
@@ -104,15 +104,7 @@ def _wait_for_cached_score_payload(match_id: int, timeout_seconds: float = 8.0, 
 
 
 def _ensure_score_payload_cached(match_id: int, match_row=None) -> dict | None:
-    cached_payload = _wait_for_cached_score_payload(match_id)
-    if cached_payload is not None:
-        return cached_payload
-
-    if match_row is not None and _match_status_value(match_row) in {"live", "completed"}:
-        _log_scores_cache(f"cold cache match={match_id} -> queueing refresh and returning stale-free response")
-        _queue_scores_refresh(match_id)
-
-    return cached_payload
+    return _wait_for_cached_score_payload(match_id)
 
 
 def _queue_scores_refresh(match_id: int) -> None:
@@ -864,7 +856,7 @@ def _build_live_match_payload(match_id: int, match_row, registry, players_data, 
     players_rows = _build_players_rows(players_data, team1, team2)
     playing_xi = {"announced": False, "url": "", "player_ids": []}
     if include_playing_xi:
-        playing_xi = fetch_playing_xi(
+        playing_xi = refresh_playing_xi_cache(
             match_id,
             team1,
             team2,
@@ -872,7 +864,6 @@ def _build_live_match_payload(match_id: int, match_row, registry, players_data, 
             match_date,
             match_time,
             toss_time,
-            force_refresh=True,
         )
         playing_ids = playing_xi.get("player_ids", [])
         if playing_ids:
@@ -991,8 +982,6 @@ async def match_scores(
         _log_scores_cache(
             f"cache miss match={match_id} status={match_status or 'unknown'} live={SCORES_RESPONSE_CACHE.has_live()}"
         )
-        if match_status in {"live", "completed"}:
-            _queue_scores_refresh(match_id)
         return _empty_match_scores_payload(match_status)
 
     return cached_payload

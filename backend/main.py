@@ -465,8 +465,20 @@ def status():
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
 
 if os.path.isdir(STATIC_DIR):
+    class CacheControlledStaticFiles(StaticFiles):
+        async def get_response(self, path: str, scope):
+            response = await super().get_response(path, scope)
+            if response.status_code == 200 and path:
+                if path.endswith("index.html"):
+                    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                    response.headers["Pragma"] = "no-cache"
+                    response.headers["Expires"] = "0"
+                else:
+                    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return response
+
     # Serve static assets (js, css, images)
-    app.mount("/assets", StaticFiles(directory=os.path.join(STATIC_DIR, "assets")), name="static-assets")
+    app.mount("/assets", CacheControlledStaticFiles(directory=os.path.join(STATIC_DIR, "assets")), name="static-assets")
 
     # Catch-all: serve static files if they exist, otherwise index.html for React Router
     @app.get("/{full_path:path}")
@@ -477,7 +489,18 @@ if os.path.isdir(STATIC_DIR):
         # Check if it's a real file in dist/
         file_path = os.path.join(STATIC_DIR, full_path)
         if full_path and os.path.isfile(file_path):
-            return FileResponse(file_path)
+            response = FileResponse(file_path)
+            if full_path.endswith("index.html"):
+                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+            else:
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return response
 
         # Otherwise serve index.html for React Router
-        return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+        response = FileResponse(os.path.join(STATIC_DIR, "index.html"))
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response

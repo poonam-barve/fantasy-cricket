@@ -15,6 +15,7 @@ from backend.services.scraper import (
     initialize_espn_match_map,
     initialize_cricbuzz_match_map,
     is_cached_toss_announced,
+    refresh_playing_xi_cache,
 )
 from backend.services import data_service
 from bs4 import BeautifulSoup
@@ -267,16 +268,26 @@ class Tournament:
 
         if use_playing_xi:
             match_row = self.match_rows.get(match_id, {})
-            playing_xi = fetch_playing_xi(
-                int(match_id),
-                match.team1,
-                match.team2,
-                players_rows,
-                match_row.get("Date"),
-                match_row.get("Time"),
-                match_row.get("TossTime") or match_row.get("toss_time"),
-                force_refresh=force_refresh_playing_xi,
-            )
+            if force_refresh_playing_xi:
+                playing_xi = refresh_playing_xi_cache(
+                    int(match_id),
+                    match.team1,
+                    match.team2,
+                    players_rows,
+                    match_row.get("Date"),
+                    match_row.get("Time"),
+                    match_row.get("TossTime") or match_row.get("toss_time"),
+                )
+            else:
+                playing_xi = fetch_playing_xi(
+                    int(match_id),
+                    match.team1,
+                    match.team2,
+                    players_rows,
+                    match_row.get("Date"),
+                    match_row.get("Time"),
+                    match_row.get("TossTime") or match_row.get("toss_time"),
+                )
             playing_ids = playing_xi.get("player_ids", [])
             substitute_ids = playing_xi.get("substitute_ids", [])
             print(f"[Playing XI] Match {match_id}: fetch result url={playing_xi.get('url')} players={len(playing_ids)}")

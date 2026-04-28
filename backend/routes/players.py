@@ -10,7 +10,7 @@ from backend.config import ROLES, IST, get_current_datetime, get_current_date_ke
 from backend.models.match import Match, clean_team_name
 from backend.models.registry import PlayerRegistry
 from backend.services import data_service
-from backend.services.scraper import fetch_cricbuzz_scorecard_html, fetch_playing_xi, fetch_scorecard_html, get_cached_toss_info, refresh_playing_xi_async
+from backend.services.scraper import fetch_cricbuzz_scorecard_html, fetch_scorecard_html, get_cached_toss_info
 from bs4 import BeautifulSoup
 
 router = APIRouter(prefix="/api", tags=["players"])
@@ -153,16 +153,7 @@ def _load_last_completed_team_xi(
     if cached_playing_xi and cached_playing_xi.get("announced"):
         playing_xi = cached_playing_xi
     else:
-        playing_xi = fetch_playing_xi(
-            last_match_id,
-            last_team1,
-            last_team2,
-            last_players,
-            last_match_date,
-            last_match_time,
-            last_toss_time,
-            force_refresh=True,
-        )
+        playing_xi = {"announced": False, "url": "", "player_ids": [], "substitute_ids": []}
 
     if not playing_xi or not playing_xi.get("announced"):
         return None
@@ -350,25 +341,6 @@ async def list_players(
         )
         if cached_playing_xi and cached_playing_xi.get("announced"):
             playing_xi_data = cached_playing_xi
-        elif lineup_window_open or is_today_match:
-            refresh_playing_xi_async(
-                match_id,
-                team1,
-                team2,
-                players,
-                match_date,
-                match_time,
-                toss_time,
-            )
-            refreshed_cache = data_service.get_cached_match_playing_xi(
-                match_id,
-                team1,
-                team2,
-                match_date,
-                match_time,
-            )
-            if refreshed_cache and refreshed_cache.get("announced"):
-                playing_xi_data = refreshed_cache
 
         toss_info = get_cached_toss_info(match_id) or {"announced": False, "team": None, "decision": None, "text": "", "url": ""}
         is_today_match = _is_match_today(match_date)
