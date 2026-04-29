@@ -760,6 +760,60 @@ class Tournament:
 
         return {"eligible": len(toss_match_ids), "refreshed": refreshed, "announced": announced}
 
+    def _seconds_until_next_active_match(self) -> float:
+        """Return seconds until 15 min before the next lineups/live/upcoming match.
+
+        Used by schedulers to smart-sleep instead of fixed short intervals.
+        Returns a large value (6 hours) when nothing is approaching.
+        """
+        MAX_SLEEP = 6 * 3600  # 6 hours cap
+        BUFFER = 15 * 60      # wake 15 min before toss/match
+        now = get_current_datetime()
+        matches_data = data_service.get_cached_data("matches")
+        nearest = MAX_SLEEP
+
+        for m in matches_data:
+            status = self.get_match_status(m)
+            if status in {"lineups", "live"}:
+                return 0  # something active right now
+
+            if status in {"completed", "nr"}:
+                continue
+
+            # "future" — compute time until we should wake up
+            match_date = m.get("Date") or ""
+            match_time = m.get("Time") or ""
+            toss_time = m.get("TossTime") or ""
+            wake_time_str = toss_time or match_time
+            if not match_date or not wake_time_str:
+                continue
+            try:
+                wake_dt = IST.localize(datetime.strptime(f"{match_date} {wake_time_str}", "%Y-%m-%d %H:%M"))
+                delta = (wake_dt - timedelta(minutes=15) - now).total_seconds()
+                if delta < nearest:
+                    nearest = delta
+            except Exception:
+                continue
+
+        return max(nearest, 0)
+
+    def _smart_sleep(self, channel: str, active_interval: float, eligible_count: int) -> None:
+        """Sleep for *active_interval* when matches are active, otherwise
+        sleep until close to the next match."""
+        if eligible_count > 0:
+            time.sleep(active_interval)
+            return
+
+        wait = self._seconds_until_next_active_match()
+        if wait <= active_interval:
+            time.sleep(active_interval)
+            return
+
+        # Cap individual sleeps at 30 min so we periodically re-check
+        capped = min(wait, 30 * 60)
+        self._scheduler_log(channel, f"no active matches, sleeping {int(capped)}s (next in ~{int(wait)}s)")
+        time.sleep(capped)
+
     def start_scheduler(self):
         global SCORE_SCHEDULER_STARTED
         with SCORE_SCHEDULER_LOCK:
@@ -770,16 +824,18 @@ class Tournament:
 
         def run():
             while True:
+                eligible = 0
                 try:
                     self._scheduler_log("SCORE", "scheduler tick start")
                     summary = self.refresh_scores_once()
+                    eligible = summary.get("eligible", 0)
                     if summary["processed"] > 0:
                         self._scheduler_log("SCORE", f"persisted matches={summary['processed']}")
                 except Exception as e:
                     self._scheduler_log("SCORE", f"scheduler outer error: {e}")
                     traceback.print_exc()
 
-                time.sleep(60)
+                self._smart_sleep("SCORE", 60, eligible)
 
         thread = threading.Thread(target=run, daemon=True, name="score-scheduler")
         thread.start()
@@ -794,13 +850,18 @@ class Tournament:
 
         def run():
             while True:
+                eligible = 0
                 try:
                     summary = self.refresh_lineup_cache_once()
-                    time.sleep(15 if summary["eligible"] else 30)
+                    eligible = summary.get("eligible", 0)
+                    if eligible:
+                        time.sleep(15)
+                        continue
                 except Exception as e:
                     self._scheduler_log("XI", f"scheduler error: {e}")
                     traceback.print_exc()
-                    time.sleep(30)
+
+                self._smart_sleep("XI", 30, eligible)
 
         thread = threading.Thread(target=run, daemon=True, name="lineup-cache-scheduler")
         thread.start()
@@ -815,13 +876,18 @@ class Tournament:
 
         def run():
             while True:
+                eligible = 0
                 try:
                     summary = self.refresh_toss_cache_once()
-                    time.sleep(15 if summary["eligible"] else 30)
+                    eligible = summary.get("eligible", 0)
+                    if eligible:
+                        time.sleep(15)
+                        continue
                 except Exception as e:
                     self._scheduler_log("TOSS", f"scheduler error: {e}")
                     traceback.print_exc()
-                    time.sleep(30)
+
+                self._smart_sleep("TOSS", 30, eligible)
 
         thread = threading.Thread(target=run, daemon=True, name="toss-cache-scheduler")
         thread.start()
