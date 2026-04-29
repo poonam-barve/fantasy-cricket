@@ -799,7 +799,7 @@ class Tournament:
 
     def _smart_sleep(self, channel: str, active_interval: float, eligible_count: int) -> None:
         """Sleep for *active_interval* when matches are active, otherwise
-        sleep until close to the next match."""
+        sleep proportionally to how far away the next match is."""
         if eligible_count > 0:
             time.sleep(active_interval)
             return
@@ -809,10 +809,17 @@ class Tournament:
             time.sleep(active_interval)
             return
 
-        # Cap individual sleeps at 30 min so we periodically re-check
-        capped = min(wait, 30 * 60)
-        self._scheduler_log(channel, f"no active matches, sleeping {int(capped)}s (next in ~{int(wait)}s)")
-        time.sleep(capped)
+        # Scale sleep duration with the gap to next match
+        if wait < 2 * 3600:       # < 2 hours: sleep 10 min
+            cap = 10 * 60
+        elif wait < 6 * 3600:     # 2-6 hours: sleep 30 min
+            cap = 30 * 60
+        else:                     # 6+ hours / no match today: sleep 2 hours
+            cap = 2 * 3600
+
+        sleep_for = min(wait, cap)
+        self._scheduler_log(channel, f"no active matches, sleeping {int(sleep_for)}s (next in ~{int(wait)}s)")
+        time.sleep(sleep_for)
 
     def start_scheduler(self):
         global SCORE_SCHEDULER_STARTED
