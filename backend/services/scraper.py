@@ -1999,11 +1999,13 @@ def _fetch_playing_xi_impl(
             f"finalized={parsed_payload.get('finalized', False)}"
         )
         if parsed_payload["announced"]:
+            player_source = parsed_payload.get("source") or winning_source
             print(
                 f"[Playing XI] Match {match_id}: Playing XI announced from {player_source} "
                 f"({len(playing_ids)} players)"
             )
         if parsed_payload["substitutes_available"]:
+            substitute_source = parsed_payload.get("source") or winning_source
             print(
                 f"[Playing XI] Match {match_id}: substitutes announced from {substitute_source} "
                 f"({len(substitute_ids)} players)"
