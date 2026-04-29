@@ -12,7 +12,7 @@ import random
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-from backend.config import IST, get_current_datetime
+from backend.config import IST
 from backend.database import get_db
 
 
@@ -393,16 +393,14 @@ def get_current_tournament() -> dict | None:
     ).fetchone()
 
     if not tournament:
-        # Fall back to next upcoming pending tournament (qualifier not yet past)
-        today = get_current_datetime().strftime("%Y-%m-%d")
+        # Fall back to next upcoming pending tournament (by qualifier date)
         tournament = db.execute(
             """
             SELECT wt.* FROM weekend_tournaments wt
             JOIN matches m ON m.id = wt.qualifying_match_id
-            WHERE wt.status = 'pending' AND m.match_date >= ?
+            WHERE wt.status = 'pending'
             ORDER BY m.match_date ASC LIMIT 1
-            """,
-            (today,),
+            """
         ).fetchone()
 
     if not tournament:
