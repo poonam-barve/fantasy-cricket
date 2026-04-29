@@ -597,10 +597,10 @@ class Tournament:
                     self._scheduler_log("SCORE", f"match {match_id} completed -> revalidating")
                     finalized_from_scorecard = self.update_match_data(
                         match_id,
-                        use_playing_xi=False,
+                        use_playing_xi=True,
                         include_scorecards=True,
-                        force_refresh_playing_xi=False,
-                        apply_backups=False,
+                        force_refresh_playing_xi=True,
+                        apply_backups=True,
                     )
                     if finalized_from_scorecard:
                         processed += 1
