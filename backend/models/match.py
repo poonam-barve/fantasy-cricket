@@ -1,10 +1,14 @@
 import re
 import json
+import logging
 from bs4 import BeautifulSoup
 from backend.models.player import Player
 from backend.models.registry import PlayerRegistry
 from backend.config import TEAM_MAP
 from backend.services import data_service
+
+
+logger = logging.getLogger(__name__)
 
 
 def clean_name(name):
@@ -17,10 +21,10 @@ def clean_team_name(name):
     name = re.sub(r"\(.*?\)", "", name).strip()
     name = " ".join(name.split())
     short = TEAM_MAP.get(name)
-    if not short:
-        print("Team mapping missing for:", name)
-        return name
-    return short
+    if short:
+        return short
+    logger.debug("Team mapping missing for: %s", name)
+    return name
 
 
 class Match:

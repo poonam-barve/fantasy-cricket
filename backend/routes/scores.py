@@ -760,6 +760,25 @@ def _backup_map_for_user(match_id: int, user_id: int) -> dict[int, dict]:
     return data_service.get_active_backup_replacements(match_id, user_id)
 
 
+def _backup_replacements_for_user(match_id: int, user_id: int) -> list[dict]:
+    backups = data_service.get_user_backups(user_id, match_id) or []
+    replacements: list[dict] = []
+    for row in backups:
+        replaced_id = row.get("replaced_player_id")
+        backup_id = row.get("backup_player_id")
+        if replaced_id in (None, ""):
+            continue
+        replacements.append({
+            "backup_player_id": int(backup_id),
+            "backup_player_name": row.get("backup_player_name", ""),
+            "backup_team": row.get("backup_team", ""),
+            "backup_role": row.get("backup_role", ""),
+            "replaced_player_id": int(replaced_id),
+            "replaced_player_name": row.get("replaced_player_name", ""),
+        })
+    return replacements
+
+
 def _build_players_rows(players_data, team1=None, team2=None):
     rows = []
     for row in players_data:
@@ -1059,6 +1078,7 @@ async def team_breakdown(
     breakdown = []
     total = 0.0
     backup_map = _backup_map_for_user(match_id, target_user_id)
+    backup_replacements = _backup_replacements_for_user(match_id, target_user_id)
 
     for row in team_rows:
         pid = row["player_id"]
@@ -1102,6 +1122,7 @@ async def team_breakdown(
         "user_name": target_user["name"] if target_user else "Unknown",
         "total": round(total, 2),
         "players": breakdown,
+        "backup_replacements": backup_replacements,
     }
 
 

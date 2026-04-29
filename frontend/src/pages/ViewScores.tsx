@@ -44,7 +44,15 @@ interface TeamDiffData {
 interface Contestant { id: number; name: string; points?: number; rank?: number; }
 
 interface BreakdownPlayer { name: string; team: string; role: string; base_points: number; multiplier: number; tag: string; adjusted_points: number; is_backup?: boolean; replaced_player_id?: number | null; }
-interface BreakdownData { user_name: string; total: number; players: BreakdownPlayer[]; error?: string; }
+interface BackupReplacement {
+  backup_player_id: number;
+  backup_player_name: string;
+  backup_team: string;
+  backup_role: string;
+  replaced_player_id: number;
+  replaced_player_name: string;
+}
+interface BreakdownData { user_name: string; total: number; players: BreakdownPlayer[]; backup_replacements?: BackupReplacement[]; error?: string; }
 interface ScorecardBattingEntry {
   player_id: number;
   name: string;
@@ -438,6 +446,59 @@ export default function ViewScoresPage() {
         title="Backup replacement"
       />
     ) : null;
+
+  const renderReplacementArrow = (direction: 'out' | 'in') => (
+    <span
+      className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-bold ${
+        direction === 'out'
+          ? 'border-red-400/30 bg-red-500/15 text-red-200'
+          : 'border-green-400/30 bg-green-500/15 text-green-200'
+      }`}
+      title={direction === 'out' ? 'Player went out' : 'Player came in'}
+    >
+      {direction === 'out' ? '↘' : '↗'}
+    </span>
+  );
+
+  const renderBackupReplacements = (replacements?: BackupReplacement[]) => {
+    if (!replacements?.length) return null;
+
+    return (
+      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Backup Replacement</h3>
+            <p className="text-[10px] text-white/35">Who went out and who came in</p>
+          </div>
+          <span className="rounded-full border border-sky-400/20 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold text-sky-300">
+            {replacements.length}
+          </span>
+        </div>
+        <div className="space-y-2">
+          {replacements.map((replacement) => (
+            <div key={`${replacement.backup_player_id}-${replacement.replaced_player_id}`} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="inline-flex items-center gap-1.5 text-red-200">
+                  {renderReplacementArrow('out')}
+                  <span className="max-w-[12rem] truncate font-medium">{replacement.replaced_player_name}</span>
+                </span>
+                <span className="text-white/30">→</span>
+                <span className="inline-flex items-center gap-1.5 text-green-200">
+                  {renderReplacementArrow('in')}
+                  <span className="max-w-[12rem] truncate font-medium">{replacement.backup_player_name}</span>
+                </span>
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-white/40">
+                {renderTeamBadge(replacement.backup_team, true)}
+                <span>{formatRoleName(replacement.backup_role)}</span>
+                <span className="text-white/25">Backup applied</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   const renderRoleSymbol = (role: string) => {
     const config = { symbol: getShortRole(role), label: role };
@@ -847,6 +908,7 @@ export default function ViewScoresPage() {
                                   <p className="text-[10px] uppercase tracking-[0.2em] text-white/30">Refreshing latest data...</p>
                                 )}
                                 {renderLiveSelectedContestant()}
+                                {renderBackupReplacements(selectedContestantBreakdown.backup_replacements)}
                               </div>
                             ) : (
                               <p className="text-sm text-white/40">No team data available.</p>
@@ -1171,6 +1233,8 @@ export default function ViewScoresPage() {
                     <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-sky-400"></span> VC (1.5x)</span>
                   </div>
                 </div>
+
+                {renderBackupReplacements(breakdown.backup_replacements)}
 
                 <div className="rounded-2xl overflow-hidden bg-white/5 border border-white/10">
                   <div className="px-4 py-3 border-b border-white/10">
