@@ -882,19 +882,20 @@ def _build_live_match_payload(match_id: int, match_row, registry, players_data, 
 
     players_rows = _build_players_rows(players_data, team1, team2)
     playing_xi = {"announced": False, "url": "", "player_ids": []}
-    if include_playing_xi:
-        playing_xi = refresh_playing_xi_cache(
-            match_id,
-            team1,
-            team2,
-            players_rows,
-            match_date,
-            match_time,
-            toss_time,
-        )
-        playing_ids = playing_xi.get("player_ids", [])
-        if playing_ids:
-            match_obj.apply_playing_xi(playing_ids)
+    # Always fetch and apply playing XI so that all 22 players are marked as "played"
+    # This ensures bowlers who haven't bowled yet still get 4 base points
+    playing_xi = refresh_playing_xi_cache(
+        match_id,
+        team1,
+        team2,
+        players_rows,
+        match_date,
+        match_time,
+        toss_time,
+    )
+    playing_ids = playing_xi.get("player_ids", [])
+    if playing_ids:
+        match_obj.apply_playing_xi(playing_ids)
 
     html_content = fetch_cricbuzz_scorecard_html(match_id, team1, team2)
     if html_content:
