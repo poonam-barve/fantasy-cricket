@@ -14,7 +14,6 @@ from backend.services.scraper import (
     fetch_cricbuzz_scorecard_html,
     fetch_scorecard_html,
     get_cached_toss_info,
-    refresh_playing_xi_cache,
 )
 from bs4 import BeautifulSoup
 
@@ -155,19 +154,6 @@ def _load_last_completed_team_xi(
         last_match_date,
         last_match_time,
     )
-    if not cached_playing_xi or not cached_playing_xi.get("announced"):
-        try:
-            cached_playing_xi = refresh_playing_xi_cache(
-                last_match_id,
-                last_team1,
-                last_team2,
-                last_players,
-                last_match_date,
-                last_match_time,
-                last_toss_time,
-            )
-        except Exception:
-            cached_playing_xi = None
 
     if cached_playing_xi and cached_playing_xi.get("announced"):
         playing_xi = cached_playing_xi
@@ -344,40 +330,6 @@ async def list_players(
             })
 
             players = [copy.deepcopy(player) for player in players]
-
-        if is_today_match and lineup_window_open:
-            player_rows_for_xi = [
-                {
-                    "id": player["id"],
-                    "name": player["name"],
-                    "team": player["team"],
-                    "role": player["role"],
-                    "aliases": player.get("aliases") or "",
-                }
-                for player in players
-            ]
-            cached_playing_xi = data_service.get_cached_match_playing_xi(
-                match_id,
-                team1,
-                team2,
-                match_date,
-                match_time,
-            )
-            if not cached_playing_xi or not cached_playing_xi.get("announced"):
-                try:
-                    refreshed_playing_xi = refresh_playing_xi_cache(
-                        match_id,
-                        team1,
-                        team2,
-                        player_rows_for_xi,
-                        match_date,
-                        match_time,
-                        toss_time,
-                    )
-                    if refreshed_playing_xi:
-                        cached_playing_xi = refreshed_playing_xi
-                except Exception:
-                    pass
 
         playing_xi_data = {
             "announced": False,
