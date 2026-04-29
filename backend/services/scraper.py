@@ -1998,6 +1998,16 @@ def _fetch_playing_xi_impl(
             f"url={source_url} playing={len(playing_ids)} subs={len(substitute_ids)} "
             f"finalized={parsed_payload.get('finalized', False)}"
         )
+        if parsed_payload["announced"]:
+            print(
+                f"[Playing XI] Match {match_id}: Playing XI announced from {player_source} "
+                f"({len(playing_ids)} players)"
+            )
+        if parsed_payload["substitutes_available"]:
+            print(
+                f"[Playing XI] Match {match_id}: substitutes announced from {substitute_source} "
+                f"({len(substitute_ids)} players)"
+            )
         for name in parsed_payload["unmatched_names"]:
             print(f"[Playing XI] Match {match_id}: player mapping not found for '{name}'")
         if parsed_payload["substitutes_available"]:

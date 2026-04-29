@@ -345,6 +345,40 @@ async def list_players(
 
             players = [copy.deepcopy(player) for player in players]
 
+        if is_today_match and lineup_window_open:
+            player_rows_for_xi = [
+                {
+                    "id": player["id"],
+                    "name": player["name"],
+                    "team": player["team"],
+                    "role": player["role"],
+                    "aliases": player.get("aliases") or "",
+                }
+                for player in players
+            ]
+            cached_playing_xi = data_service.get_cached_match_playing_xi(
+                match_id,
+                team1,
+                team2,
+                match_date,
+                match_time,
+            )
+            if not cached_playing_xi or not cached_playing_xi.get("announced"):
+                try:
+                    refreshed_playing_xi = refresh_playing_xi_cache(
+                        match_id,
+                        team1,
+                        team2,
+                        player_rows_for_xi,
+                        match_date,
+                        match_time,
+                        toss_time,
+                    )
+                    if refreshed_playing_xi:
+                        cached_playing_xi = refreshed_playing_xi
+                except Exception:
+                    pass
+
         playing_xi_data = {
             "announced": False,
             "url": "",
