@@ -393,9 +393,20 @@ def get_current_tournament() -> dict | None:
     ).fetchone()
 
     if not tournament:
+        # Fall back to next upcoming pending tournament (by qualifier date)
+        tournament = db.execute(
+            """
+            SELECT wt.* FROM weekend_tournaments wt
+            JOIN matches m ON m.id = wt.qualifying_match_id
+            WHERE wt.status = 'pending'
+            ORDER BY m.match_date ASC LIMIT 1
+            """
+        ).fetchone()
+
+    if not tournament:
         # Fall back to most recent completed
         tournament = db.execute(
-            "SELECT * FROM weekend_tournaments ORDER BY id DESC LIMIT 1"
+            "SELECT * FROM weekend_tournaments WHERE status = 'completed' ORDER BY id DESC LIMIT 1"
         ).fetchone()
 
     if not tournament:
