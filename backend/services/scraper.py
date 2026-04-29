@@ -70,6 +70,14 @@ def _copy_playing_xi_payload(payload: dict) -> dict:
     }
 
 
+def _get_cached_playing_xi_payload(match_id: int) -> dict | None:
+    with PLAYING_XI_CACHE_LOCK:
+        cached = PLAYING_XI_CACHE.get(int(match_id))
+        if not cached:
+            return None
+        return _copy_playing_xi_payload(cached.get("payload") or {})
+
+
 def _copy_toss_payload(payload: dict) -> dict:
     return {
         "announced": bool(payload.get("announced")),
