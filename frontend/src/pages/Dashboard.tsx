@@ -435,7 +435,7 @@ export default function DashboardPage() {
                 className={`bg-gradient-to-br ${getTeamTheme(match.team1).tintClass} bg-white/5 hover:bg-white/[0.08] border border-white/10 rounded-2xl p-5 transition-all duration-200 md:backdrop-blur-sm`}>
                 <div className="flex items-center justify-between mb-3">
                   {statusBadge(match.status)}
-                  {match.locked && (
+                  {match.locked && match.status === 'live' && (
                     <span className="text-xs text-amber-400 flex items-center gap-1">
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
