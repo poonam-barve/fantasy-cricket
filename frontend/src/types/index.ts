@@ -33,7 +33,7 @@ export type Match = {
   match_date: string;
   match_time: string;
   toss_time?: string | null;
-  status: 'future' | 'live' | 'completed' | 'nr';
+  status: 'future' | 'lineups' | 'live' | 'completed' | 'nr';
   locked: boolean;
   venue?: VenueStats | null;
   toss?: TossInfo | null;

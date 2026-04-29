@@ -53,7 +53,9 @@ export default function DashboardPage() {
       setMatches(loadedMatches);
       setMyTeams(loadedMyTeams);
 
-      const futureMatchesWithTeams = loadedMatches.filter((match) => match.status === 'future' && loadedMyTeams.has(match.id));
+      const futureMatchesWithTeams = loadedMatches.filter((match) =>
+        ['future', 'lineups'].includes(match.status) && loadedMyTeams.has(match.id)
+      );
 
       if (futureMatchesWithTeams.length > 0) {
         const ids = futureMatchesWithTeams.map((match) => match.id).join(',');
@@ -180,7 +182,7 @@ export default function DashboardPage() {
 
     const todayMatchesToPrefetch = matches.filter((match) =>
       (match.match_date === todayIST || match.status === 'live') &&
-      match.status === 'future'
+      ['future', 'lineups'].includes(match.status)
     );
 
     const pendingMatchIds = todayMatchesToPrefetch
@@ -244,7 +246,8 @@ export default function DashboardPage() {
 
   const matchAction = (match: Match) => {
     switch (match.status) {
-      case 'future': {
+      case 'future':
+      case 'lineups': {
         const hasTeam = myTeams.has(match.id);
         return (
           <div className="flex flex-wrap justify-center gap-2">
