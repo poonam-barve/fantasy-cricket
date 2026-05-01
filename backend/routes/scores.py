@@ -262,10 +262,14 @@ def _build_match_scores_payload(match_id: int, match_row, registry, players_data
         ).fetchall()
 
     players = []
+    # Build a live per-player points lookup from calculated values so
+    # contestant totals use the same source as the per-player breakdown.
+    live_pp_lookup: dict[str, float] = {}
     for p in match_obj.players.values():
         pid_str = str(p.player_id)
         role = role_lookup.get(pid_str) or registry.players.get(p.player_id, {}).get("Role")
         calculated_points = p.calculate_player_points(role) if role else 0
+        live_pp_lookup[pid_str] = float(calculated_points)
         players.append({
             "player_id": int(p.player_id),
             "name": p.name,
@@ -304,7 +308,10 @@ def _build_match_scores_payload(match_id: int, match_row, registry, players_data
         )
 
     players.sort(key=lambda x: x["points"], reverse=True)
-    contestants = _rank_contestants(_compute_contestants_from_player_points(db, match_id, pp_lookup))
+    # Use live-calculated per-player points to compute contestant totals for
+    # the main scores response so that these totals stay in sync with the
+    # team breakdown (which uses the cached snapshot).
+    contestants = _rank_contestants(_compute_contestants_from_player_points(db, match_id, live_pp_lookup))
 
     return {
         "players": players,

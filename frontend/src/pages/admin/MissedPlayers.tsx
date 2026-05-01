@@ -19,35 +19,22 @@ type MissedPlayersResponse = {
 
 export default function MissedPlayersPage() {
   const [matches, setMatches] = useState<Match[]>([]);
-  const [selectedMatchId, setSelectedMatchId] = useState<number | ''>('');
   const [data, setData] = useState<MissedPlayersResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchData = async (matchId?: number) => {
-    const query = matchId ? `?match_id=${matchId}` : '';
-    const res = await client.get(`/api/admin/missed-players${query}`);
+  const fetchData = async () => {
+    const res = await client.get(`/api/admin/missed-players`);
     setData(res.data);
-    if (!matchId && res.data?.match?.id) {
-      setSelectedMatchId(res.data.match.id);
-    }
   };
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       try {
-        const [matchesRes, missedRes] = await Promise.all([
-          client.get('/api/admin/matches'),
-          client.get('/api/admin/missed-players'),
-        ]);
+        const matchesRes = await client.get('/api/admin/matches');
         setMatches(matchesRes.data || []);
-        setData(missedRes.data);
-        if (missedRes.data?.match?.id) {
-          setSelectedMatchId(missedRes.data.match.id);
-        } else if ((matchesRes.data || []).length > 0) {
-          setSelectedMatchId(matchesRes.data[matchesRes.data.length - 1].id);
-        }
+        await fetchData();
       } catch (err) {
         console.error('Failed to load missed players', err);
       } finally {
@@ -59,7 +46,6 @@ export default function MissedPlayersPage() {
   }, []);
 
   const rows = useMemo(() => data?.players || [], [data]);
-  const selectedMatch = matches.find((match) => match.id === selectedMatchId) || data?.match || null;
   const affectedMatches = useMemo(() => new Set(rows.map((row) => row.match_id)).size, [rows]);
   const latestUnmapped = rows[0];
 
@@ -102,23 +88,12 @@ export default function MissedPlayersPage() {
           <p className="text-sm text-gray-500">Parsed scorecard names that could not be matched to our player list.</p>
         </div>
         <div className="flex items-center gap-2">
-          <select
-            value={selectedMatchId}
-            onChange={(e) => handleMatchChange(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[16rem]"
-          >
-            <option value="">Select match...</option>
-            {matches.map((match) => (
-              <option key={match.id} value={match.id}>
-                #{match.id} {match.team1} vs {match.team2}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing || !selectedMatchId}
-            className="inline-flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-          >
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
             {refreshing ? (
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
             ) : (
@@ -127,7 +102,8 @@ export default function MissedPlayersPage() {
               </svg>
             )}
             Refresh
-          </button>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -142,9 +118,8 @@ export default function MissedPlayersPage() {
         </div>
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <p className="text-sm text-gray-500">Match</p>
-          <p className="text-base font-semibold text-gray-800 mt-1">
-            {selectedMatch ? `#${selectedMatch.id} ${selectedMatch.team1} vs ${selectedMatch.team2}` : 'No match selected'}
-          </p>
+          <p className="text-base font-semibold text-gray-800 mt-1">All matches</p>
+          <p className="text-xs text-gray-500 mt-1">Showing unmapped players across all matches. Match numbers are shown per row.</p>
         </div>
       </div>
 

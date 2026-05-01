@@ -211,28 +211,7 @@ export default function ManageTeams() {
         </select>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
-        {matches.map((match) => (
-          <button
-            key={match.id}
-            onClick={() => setSelectedMatchId(match.id)}
-            className={`text-left rounded-2xl border p-4 transition-all ${
-              selectedMatchId === match.id
-                ? 'border-indigo-500 bg-indigo-50 shadow-sm'
-                : 'border-gray-200 bg-white hover:border-indigo-300'
-            }`}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <p className="font-semibold text-gray-800">Match {match.id}</p>
-              <span className="text-xs font-semibold px-2 py-1 rounded-full bg-gray-100 text-gray-600">
-                {match.team_count} teams
-              </span>
-            </div>
-            <p className="text-sm text-gray-700 mt-2">{match.team1} vs {match.team2}</p>
-            <p className="text-xs text-gray-500 mt-1">{match.match_date} {match.match_time}</p>
-          </button>
-        ))}
-      </div>
+      {/* Matches grid hidden: use dropdown above to select a match */}
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
         {loadingTeams ? (
