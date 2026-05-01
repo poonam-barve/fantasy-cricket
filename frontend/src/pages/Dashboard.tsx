@@ -25,6 +25,7 @@ export default function DashboardPage() {
   const [showContestantsForMatch, setShowContestantsForMatch] = useState<Match | null>(null);
   const [matchContestants, setMatchContestants] = useState<MatchContestant[]>([]);
   const [contestantsLoading, setContestantsLoading] = useState(false);
+  const [contestantsCounts, setContestantsCounts] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<MatchTab>('today');
   const { profile, loading: authLoading } = useAuth();
@@ -202,6 +203,27 @@ export default function DashboardPage() {
         )
       );
     })();
+
+    // fetch contestants counts for today's matches (to show counts on card)
+    const todayIds = matches
+      .filter((match) => (match.match_date === todayIST || match.status === 'live') && !['completed', 'nr'].includes(match.status))
+      .map((m) => m.id);
+    if (todayIds.length > 0) {
+      void (async () => {
+        try {
+          const results = await Promise.allSettled(todayIds.map((id) => client.get(`/api/teams/contestants?match_id=${id}`)));
+          const next: Record<number, number> = { ...contestantsCounts };
+          results.forEach((r, i) => {
+            if (r.status === 'fulfilled' && Array.isArray((r.value || {}).data)) {
+              next[todayIds[i]] = (r.value.data || []).length;
+            }
+          });
+          setContestantsCounts(next);
+        } catch {
+          // ignore
+        }
+      })();
+    }
   }, [authLoading, matches, profile, todayIST]);
 
   // Split matches into tabs
@@ -557,6 +579,7 @@ export default function DashboardPage() {
                 <h3 className="mt-1 text-lg font-semibold text-white">
                   Match #{showContestantsForMatch.id}: {showContestantsForMatch.team1} vs {showContestantsForMatch.team2}
                 </h3>
+                <p className="text-sm text-white/60 mt-1">Participants: {contestantsLoading ? 'Loading...' : matchContestants.length}</p>
               </div>
               <button
                 type="button"

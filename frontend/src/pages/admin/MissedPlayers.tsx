@@ -42,9 +42,16 @@ export default function MissedPlayersPage() {
     load();
   }, []);
 
-  const rows = useMemo(() => data?.players || [], [data]);
+  const rows = useMemo(() => {
+    const raw = data?.players || [];
+    const filtered = raw.filter((r) => r && r.match_id && r.name && String(r.name).trim().length > 0);
+    filtered.sort((a, b) => {
+      if (a.match_id !== b.match_id) return a.match_id - b.match_id;
+      return a.name.localeCompare(b.name);
+    });
+    return filtered;
+  }, [data]);
   const affectedMatches = useMemo(() => new Set(rows.map((row) => row.match_id)).size, [rows]);
-  const latestUnmapped = rows[0];
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -90,7 +97,7 @@ export default function MissedPlayersPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <p className="text-sm text-gray-500">Unmapped Players</p>
           <p className="text-3xl font-bold text-gray-800 mt-1">{data?.missed_count || 0}</p>
@@ -99,26 +106,16 @@ export default function MissedPlayersPage() {
           <p className="text-sm text-gray-500">Matches Affected</p>
           <p className="text-3xl font-bold text-gray-800 mt-1">{affectedMatches}</p>
         </div>
-        <div className="bg-white rounded-2xl shadow-sm p-5">
-          <p className="text-sm text-gray-500">Match</p>
-          <p className="text-base font-semibold text-gray-800 mt-1">All matches</p>
-          <p className="text-xs text-gray-500 mt-1">Showing unmapped players across all matches. Match numbers are shown per row.</p>
-        </div>
+        {/* Match card removed as requested */}
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100">
+          <div className="px-6 py-4 border-b border-gray-100">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-bold text-gray-800">Missed Players Table</h2>
               <p className="text-sm text-gray-500">Parsed player names that still need a manual mapping in the registry.</p>
             </div>
-            {latestUnmapped && (
-              <div className="text-right">
-                <p className="text-xs text-gray-400">Sample unmapped entry</p>
-                <p className="text-sm font-semibold text-gray-800">{latestUnmapped.name}</p>
-              </div>
-            )}
           </div>
         </div>
 
