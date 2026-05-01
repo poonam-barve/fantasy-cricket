@@ -592,19 +592,17 @@ export default function DashboardPage() {
           <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#0f0f0f] p-5 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-white/35">Who&apos;s pending</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-white/35">Who&apos;s playing</p>
                 <h3 className="mt-1 text-lg font-semibold text-white">
                   Match #{showContestantsForMatch.id}: {showContestantsForMatch.team1} vs {showContestantsForMatch.team2}
                 </h3>
-                <p className="text-sm text-white/60 mt-1">Participants: {contestantsLoading ? 'Loading...' : matchContestants.length}</p>
+                
               </div>
               <div className="flex items-center gap-4">
                 <div className="inline-flex rounded-lg bg-white/5 p-1">
                   <button
                     className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${modalTab === 'playing' ? 'bg-white text-black' : 'text-white/70'}`}
-                    onClick={() => {
-                      setModalTab('playing');
-                    }}
+                    onClick={() => setModalTab('playing')}
                   >
                     Who's Playing {contestantsLoading ? '(...)' : `(${matchContestants.length})`}
                   </button>
@@ -632,77 +630,48 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="mt-4 max-h-[60vh] overflow-auto rounded-xl border border-white/10 bg-white/5">
-              {contestantsLoading ? (
-                <div className="flex justify-center py-10">
-                  <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-white" />
-                </div>
-              ) : matchContestants.length === 0 ? (
-                <div className="px-4 py-8 text-center text-sm text-white/40">
-                  No contestants have joined this match yet.
-                </div>
-              ) : (
-                <div className="divide-y divide-white/5">
-                  {matchContestants.map((contestant, index) => (
-                    <div key={`${contestant.user_id}-${index}`} className="flex items-center justify-between gap-4 px-4 py-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-white">{contestant.name}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[11px] uppercase tracking-wide text-white/30">Last updated</p>
-                        <p className="text-xs text-white/65">{formatDateTime(contestant.last_team_updated)}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {modalTab === 'playing' && (
-                <div className="mt-3 max-h-[60vh] overflow-auto rounded-xl border border-white/10 bg-white/5">
-                  {contestantsLoading ? (
-                    <div className="flex justify-center py-10">
-                      <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-white" />
-                    </div>
-                  ) : matchContestants.length === 0 ? (
-                    <div className="px-4 py-8 text-center text-sm text-white/40">No contestants have joined this match yet.</div>
-                  ) : (
-                    <div className="divide-y divide-white/5">
-                      {matchContestants.map((contestant, index) => (
-                        <div key={`${contestant.user_id}-${index}`} className="flex items-center justify-between gap-4 px-4 py-3">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white">{contestant.name}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-[11px] uppercase tracking-wide text-white/30">Last updated</p>
-                            <p className="text-xs text-white/65">{formatDateTime(contestant.last_team_updated)}</p>
-                          </div>
+            <div className="mt-3 max-h-[60vh] overflow-auto rounded-xl border border-white/10 bg-white/5">
+              {modalTab === 'playing' ? (
+                contestantsLoading ? (
+                  <div className="flex justify-center py-10">
+                    <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-white" />
+                  </div>
+                ) : matchContestants.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-sm text-white/40">No contestants have joined this match yet.</div>
+                ) : (
+                  <div className="divide-y divide-white/5">
+                    {matchContestants.map((contestant, index) => (
+                      <div key={`${contestant.user_id}-${index}`} className="flex items-center justify-between gap-4 px-4 py-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-white">{contestant.name}</p>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {modalTab === 'missing' && (
-                <div className="mt-3 max-h-[60vh] overflow-auto rounded-xl border border-white/10 bg-white/5">
-                  {pendingLoading ? (
-                    <div className="flex justify-center py-6">
-                      <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-white/40" />
-                    </div>
-                  ) : pendingUsers.length === 0 ? (
-                    <div className="px-4 py-6 text-center text-sm text-white/40">No pending users for this match.</div>
-                  ) : (
-                    <div className="divide-y divide-white/5">
-                      {pendingUsers.map((u: any, idx: number) => (
-                        <div key={`${u.id}-${idx}`} className="flex items-center justify-between gap-4 px-4 py-3">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white">{u.name}</p>
-                          </div>
+                        <div className="text-right">
+                          <p className="text-[11px] uppercase tracking-wide text-white/30">Last updated</p>
+                          <p className="text-xs text-white/65">{formatDateTime(contestant.last_team_updated)}</p>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : modalTab === 'missing' ? (
+                pendingLoading ? (
+                  <div className="flex justify-center py-6">
+                    <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-white/40" />
+                  </div>
+                ) : pendingUsers.length === 0 ? (
+                  <div className="px-4 py-6 text-center text-sm text-white/40">No pending users for this match.</div>
+                ) : (
+                  <div className="divide-y divide-white/5">
+                    {pendingUsers.map((u: any, idx: number) => (
+                      <div key={`${u.id}-${idx}`} className="flex items-center justify-between gap-4 px-4 py-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-white">{u.name}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : null}
             </div>
           </div>
         </div>
