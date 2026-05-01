@@ -23,7 +23,7 @@ export default function MissedPlayersPage() {
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchData = async () => {
-    const res = await client.get(`/api/admin/missed-players`);
+    const res = await client.get(`/api/admin/missed-players?all=true`);
     setData(res.data);
   };
 

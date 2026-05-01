@@ -154,8 +154,84 @@ class UpdateUserBody(BaseModel):
 @router.get("/users")
 async def list_users(user: dict = Depends(require_admin)):
     db = get_db()
+
     rows = db.execute("SELECT * FROM users ORDER BY id").fetchall()
     return [dict(row) for row in rows]
+
+@router.get("/player-owners")
+async def player_owners(
+    match_id: int = Query(...),
+    user: dict = Depends(require_admin),
+):
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT
+            ut.player_id,
+            u.id AS user_id,
+            u.name AS user_name,
+            ut.is_captain,
+            ut.is_vice_captain
+        FROM user_teams ut
+        JOIN users u ON u.id = ut.user_id
+        WHERE ut.match_id = ?
+          AND u.is_active = 1
+        ORDER BY ut.player_id, u.name
+        """,
+        (match_id,),
+    ).fetchall()
+
+    owners_by_player: dict[int, list[dict]] = {}
+    for row in rows:
+        owners_by_player.setdefault(int(row["player_id"]), []).append({
+            "id": int(row["user_id"]),
+            "name": row["user_name"],
+            "tag": "C" if row["is_captain"] else "VC" if row["is_vice_captain"] else "",
+        })
+
+    return owners_by_player
+
+
+@router.get("/pending-users")
+async def pending_users(
+    match_id: int = Query(...),
+    user: dict = Depends(require_admin),
+):
+    db = get_db()
+
+    # participants: users who have a team for this match
+    participants_rows = db.execute(
+        """
+        SELECT u.id, u.name, MAX(ut.updated_at) as last_team_updated
+        FROM users u
+        JOIN user_teams ut ON u.id = ut.user_id AND ut.match_id = ?
+        WHERE u.is_active = 1
+        GROUP BY u.id, u.name
+        ORDER BY u.name
+        """,
+        (match_id,),
+    ).fetchall()
+
+    participants = [
+        {"id": int(r["id"]), "name": r["name"], "last_team_updated": r["last_team_updated"]}
+        for r in participants_rows
+    ]
+
+    # non_participants: active users without a team for this match
+    non_rows = db.execute(
+        """
+        SELECT u.id, u.name
+        FROM users u
+        WHERE u.is_active = 1
+          AND u.id NOT IN (SELECT user_id FROM user_teams WHERE match_id = ?)
+        ORDER BY u.name
+        """,
+        (match_id,),
+    ).fetchall()
+
+    non_participants = [{"id": int(r["id"]), "name": r["name"]} for r in non_rows]
+
+    return {"participants": participants, "non_participants": non_participants}
 
 
 @router.put("/users/{user_id}")
@@ -640,10 +716,40 @@ async def view_teams(
 @router.get("/missed-players")
 async def missed_players(
     match_id: int | None = Query(default=None),
+    all: bool = Query(default=False),
     user: dict = Depends(require_admin),
 ):
     db = get_db()
+    if all:
+        rows = db.execute(
+            """
+            SELECT
+                name,
+                team,
+                match_id,
+                match_date,
+                team1,
+                team2
+            FROM unknown_players
+            ORDER BY match_id ASC, name ASC
+            """,
+        ).fetchall()
 
+        players = [
+            {
+                "match_id": int(row["match_id"]),
+                "name": row["name"],
+                "team": row["team"],
+                "match_date": row["match_date"],
+                "team1": row["team1"],
+                "team2": row["team2"],
+            }
+            for row in rows
+        ]
+
+        return {"match": None, "players": players, "missed_count": len(players), "total_missed_points": 0}
+
+    # existing behaviour: return latest (or specified) match's unknown players
     if match_id is None:
         row = db.execute(
             """

@@ -26,6 +26,9 @@ export default function DashboardPage() {
   const [matchContestants, setMatchContestants] = useState<MatchContestant[]>([]);
   const [contestantsLoading, setContestantsLoading] = useState(false);
   const [contestantsCounts, setContestantsCounts] = useState<Record<number, number>>({});
+  const [showUnpicked, setShowUnpicked] = useState(false);
+  const [pendingUsers, setPendingUsers] = useState<any[]>([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<MatchTab>('today');
   const { profile, loading: authLoading } = useAuth();
@@ -173,6 +176,20 @@ export default function DashboardPage() {
       setMatchContestants([]);
     } finally {
       setContestantsLoading(false);
+    }
+  };
+
+  const fetchPendingUsers = async (matchId: number) => {
+    setPendingLoading(true);
+    setPendingUsers([]);
+    try {
+      const res = await client.get(`/api/admin/pending-users?match_id=${matchId}`);
+      const data = res.data || {};
+      setPendingUsers(data.non_participants || []);
+    } catch (err) {
+      setPendingUsers([]);
+    } finally {
+      setPendingLoading(false);
     }
   };
 
@@ -575,21 +592,38 @@ export default function DashboardPage() {
           <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#0f0f0f] p-5 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-white/35">Who&apos;s Playing</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-white/35">Who&apos;s pending</p>
                 <h3 className="mt-1 text-lg font-semibold text-white">
                   Match #{showContestantsForMatch.id}: {showContestantsForMatch.team1} vs {showContestantsForMatch.team2}
                 </h3>
                 <p className="text-sm text-white/60 mt-1">Participants: {contestantsLoading ? 'Loading...' : matchContestants.length}</p>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowContestantsForMatch(null)}
-                className="rounded-lg p-2 text-white/50 transition hover:bg-white/10 hover:text-white"
-              >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-4">
+                <label className="inline-flex items-center gap-2 text-sm text-white/70">
+                  <input
+                    type="checkbox"
+                    checked={showUnpicked}
+                    onChange={async (e) => {
+                      const next = e.currentTarget.checked;
+                      setShowUnpicked(next);
+                      if (next && showContestantsForMatch) {
+                        await fetchPendingUsers(showContestantsForMatch.id);
+                      }
+                    }}
+                    className="w-4 h-4"
+                  />
+                  Show non-participants
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowContestantsForMatch(null)}
+                  className="rounded-lg p-2 text-white/50 transition hover:bg-white/10 hover:text-white"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             <div className="mt-4 max-h-[60vh] overflow-auto rounded-xl border border-white/10 bg-white/5">
@@ -614,6 +648,27 @@ export default function DashboardPage() {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+              {showUnpicked && (
+                <div className="mt-3 border-t border-white/5 bg-white/3 rounded-b-lg">
+                  {pendingLoading ? (
+                    <div className="flex justify-center py-6">
+                      <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-white/40" />
+                    </div>
+                  ) : pendingUsers.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-sm text-white/40">No pending users for this match.</div>
+                  ) : (
+                    <div className="divide-y divide-white/5">
+                      {pendingUsers.map((u: any, idx: number) => (
+                        <div key={`${u.id}-${idx}`} className="flex items-center justify-between gap-4 px-4 py-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-white">{u.name}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
