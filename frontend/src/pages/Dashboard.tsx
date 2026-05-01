@@ -26,9 +26,9 @@ export default function DashboardPage() {
   const [matchContestants, setMatchContestants] = useState<MatchContestant[]>([]);
   const [contestantsLoading, setContestantsLoading] = useState(false);
   const [contestantsCounts, setContestantsCounts] = useState<Record<number, number>>({});
-  const [showUnpicked, setShowUnpicked] = useState(false);
   const [pendingUsers, setPendingUsers] = useState<any[]>([]);
   const [pendingLoading, setPendingLoading] = useState(false);
+  const [modalTab, setModalTab] = useState<'playing' | 'missing'>('playing');
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<MatchTab>('today');
   const { profile, loading: authLoading } = useAuth();
@@ -287,24 +287,12 @@ export default function DashboardPage() {
     switch (match.status) {
       case 'future':
       case 'lineups': {
-        const hasTeam = myTeams.has(match.id);
         return (
           <div className="flex flex-wrap justify-center gap-2">
-            <Link to={`/select-team/${match.id}`}
-              className={`inline-flex min-w-[8.5rem] items-center justify-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-xl transition-all ${
-                hasTeam ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-lg shadow-amber-500/20' : 'bg-blue-500 hover:bg-blue-400 text-white shadow-lg shadow-blue-500/20'
-              }`}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                {hasTeam
-                  ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />}
-              </svg>
-              {hasTeam ? 'Edit Team' : 'Pick a Team'}
-            </Link>
             <button
               type="button"
               onClick={() => openContestantsModal(match)}
-              className="inline-flex min-w-[8.5rem] items-center justify-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/15 text-white text-sm font-medium rounded-xl border border-white/10 transition-all"
+              className="inline-flex min-w-[10rem] items-center justify-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/15 text-white text-sm font-medium rounded-xl border border-white/10 transition-all"
             >
               Who&apos;s Playing
             </button>
@@ -599,21 +587,27 @@ export default function DashboardPage() {
                 <p className="text-sm text-white/60 mt-1">Participants: {contestantsLoading ? 'Loading...' : matchContestants.length}</p>
               </div>
               <div className="flex items-center gap-4">
-                <label className="inline-flex items-center gap-2 text-sm text-white/70">
-                  <input
-                    type="checkbox"
-                    checked={showUnpicked}
-                    onChange={async (e) => {
-                      const next = e.currentTarget.checked;
-                      setShowUnpicked(next);
-                      if (next && showContestantsForMatch) {
+                <div className="inline-flex rounded-lg bg-white/5 p-1">
+                  <button
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${modalTab === 'playing' ? 'bg-white text-black' : 'text-white/70'}`}
+                    onClick={() => {
+                      setModalTab('playing');
+                    }}
+                  >
+                    Who's Playing {contestantsLoading ? '(...)' : `(${matchContestants.length})`}
+                  </button>
+                  <button
+                    className={`ml-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${modalTab === 'missing' ? 'bg-white text-black' : 'text-white/70'}`}
+                    onClick={async () => {
+                      setModalTab('missing');
+                      if (showContestantsForMatch && pendingUsers.length === 0) {
                         await fetchPendingUsers(showContestantsForMatch.id);
                       }
                     }}
-                    className="w-4 h-4"
-                  />
-                  Show non-participants
-                </label>
+                  >
+                    Who's Missing {pendingLoading ? '(...)' : `(${pendingUsers.length})`}
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => setShowContestantsForMatch(null)}
@@ -650,8 +644,34 @@ export default function DashboardPage() {
                   ))}
                 </div>
               )}
-              {showUnpicked && (
-                <div className="mt-3 border-t border-white/5 bg-white/3 rounded-b-lg">
+              {modalTab === 'playing' && (
+                <div className="mt-3 max-h-[60vh] overflow-auto rounded-xl border border-white/10 bg-white/5">
+                  {contestantsLoading ? (
+                    <div className="flex justify-center py-10">
+                      <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-white" />
+                    </div>
+                  ) : matchContestants.length === 0 ? (
+                    <div className="px-4 py-8 text-center text-sm text-white/40">No contestants have joined this match yet.</div>
+                  ) : (
+                    <div className="divide-y divide-white/5">
+                      {matchContestants.map((contestant, index) => (
+                        <div key={`${contestant.user_id}-${index}`} className="flex items-center justify-between gap-4 px-4 py-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-white">{contestant.name}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[11px] uppercase tracking-wide text-white/30">Last updated</p>
+                            <p className="text-xs text-white/65">{formatDateTime(contestant.last_team_updated)}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {modalTab === 'missing' && (
+                <div className="mt-3 max-h-[60vh] overflow-auto rounded-xl border border-white/10 bg-white/5">
                   {pendingLoading ? (
                     <div className="flex justify-center py-6">
                       <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-white/40" />
