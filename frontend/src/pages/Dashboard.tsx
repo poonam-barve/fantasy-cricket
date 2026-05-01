@@ -287,12 +287,24 @@ export default function DashboardPage() {
     switch (match.status) {
       case 'future':
       case 'lineups': {
+        const hasTeam = myTeams.has(match.id);
         return (
           <div className="flex flex-wrap justify-center gap-2">
+            <Link to={`/select-team/${match.id}`}
+              className={`inline-flex min-w-[8.5rem] items-center justify-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-xl transition-all ${
+                hasTeam ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-lg shadow-amber-500/20' : 'bg-blue-500 hover:bg-blue-400 text-white shadow-lg shadow-blue-500/20'
+              }`}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                {hasTeam
+                  ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />}
+              </svg>
+              {hasTeam ? 'Edit Team' : 'Pick a Team'}
+            </Link>
             <button
               type="button"
               onClick={() => openContestantsModal(match)}
-              className="inline-flex min-w-[10rem] items-center justify-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/15 text-white text-sm font-medium rounded-xl border border-white/10 transition-all"
+              className="inline-flex min-w-[8.5rem] items-center justify-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/15 text-white text-sm font-medium rounded-xl border border-white/10 transition-all"
             >
               Who&apos;s Playing
             </button>
