@@ -18,7 +18,6 @@ type MissedPlayersResponse = {
 };
 
 export default function MissedPlayersPage() {
-  const [matches, setMatches] = useState<Match[]>([]);
   const [data, setData] = useState<MissedPlayersResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -32,8 +31,6 @@ export default function MissedPlayersPage() {
     const load = async () => {
       setLoading(true);
       try {
-        const matchesRes = await client.get('/api/admin/matches');
-        setMatches(matchesRes.data || []);
         await fetchData();
       } catch (err) {
         console.error('Failed to load missed players', err);
@@ -50,25 +47,11 @@ export default function MissedPlayersPage() {
   const latestUnmapped = rows[0];
 
   const handleRefresh = async () => {
-    if (!selectedMatchId) return;
     setRefreshing(true);
     try {
-      await fetchData(Number(selectedMatchId));
+      await fetchData();
     } finally {
       setRefreshing(false);
-    }
-  };
-
-  const handleMatchChange = async (value: string) => {
-    const nextId = value ? Number(value) : '';
-    setSelectedMatchId(nextId);
-    if (nextId) {
-      setRefreshing(true);
-      try {
-        await fetchData(nextId);
-      } finally {
-        setRefreshing(false);
-      }
     }
   };
 
