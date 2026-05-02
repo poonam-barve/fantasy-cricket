@@ -606,6 +606,105 @@ async def recalculate_match(
     }
 
 
+@router.post("/validate-compute/{match_id}")
+async def validate_compute(
+    match_id: int,
+    user: dict = Depends(require_admin),
+):
+    """Fetch scorecard and compute player points WITHOUT persisting.
+
+    Returns computed player stats so admin can verify dot balls are
+    present before running the actual recompute.
+    """
+    if tournament_ref is None:
+        raise HTTPException(status_code=500, detail="Tournament not initialized")
+
+    db = get_db()
+    match_row = db.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
+    if not match_row:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    from backend.services.scraper import fetch_scorecard_html
+    from bs4 import BeautifulSoup
+
+    match = tournament_ref.matches.get(str(match_id))
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not loaded in tournament")
+
+    # Fetch scorecards
+    espn_html = fetch_scorecard_html(match_id, match.team1, match.team2)
+    espn_has_dot_balls = False
+    dot_ball_players = []
+
+    if espn_html:
+        soup = BeautifulSoup(espn_html, "html.parser")
+        # Check if dot balls are present in the HTML
+        text = soup.get_text()
+        # Try to parse dot balls from the page
+        import re
+        # Look for bowling rows with dot ball column (7+ numeric columns)
+        bowling_pattern = re.compile(
+            r"^(?P<name>.+?)\s+(?P<overs>\d+(?:\.\d+)?)\s+(?P<maidens>\d+)\s+(?P<runs>\d+)\s+(?P<wickets>\d+)\s+(?P<economy>\d+(?:\.\d+)?)\s+(?P<dot_balls>\d+)\s+",
+            re.MULTILINE,
+        )
+        lines = text.splitlines()
+        for line in lines:
+            m = bowling_pattern.match(line.strip())
+            if m:
+                espn_has_dot_balls = True
+                dot_ball_players.append({
+                    "name": m.group("name").strip(),
+                    "overs": m.group("overs"),
+                    "wickets": int(m.group("wickets")),
+                    "economy": m.group("economy"),
+                    "dot_balls": int(m.group("dot_balls")),
+                })
+
+    # Get stored player points for comparison
+    stored_rows = db.execute(
+        "SELECT player_id, player_name, role, points FROM player_points WHERE match_id = ?",
+        (match_id,),
+    ).fetchall()
+    stored_pp = {int(r["player_id"]): {"name": r["player_name"], "role": r["role"], "points": float(r["points"])} for r in stored_rows}
+    stored_total = sum(v["points"] for v in stored_pp.values())
+
+    # Compute new points from scorecard (in-memory only, no persist)
+    # Use a temporary computation via tournament
+    new_players = []
+    new_total = 0
+    if match and getattr(match, "players", None):
+        for p in match.players.values():
+            pid = int(p.player_id)
+            role = stored_pp.get(pid, {}).get("role") or getattr(p, "role", None)
+            pts = float(p.calculate_player_points(role)) if role else 0
+            dot_balls = getattr(p, "dot_balls", 0)
+            new_total += pts
+            stored_pts = stored_pp.get(pid, {}).get("points", 0)
+            new_players.append({
+                "player_id": pid,
+                "name": p.name,
+                "role": role,
+                "stored_points": round(stored_pts, 2),
+                "computed_points": round(pts, 2),
+                "dot_balls": dot_balls,
+                "diff": round(pts - stored_pts, 2),
+            })
+
+    new_players.sort(key=lambda x: -abs(x["diff"]))
+
+    return {
+        "match_id": match_id,
+        "espn_fetched": bool(espn_html),
+        "espn_has_dot_balls": espn_has_dot_balls,
+        "dot_ball_players": dot_ball_players,
+        "stored_total": round(stored_total, 2),
+        "computed_total": round(new_total, 2),
+        "total_diff": round(new_total - stored_total, 2),
+        "safe_to_recompute": new_total >= stored_total,
+        "players": new_players,
+    }
+
+
 # --- View Submitted Teams ---
 
 class AdminPlayerSelection(BaseModel):

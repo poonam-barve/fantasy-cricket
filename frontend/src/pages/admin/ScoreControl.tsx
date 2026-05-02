@@ -49,6 +49,8 @@ export default function ScoreControl() {
 	const [matches, setMatches] = useState<Match[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [recalculating, setRecalculating] = useState<Record<number, boolean>>({});
+	const [validating, setValidating] = useState<Record<number, boolean>>({});
+	const [validateResult, setValidateResult] = useState<Record<number, any>>({});
 	const [recalcAllLoading, setRecalcAllLoading] = useState(false);
 	const [toasts, setToasts] = useState<{ id: number; type: 'success' | 'error'; message: string }[]>([]);
 
@@ -160,6 +162,25 @@ export default function ScoreControl() {
 		}
 	};
 
+	const validateCompute = async (matchId: number) => {
+		setValidating((prev) => ({ ...prev, [matchId]: true }));
+		setValidateResult((prev) => ({ ...prev, [matchId]: null }));
+		try {
+			const res = await client.post(`/api/admin/validate-compute/${matchId}`);
+			setValidateResult((prev) => ({ ...prev, [matchId]: res.data }));
+			if (res.data.safe_to_recompute) {
+				addToast('success', `Match #${matchId}: Safe to recompute (no data loss detected)`);
+			} else {
+				addToast('error', `Match #${matchId}: NOT safe — computed total (${res.data.computed_total}) < stored (${res.data.stored_total}). Dot balls likely missing.`);
+			}
+		} catch (err) {
+			console.error('Validate failed', err);
+			addToast('error', `Failed to validate match #${matchId}.`);
+		} finally {
+			setValidating((prev) => ({ ...prev, [matchId]: false }));
+		}
+	};
+
 	if (loading) {
 		return (
 			<div className="flex items-center justify-center h-64">
@@ -260,20 +281,61 @@ export default function ScoreControl() {
 								{match.match_date} at {match.match_time}
 							</p>
 						</div>
-						<button
-							onClick={() => recalculate(match.id)}
-							disabled={recalculating[match.id]}
-							className="mt-auto w-full inline-flex items-center justify-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50 transition-colors"
-						>
-							{recalculating[match.id] ? (
-								<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600" />
-							) : (
-								<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-								</svg>
-							)}
-							{recalculating[match.id] ? 'Recalculating...' : 'Recalculate'}
-						</button>
+						<div className="mt-auto flex flex-col gap-2">
+							<button
+								onClick={() => validateCompute(match.id)}
+								disabled={validating[match.id]}
+								className="w-full inline-flex items-center justify-center gap-2 bg-amber-50 text-amber-700 border border-amber-200 px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-100 disabled:opacity-50 transition-colors"
+							>
+								{validating[match.id] ? (
+									<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-amber-600" />
+								) : (
+									<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+									</svg>
+								)}
+								{validating[match.id] ? 'Validating...' : 'Validate Compute'}
+							</button>
+							<button
+								onClick={() => recalculate(match.id)}
+								disabled={recalculating[match.id]}
+								className="w-full inline-flex items-center justify-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50 transition-colors"
+							>
+								{recalculating[match.id] ? (
+									<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600" />
+								) : (
+									<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+									</svg>
+								)}
+								{recalculating[match.id] ? 'Recalculating...' : 'Recalculate'}
+							</button>
+						</div>
+						{validateResult[match.id] && (
+							<div className={`mt-2 p-3 rounded-lg text-xs ${validateResult[match.id].safe_to_recompute ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+								<div className="flex items-center gap-2 mb-1">
+									<span className={`font-bold ${validateResult[match.id].safe_to_recompute ? 'text-green-700' : 'text-red-700'}`}>
+										{validateResult[match.id].safe_to_recompute ? 'Safe to recompute' : 'NOT SAFE — Data loss detected'}
+									</span>
+								</div>
+								<p className="text-gray-600">
+									Stored: {validateResult[match.id].stored_total} | Computed: {validateResult[match.id].computed_total} | Diff: {validateResult[match.id].total_diff}
+								</p>
+								<p className="text-gray-600">
+									ESPN fetched: {validateResult[match.id].espn_fetched ? 'Yes' : 'No'} | Dot balls in HTML: {validateResult[match.id].espn_has_dot_balls ? 'Yes' : 'No'}
+								</p>
+								{validateResult[match.id].dot_ball_players?.length > 0 && (
+									<details className="mt-2">
+										<summary className="cursor-pointer text-gray-500 hover:text-gray-700">Dot ball breakdown ({validateResult[match.id].dot_ball_players.length} bowlers)</summary>
+										<div className="mt-1 space-y-0.5">
+											{validateResult[match.id].dot_ball_players.map((p: any, i: number) => (
+												<div key={i} className="text-gray-600">{p.name}: {p.dot_balls} dots ({p.overs} ov, {p.wickets}w)</div>
+											))}
+										</div>
+									</details>
+								)}
+							</div>
+						)}
 					</div>
 					));
 				})()}
