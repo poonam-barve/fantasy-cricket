@@ -564,8 +564,32 @@ async def recalculate_match(
                     if refreshed_status == "completed":
                         tournament_ref.compute_player_points_for_match(match_id_str)
                         tournament_ref.compute_points_for_match(match_id_str)
-                        tournament_ref.persist_player_points_to_local()
-                        tournament_ref.persist_to_local()
+
+                        # Guard: if recomputed total is lower than stored total,
+                        # dot ball data was likely lost from the scorecard — abort persist.
+                        stored_total = 0
+                        stored_rows = db.execute(
+                            "SELECT SUM(points) FROM player_points WHERE match_id = ? AND points <> 0",
+                            (int(match_id_str),),
+                        ).fetchone()
+                        if stored_rows and stored_rows[0]:
+                            stored_total = float(stored_rows[0])
+
+                        new_total = 0
+                        new_pp = tournament_ref.player_points.get(int(match_id_str), {})
+                        if new_pp:
+                            new_total = sum(float(v) for v in new_pp.values())
+
+                        if stored_total > 0 and new_total < stored_total:
+                            print(
+                                f"[ADMIN] Recompute BLOCKED for match {match_id_str}: "
+                                f"new total ({new_total:.1f}) < stored total ({stored_total:.1f}). "
+                                f"Likely dot-ball data loss from scorecard."
+                            )
+                        else:
+                            tournament_ref.persist_player_points_to_local()
+                            tournament_ref.persist_to_local()
+
                         data_service.invalidate_match_player_payloads()
                         tournament_ref.warm_today_last_completed_team_xi_previews()
 
