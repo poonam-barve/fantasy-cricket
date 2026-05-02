@@ -506,8 +506,30 @@ export default function SelectTeamPage() {
       return;
     }
 
-    // Show prediction modal before saving
-    setShowPredictionModal(true);
+    setSubmitting(true);
+    try {
+      const payload: any = {
+        match_id: Number(matchId),
+        players: [...selected.values()],
+        backups: backups.filter((playerId) => !selectedIds.has(playerId)).slice(0, 3),
+      };
+      await client.post('/api/teams', payload);
+      toast('Team saved successfully!', 'success');
+
+      if (!hasExistingTeam && existingPrediction == null) {
+        // First save — show prediction modal (team is already saved)
+        setHasExistingTeam(true);
+        setShowPredictionModal(true);
+      } else {
+        // Subsequent save — go straight to preview
+        setShowPreview(true);
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.response?.data?.error || 'Failed to save team.';
+      toast(msg, 'error');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const doUpdatePredictionOnly = async (prediction: number) => {
@@ -524,32 +546,6 @@ export default function SelectTeamPage() {
     } catch (err: any) {
       const msg = err?.response?.data?.detail || 'Failed to update prediction.';
       toast(msg, 'error');
-    }
-  };
-
-  const doSaveTeam = async (prediction: number | null) => {
-    setShowPredictionModal(false);
-    setSubmitting(true);
-    try {
-      const payload: any = {
-        match_id: Number(matchId),
-        players: [...selected.values()],
-        backups: backups.filter((playerId) => !selectedIds.has(playerId)).slice(0, 3),
-      };
-      if (prediction !== null) {
-        payload.predicted_points = prediction;
-      }
-      await client.post('/api/teams', payload);
-      toast('Team saved successfully!', 'success');
-      if (prediction !== null) {
-        setExistingPrediction(prediction);
-      }
-      setShowPreview(true);
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || err?.response?.data?.error || 'Failed to save team.';
-      toast(msg, 'error');
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -1857,11 +1853,11 @@ export default function SelectTeamPage() {
               <button
                 type="button"
                 onClick={() => {
-                  if (editingPredictionOnly) {
-                    setShowPredictionModal(false);
-                    setEditingPredictionOnly(false);
-                  } else {
-                    doSaveTeam(null);
+                  setShowPredictionModal(false);
+                  setEditingPredictionOnly(false);
+                  if (!editingPredictionOnly) {
+                    // First-save flow: team already saved, skip prediction -> show preview
+                    setShowPreview(true);
                   }
                 }}
                 className="flex-1 rounded-xl border border-white/10 bg-white/[0.06] py-3 text-sm font-semibold text-white/70 transition hover:bg-white/[0.1]"
@@ -1877,15 +1873,15 @@ export default function SelectTeamPage() {
                     return;
                   }
                   const rounded = Math.round(val * 100) / 100;
-                  if (editingPredictionOnly) {
-                    doUpdatePredictionOnly(rounded);
-                  } else {
-                    doSaveTeam(rounded);
+                  doUpdatePredictionOnly(rounded);
+                  if (!editingPredictionOnly) {
+                    // First-save flow: team already saved, after prediction -> show preview
+                    setShowPreview(true);
                   }
                 }}
                 className="flex-1 rounded-xl bg-blue-500 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 transition hover:bg-blue-600"
               >
-                {editingPredictionOnly ? 'Update Prediction' : 'Confirm & Save'}
+                {editingPredictionOnly ? 'Update' : 'Save Prediction'}
               </button>
             </div>
           </div>
