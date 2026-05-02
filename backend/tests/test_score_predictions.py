@@ -158,6 +158,42 @@ def test_exact_prediction():
     print("  PASS: exact prediction ->+500")
 
 
+def test_near_exact_half_point():
+    """Predicted 500, actual 499.5 (diff=0.5) -> Perfect Strike +500."""
+    conn = setup_test_db()
+    seed_users(conn, 1)
+    seed_match(conn)
+    set_contestant_points(conn, 1, {1: 499.5})
+    set_predictions(conn, 1, {1: 500.0})
+    patch_db(conn)
+
+    from backend.services.data_service import compute_prediction_bonuses
+    bonuses = compute_prediction_bonuses(1)
+
+    assert 1 in bonuses, "User 1 should get Perfect Strike (diff=0.5)"
+    assert bonuses[1]["bonus"] == 500, f"Expected 500, got {bonuses[1]['bonus']}"
+    assert bonuses[1]["label"] == "Perfect Strike"
+    print("  PASS: diff=0.5 -> Perfect Strike +500")
+
+
+def test_just_over_half_point():
+    """Predicted 500, actual 499 (diff=1) -> NOT Perfect Strike, falls to tier 2."""
+    conn = setup_test_db()
+    seed_users(conn, 1)
+    seed_match(conn)
+    set_contestant_points(conn, 1, {1: 499.0})
+    set_predictions(conn, 1, {1: 500.0})
+    patch_db(conn)
+
+    from backend.services.data_service import compute_prediction_bonuses
+    bonuses = compute_prediction_bonuses(1)
+
+    assert 1 in bonuses, "User 1 should get Elite Precision (diff=1)"
+    assert bonuses[1]["bonus"] == 200, f"Expected 200, got {bonuses[1]['bonus']}"
+    assert bonuses[1]["label"] == "Elite Precision"
+    print("  PASS: diff=1 -> Elite Precision +200 (not Perfect Strike)")
+
+
 def test_within_5():
     """User predicts within ±5 ->+200."""
     conn = setup_test_db()
@@ -505,6 +541,8 @@ if __name__ == "__main__":
         test_save_and_read_prediction,
         test_get_match_predictions,
         test_exact_prediction,
+        test_near_exact_half_point,
+        test_just_over_half_point,
         test_within_5,
         test_within_10,
         test_no_bonus_outside_range,

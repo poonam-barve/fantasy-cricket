@@ -1064,7 +1064,7 @@ def save_player_points(rows: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 PREDICTION_BONUS_TIERS = [
-    {"label": "Perfect Strike", "max_diff": 0, "bonus": 500},
+    {"label": "Perfect Strike", "max_diff": 0.5, "bonus": 500},
     {"label": "Elite Precision", "max_diff": 5, "bonus": 200},
     {"label": "Great Call", "max_diff": 10, "bonus": 100},
 ]

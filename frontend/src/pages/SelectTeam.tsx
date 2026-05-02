@@ -1819,7 +1819,7 @@ export default function SelectTeamPage() {
               <div className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-[11px] text-white/60">
                 <div className="flex items-center gap-2">
                   <span className="text-amber-400">🎯</span>
-                  <span><span className="font-semibold text-amber-300">Perfect Strike +500</span> — Exact score</span>
+                  <span><span className="font-semibold text-amber-300">Perfect Strike +500</span> — Within ±0.5 pts</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-orange-400">🔥</span>
