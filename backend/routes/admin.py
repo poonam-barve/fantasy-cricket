@@ -706,10 +706,21 @@ async def view_teams(
     match = db.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
+    teams = _fetch_match_team_snapshots(db, match_id)
+    # Attach any score predictions for each user (if present)
+    try:
+        for t in teams:
+            try:
+                pred = data_service.get_score_prediction(int(t["user_id"]), match_id)
+            except Exception:
+                pred = None
+            t["predicted_points"] = pred
+    except Exception:
+        pass
 
     return {
         "match": dict(match),
-        "teams": _fetch_match_team_snapshots(db, match_id),
+        "teams": teams,
     }
 
 

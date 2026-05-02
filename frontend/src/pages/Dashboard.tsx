@@ -504,10 +504,10 @@ export default function DashboardPage() {
                 <p className="text-white/40 text-xs text-center mb-1">
                   {formatDate(match.match_date, match.match_time)}
                 </p>
-                {match.toss?.announced && (match.status === 'future' || match.status === 'lineups') && (
+                {(match.toss?.announced || match.toss_time) && (match.status === 'future' || match.status === 'lineups') && (
                   <p className="mb-2 text-center">
                     <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/20 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-300">
-                      {match.toss.text}
+                      {match.toss?.text ? match.toss.text : `Toss at ${match.toss_time || 'Unknown'}`}
                     </span>
                   </p>
                 )}
@@ -541,7 +541,7 @@ export default function DashboardPage() {
                     </span>
                   </p>
                 )}
-                {tab === 'today' && isTodayMatch(match) && match.status === 'future' && myTeams.has(match.id) && teamLineupInfo[match.id]?.lineupWindowOpen && (() => {
+                {tab === 'today' && isTodayMatch(match) && ['future', 'lineups'].includes(match.status) && myTeams.has(match.id) && teamLineupInfo[match.id]?.lineupWindowOpen && (() => {
                   const lineupMessage = getPlayingXiCardMessage(match.id);
                   if (!lineupMessage) return null;
 
