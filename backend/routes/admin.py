@@ -125,7 +125,9 @@ def _queue_tournament_match_refresh(
                         tournament_ref.update_match_data(
                             match_id_str,
                             use_playing_xi=True,
+                            include_scorecards=True,
                             force_refresh_playing_xi=True,
+                            apply_backups=True,
                         )
                         tournament_ref.compute_player_points_for_match(match_id_str)
                         tournament_ref.compute_points_for_match(match_id_str)
@@ -534,23 +536,38 @@ async def recalculate_match(
 
     def _run_recalculate():
         nonlocal refreshed_status
+        # Mirror scheduler's locking and cache acquisition so recompute runs
+        # the same code paths as live scoring.
         with ADMIN_REFRESH_LOCK:
             try:
                 _refresh_tournament_static_state()
                 tournament_ref.ensure_match_teams_loaded([match_id_str], force=True)
 
-                # Fetch scorecard first so final match status can be refreshed from Cricbuzz.
-                tournament_ref.update_match_data(match_id_str, use_playing_xi=True, force_refresh_playing_xi=True)
-                updated_match_row = tournament_ref.match_rows.get(match_id_str, {})
-                refreshed_status = tournament_ref.get_match_status(updated_match_row)
+                # Acquire the same scraper/score caches the scheduler uses
+                with acquire_cache_locks(
+                    "scraper_playing_xi",
+                    "scores_match_data",
+                    "scores_response",
+                    "leaderboard_response",
+                ):
+                    # Use the same update_match_data call as the live scheduler.
+                    tournament_ref.update_match_data(
+                        match_id_str,
+                        use_playing_xi=True,
+                        include_scorecards=True,
+                        force_refresh_playing_xi=True,
+                        apply_backups=True,
+                    )
+                    updated_match_row = tournament_ref.match_rows.get(match_id_str, {})
+                    refreshed_status = tournament_ref.get_match_status(updated_match_row)
 
-                if refreshed_status == "completed":
-                    tournament_ref.compute_player_points_for_match(match_id_str)
-                    tournament_ref.compute_points_for_match(match_id_str)
-                    tournament_ref.persist_player_points_to_local()
-                    tournament_ref.persist_to_local()
-                    data_service.invalidate_match_player_payloads()
-                    tournament_ref.warm_today_last_completed_team_xi_previews()
+                    if refreshed_status == "completed":
+                        tournament_ref.compute_player_points_for_match(match_id_str)
+                        tournament_ref.compute_points_for_match(match_id_str)
+                        tournament_ref.persist_player_points_to_local()
+                        tournament_ref.persist_to_local()
+                        data_service.invalidate_match_player_payloads()
+                        tournament_ref.warm_today_last_completed_team_xi_previews()
 
                 _refresh_admin_caches(tables={"matches"}, refresh_schedule_map=True, match_id=match_id)
             except Exception as exc:

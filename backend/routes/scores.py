@@ -358,33 +358,17 @@ def _build_completed_match_scores_payload(match_id: int, match_row, registry, pl
         db_pp_lookup[str(row["player_id"])] = float(row["points"])
         db_role_lookup[str(row["player_id"])] = row["role"]
 
-    cached_pp_lookup: dict[str, float] = {}
-    cached_role_lookup: dict[str, str] = {}
+    players = []
     if match_obj and getattr(match_obj, "players", None):
         for p in match_obj.players.values():
             pid_str = str(p.player_id)
             role = db_role_lookup.get(pid_str) or registry.players.get(p.player_id, {}).get("Role")
             if role:
-                cached_role_lookup[pid_str] = role
-            if role:
-                cached_pp_lookup[pid_str] = float(p.calculate_player_points(role))
-
-    use_db_points = bool(db_pp_lookup)
-    if match_obj and getattr(match_obj, "players", None):
-        match_player_count = len(match_obj.players)
-        if len(db_pp_lookup) < match_player_count:
-            use_db_points = False
-
-    points_source = db_pp_lookup if use_db_points else (cached_pp_lookup or db_pp_lookup)
-    if match_status == "live":
-        points_source = cached_pp_lookup
-
-    players = []
-    if match_obj and getattr(match_obj, "players", None):
-        for p in match_obj.players.values():
-            pid_str = str(p.player_id)
-            role = db_role_lookup.get(pid_str) or cached_role_lookup.get(pid_str) or registry.players.get(p.player_id, {}).get("Role")
-            calculated_points = float(points_source.get(pid_str, p.calculate_player_points(role) if role else 0))
+                calculated_points = float(p.calculate_player_points(role))
+                player_breakdown = p.get_points_breakdown()
+            else:
+                calculated_points = float(db_pp_lookup.get(pid_str, 0))
+                player_breakdown = []
             points = round(calculated_points, 2)
             players.append({
                 "player_id": int(p.player_id),
@@ -411,7 +395,7 @@ def _build_completed_match_scores_payload(match_id: int, match_row, registry, pl
                 "stumpings": getattr(p, "stumpings", 0),
                 "runout_indirect": getattr(p, "runout_indirect", 0),
                 "points": points,
-                "breakdown": p.get_points_breakdown() if role else [],
+                "breakdown": player_breakdown,
                 "owners": owners_by_player.get(int(p.player_id), []),
             })
     else:
@@ -1196,8 +1180,8 @@ def _load_match_and_points(db, match_id):
 
     match_status = _match_status_value(match_row)
     if match_status == "completed":
-        pp_lookup = db_pp_lookup or cached_pp_lookup
-        role_lookup = db_role_lookup or cached_role_lookup
+        pp_lookup = cached_pp_lookup or db_pp_lookup
+        role_lookup = cached_role_lookup or db_role_lookup
     elif match_status == "live":
         pp_lookup = cached_pp_lookup
         role_lookup = cached_role_lookup or db_role_lookup

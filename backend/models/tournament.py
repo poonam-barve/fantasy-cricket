@@ -277,6 +277,7 @@ class Tournament:
         include_scorecards=True,
         force_refresh_playing_xi=False,
         apply_backups=False,
+        reset_scorecard_players=False,
     ):
         match = self.matches.get(match_id)
         if not match:
@@ -338,7 +339,10 @@ class Tournament:
 
         cricbuzz_html = fetch_cricbuzz_scorecard_html(int(match_id), match.team1, match.team2)
         if cricbuzz_html:
-            match.parse_cricbuzz_scorecard_html(cricbuzz_html, reset_players=False)
+            # When doing admin recomputes we often want to fully reset player state
+            # so parsing uses the authoritative scorecard values. Allow callers
+            # to request resetting player state before parsing.
+            match.parse_cricbuzz_scorecard_html(cricbuzz_html, reset_players=bool(reset_scorecard_players))
 
         espn_html_text = fetch_scorecard_html(int(match_id), match.team1, match.team2)
         if espn_html_text:
@@ -494,6 +498,7 @@ class Tournament:
                     use_playing_xi=True,
                     include_scorecards=True,
                     force_refresh_playing_xi=True,
+                    apply_backups=True,
                 )
                 if finalized_from_scorecard:
                     processed += 1
