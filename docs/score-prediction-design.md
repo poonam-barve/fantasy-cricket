@@ -12,11 +12,12 @@ Users predict their fantasy team's total score when saving their team for a matc
 | Elite Precision | 🔥 | Within ±5 pts | +200 pts |
 | Great Call | ⚡ | Within ±10 pts | +100 pts |
 
-### Tiebreaker Rules
+### Award Rules
 
-- Within each tier, only the **closest** prediction wins the bonus.
-- If multiple users are **equally close** (same difference), **all tied users get the full bonus**.
-- A user can only win **one tier** (the highest they qualify for). Users who qualify for a higher tier are removed from lower-tier evaluation.
+- Tiers are evaluated **top-down** (exact first, then ±5, then ±10).
+- The **first tier that has any eligible user(s) wins** — no lower tiers are evaluated at all.
+- Within the winning tier, only the **closest** prediction gets the bonus.
+- If multiple users share the **same closest diff**, all of them receive the **full bonus**.
 
 ---
 
@@ -253,32 +254,40 @@ TIERS = [
 ]
 
 for each tier (evaluated top-down):
-    eligible = users in remaining pool whose diff <= tier.max_diff
-    if no eligible users → skip tier
+    eligible = all users whose diff <= tier.max_diff
+    if no eligible users: skip to next tier
 
+    # FIRST tier with eligible users WINS — stop here
     min_diff = smallest diff among eligible
     winners = all eligible users with diff == min_diff
-    → award full bonus to all winners
-
-    remove ALL eligible users from remaining pool
-    (not just winners — prevents double-awarding)
+    award full bonus to all winners
+    RETURN (no further tiers evaluated)
 ```
 
-**Example:**
+**Example 1 — Exact match exists:**
 
-| User | Predicted | Actual | Diff |
-|------|-----------|--------|------|
-| A | 350 | 350 | 0 |
-| B | 353 | 350 | 3 |
-| C | 354 | 350 | 4 |
-| D | 358 | 350 | 8 |
-| E | 370 | 350 | 20 |
+| User | Predicted | Actual | Diff | Result |
+|------|-----------|--------|------|--------|
+| A | 350 | 350 | 0 | +500 (exact, tier 1 wins, STOP) |
+| B | 353 | 350 | 3 | No bonus (tier 2 not evaluated) |
+| C | 354 | 350 | 4 | No bonus |
+| D | 358 | 350 | 8 | No bonus |
+| E | 370 | 350 | 20 | No bonus |
 
-**Result:**
-- Tier 1 (exact, ±0): A wins → **+500** (A removed from pool)
-- Tier 2 (±5): B (diff=3) and C (diff=4) eligible. Closest = B → **+200** (B and C removed)
-- Tier 3 (±10): D (diff=8) eligible. Closest = D → **+100** (D removed)
-- E (diff=20) → no bonus
+**Example 2 — No exact, tier 2 wins:**
+
+| User | Predicted | Actual | Diff | Result |
+|------|-----------|--------|------|--------|
+| A | 353 | 350 | 3 | +200 (closest in ±5, tier 2 wins, STOP) |
+| B | 354 | 350 | 4 | No bonus (not closest) |
+| C | 358 | 350 | 8 | No bonus (tier 3 not evaluated) |
+
+**Example 3 — Tie within winning tier:**
+
+| User | Predicted | Actual | Diff | Result |
+|------|-----------|--------|------|--------|
+| A | 353 | 350 | 3 | +200 (tied closest) |
+| B | 347 | 350 | 3 | +200 (tied closest, both get full bonus) |
 
 ---
 

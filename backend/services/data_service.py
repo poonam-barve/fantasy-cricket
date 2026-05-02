@@ -1139,33 +1139,26 @@ def compute_prediction_bonuses(match_id: int) -> dict[int, dict]:
     # Sort by diff ascending (closest first)
     user_diffs.sort(key=lambda x: x["diff"])
 
-    awarded: dict[int, dict] = {}
-    remaining_users = list(user_diffs)
-
+    # Evaluate tiers top-down. The FIRST tier that has eligible users wins
+    # — no lower tiers are evaluated. Within that tier, only the closest
+    # user(s) get the bonus. If multiple users share the same closest diff,
+    # all of them receive the full bonus.
     for tier in PREDICTION_BONUS_TIERS:
-        if not remaining_users:
-            break
-
-        # Find users within this tier
-        eligible = [u for u in remaining_users if u["diff"] <= tier["max_diff"]]
+        eligible = [u for u in user_diffs if u["diff"] <= tier["max_diff"]]
         if not eligible:
             continue
 
-        # Find the closest diff among eligible users
         min_diff = min(u["diff"] for u in eligible)
         winners = [u for u in eligible if u["diff"] == min_diff]
 
-        # All tied winners get the full bonus
-        for winner in winners:
-            awarded[winner["user_id"]] = {
+        return {
+            winner["user_id"]: {
                 "bonus": tier["bonus"],
                 "label": tier["label"],
                 "diff": winner["diff"],
                 "predicted": winner["predicted"],
             }
+            for winner in winners
+        }
 
-        # Remove all eligible users (not just winners) from remaining pool
-        eligible_ids = {u["user_id"] for u in eligible}
-        remaining_users = [u for u in remaining_users if u["user_id"] not in eligible_ids]
-
-    return awarded
+    return {}

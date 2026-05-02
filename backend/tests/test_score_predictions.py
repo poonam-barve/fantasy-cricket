@@ -211,11 +211,11 @@ def test_no_bonus_outside_range():
 
 
 def test_tier_priority():
-    """Higher tier wins; lower tiers evaluated among remaining users.
+    """First tier with eligible users wins - no lower tiers evaluated.
 
-    User A: exact (diff=0) ->+500
-    User B: diff=3 ->+200 (closest in ±5 tier after A removed)
-    User C: diff=8 ->+100 (closest in ±10 tier after A,B removed)
+    User A: exact (diff=0) -> +500 (tier 1 wins, stop)
+    User B: diff=3 -> no bonus (tier 2 not evaluated)
+    User C: diff=8 -> no bonus (tier 3 not evaluated)
     """
     conn = setup_test_db()
     seed_users(conn, 3)
@@ -228,9 +228,9 @@ def test_tier_priority():
     bonuses = compute_prediction_bonuses(1)
 
     assert bonuses[1]["bonus"] == 500, f"User1: expected 500, got {bonuses[1]['bonus']}"
-    assert bonuses[2]["bonus"] == 200, f"User2: expected 200, got {bonuses[2]['bonus']}"
-    assert bonuses[3]["bonus"] == 100, f"User3: expected 100, got {bonuses[3]['bonus']}"
-    print("  PASS: tier priority (500 > 200 > 100)")
+    assert 2 not in bonuses, "User2 should NOT get bonus (tier 1 already awarded)"
+    assert 3 not in bonuses, "User3 should NOT get bonus (tier 1 already awarded)"
+    print("  PASS: tier priority - first tier wins, rest skipped")
 
 
 def test_tie_same_diff_get_full_bonus():
@@ -383,13 +383,13 @@ def test_boundary_just_over_10():
 
 
 def test_full_scenario():
-    """Full 5-user scenario matching the doc example.
+    """Full 5-user scenario. Tier 1 (exact) has a winner -> only that user gets bonus.
 
-    User A: predicted=350, actual=350, diff=0 ->+500
-    User B: predicted=353, actual=350, diff=3 ->+200 (closest in ±5)
-    User C: predicted=354, actual=350, diff=4 ->no bonus (removed with B in ±5 tier)
-    User D: predicted=358, actual=350, diff=8 ->+100 (closest in ±10)
-    User E: predicted=370, actual=350, diff=20 ->no bonus
+    User A: predicted=350, actual=350, diff=0 -> +500 (exact, tier 1 wins, STOP)
+    User B: predicted=353, actual=350, diff=3 -> no bonus (tier 2 not evaluated)
+    User C: predicted=354, actual=350, diff=4 -> no bonus
+    User D: predicted=358, actual=350, diff=8 -> no bonus
+    User E: predicted=370, actual=350, diff=20 -> no bonus
     """
     conn = setup_test_db()
     seed_users(conn, 5)
@@ -402,11 +402,55 @@ def test_full_scenario():
     bonuses = compute_prediction_bonuses(1)
 
     assert bonuses[1]["bonus"] == 500, f"User A: expected 500, got {bonuses[1]['bonus']}"
-    assert bonuses[2]["bonus"] == 200, f"User B: expected 200, got {bonuses[2]['bonus']}"
-    assert 3 not in bonuses, "User C: should NOT get bonus (removed in ±5 tier)"
-    assert bonuses[4]["bonus"] == 100, f"User D: expected 100, got {bonuses[4]['bonus']}"
+    assert 2 not in bonuses, "User B: should NOT get bonus (tier 1 already awarded)"
+    assert 3 not in bonuses, "User C: should NOT get bonus"
+    assert 4 not in bonuses, "User D: should NOT get bonus"
     assert 5 not in bonuses, "User E: should NOT get bonus (diff=20)"
-    print("  PASS: full 5-user scenario matches doc example")
+    print("  PASS: full scenario - exact match wins, all others skipped")
+
+
+def test_tier2_wins_when_no_exact():
+    """No exact match -> tier 2 (+-5) evaluated. Closest wins, rest get nothing.
+
+    User A: diff=3 -> +200 (closest in +-5, tier 2 wins, STOP)
+    User B: diff=4 -> no bonus (not closest)
+    User C: diff=8 -> no bonus (tier 3 not evaluated)
+    """
+    conn = setup_test_db()
+    seed_users(conn, 3)
+    seed_match(conn)
+    set_contestant_points(conn, 1, {1: 350.0, 2: 350.0, 3: 350.0})
+    set_predictions(conn, 1, {1: 353.0, 2: 354.0, 3: 358.0})
+    patch_db(conn)
+
+    from backend.services.data_service import compute_prediction_bonuses
+    bonuses = compute_prediction_bonuses(1)
+
+    assert bonuses[1]["bonus"] == 200, f"User A: expected 200, got {bonuses[1]['bonus']}"
+    assert 2 not in bonuses, "User B: should NOT get bonus (not closest in tier 2)"
+    assert 3 not in bonuses, "User C: should NOT get bonus (tier 3 not evaluated)"
+    print("  PASS: tier 2 wins when no exact, lower tiers skipped")
+
+
+def test_tier3_wins_when_no_higher():
+    """No one within +-5 -> tier 3 (+-10) evaluated.
+
+    User A: diff=8 -> +100 (tier 3 wins)
+    User B: diff=20 -> no bonus
+    """
+    conn = setup_test_db()
+    seed_users(conn, 2)
+    seed_match(conn)
+    set_contestant_points(conn, 1, {1: 350.0, 2: 350.0})
+    set_predictions(conn, 1, {1: 358.0, 2: 370.0})
+    patch_db(conn)
+
+    from backend.services.data_service import compute_prediction_bonuses
+    bonuses = compute_prediction_bonuses(1)
+
+    assert bonuses[1]["bonus"] == 100, f"User A: expected 100, got {bonuses[1]['bonus']}"
+    assert 2 not in bonuses, "User B: should NOT get bonus (diff=20)"
+    print("  PASS: tier 3 wins when no higher tier matches")
 
 
 def test_save_and_read_prediction():
@@ -475,6 +519,8 @@ if __name__ == "__main__":
         test_boundary_exactly_10,
         test_boundary_just_over_10,
         test_full_scenario,
+        test_tier2_wins_when_no_exact,
+        test_tier3_wins_when_no_higher,
     ]
 
     print(f"\nRunning {len(tests)} prediction tests...\n")
