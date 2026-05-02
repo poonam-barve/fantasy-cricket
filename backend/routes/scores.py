@@ -177,11 +177,14 @@ def _persist_scores_snapshot_to_db(snapshot: dict[int, dict], match_ids: set[int
                         f"skipping contestant row without user id for match={match_id}: {contestant}"
                     )
                     continue
+                # Store raw points WITHOUT prediction bonus so that
+                # compute_prediction_bonuses reads the correct base value.
+                raw_points = float(contestant.get("points", 0) or 0) - float(contestant.get("prediction_bonus", 0) or 0)
                 contestant_rows.append({
                     "UserID": int(contestant_user_id),
                     "User": contestant.get("name", ""),
                     "MatchID": int(match_id),
-                    "Points": float(contestant.get("points", 0) or 0),
+                    "Points": round(raw_points, 2),
                     "LastUpdated": now_str,
                 })
 
