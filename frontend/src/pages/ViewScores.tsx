@@ -834,20 +834,28 @@ export default function ViewScoresPage() {
                               : <span className="text-white/40 text-sm font-medium">{c.rank}</span>}
                           </div>
                           <div className="ml-3 min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-white font-medium text-sm">{c.name}</span>
                               {isCurrentUser && (
                                 <span className="inline-flex items-center rounded-full bg-amber-400/20 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
                                   You
                                 </span>
                               )}
+                              {c.prediction_label && (
+                                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                  c.prediction_bonus != null && c.prediction_bonus >= 500
+                                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/25'
+                                    : c.prediction_bonus != null && c.prediction_bonus >= 200
+                                    ? 'bg-orange-500/15 text-orange-300 border border-orange-500/25'
+                                    : 'bg-blue-500/15 text-blue-300 border border-blue-500/25'
+                                }`}>
+                                  🎯 {c.prediction_label}
+                                </span>
+                              )}
                             </div>
                             {c.predicted_points != null && (
                               <p className="text-[10px] text-white/35 mt-0.5">
                                 Predicted: {c.predicted_points} pts
-                                {c.prediction_label && (
-                                  <span className="ml-1.5 text-amber-300/70">— {c.prediction_label}</span>
-                                )}
                               </p>
                             )}
                           </div>
