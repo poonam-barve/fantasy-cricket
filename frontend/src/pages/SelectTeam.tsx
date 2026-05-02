@@ -182,6 +182,11 @@ export default function SelectTeamPage() {
   const [showBackupPanel, setShowBackupPanel] = useState(false);
   const [showPlayerSearch, setShowPlayerSearch] = useState(false);
   const [playerSearch, setPlayerSearch] = useState('');
+  const [showPredictionModal, setShowPredictionModal] = useState(false);
+  const [predictedPoints, setPredictedPoints] = useState<string>('');
+  const [existingPrediction, setExistingPrediction] = useState<number | null>(null);
+  const [editingPredictionOnly, setEditingPredictionOnly] = useState(false);
+  const [hasExistingTeam, setHasExistingTeam] = useState(false);
   const [openHistoryPlayerId, setOpenHistoryPlayerId] = useState<number | null>(null);
   const [lastMatchXi, setLastMatchXi] = useState<Record<string, LastMatchXiTeam>>({});
   const touchStartXRef = useRef<number | null>(null);
@@ -229,8 +234,9 @@ export default function SelectTeamPage() {
         setTossInfo(data.toss || null);
         setLastMatchXi(data.last_match_xi || {});
 
-        const existing: TeamSelection[] = teamRes.data || [];
-        if (existing.length > 0) {
+        const teamData = teamRes.data || {};
+        const existing: TeamSelection[] = teamData.team || teamData || [];
+        if (Array.isArray(existing) && existing.length > 0) {
           const map = new Map<number, SelectedPlayer>();
           existing.forEach((t) => {
             map.set(t.player_id, {
@@ -240,6 +246,11 @@ export default function SelectTeamPage() {
             });
           });
           setSelected(map);
+          setHasExistingTeam(true);
+        }
+        if (teamData.predicted_points != null) {
+          setExistingPrediction(teamData.predicted_points);
+          setPredictedPoints(String(teamData.predicted_points));
         }
         const existingBackups: TeamBackup[] = (backupsRes as any).data || [];
         setBackupDetails(existingBackups);
@@ -495,15 +506,44 @@ export default function SelectTeamPage() {
       return;
     }
 
+    // Show prediction modal before saving
+    setShowPredictionModal(true);
+  };
+
+  const doUpdatePredictionOnly = async (prediction: number) => {
+    setShowPredictionModal(false);
+    setEditingPredictionOnly(false);
+    try {
+      await client.patch('/api/teams/prediction', {
+        match_id: Number(matchId),
+        predicted_points: prediction,
+      });
+      setExistingPrediction(prediction);
+      setPredictedPoints(String(prediction));
+      toast('Prediction updated!', 'success');
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || 'Failed to update prediction.';
+      toast(msg, 'error');
+    }
+  };
+
+  const doSaveTeam = async (prediction: number | null) => {
+    setShowPredictionModal(false);
     setSubmitting(true);
     try {
-      const payload = {
+      const payload: any = {
         match_id: Number(matchId),
         players: [...selected.values()],
         backups: backups.filter((playerId) => !selectedIds.has(playerId)).slice(0, 3),
       };
+      if (prediction !== null) {
+        payload.predicted_points = prediction;
+      }
       await client.post('/api/teams', payload);
       toast('Team saved successfully!', 'success');
+      if (prediction !== null) {
+        setExistingPrediction(prediction);
+      }
       setShowPreview(true);
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.response?.data?.error || 'Failed to save team.';
@@ -1692,6 +1732,42 @@ export default function SelectTeamPage() {
 
       {/* Sticky submit bar */}
       <div className="fixed bottom-0 left-0 right-0 z-30 bg-black/95 border-t border-white/10 md:bg-black/90 md:backdrop-blur-lg">
+        {(existingPrediction != null || hasExistingTeam) && (
+          <div className="max-w-3xl mx-auto px-4 pt-2.5 pb-0">
+            <button
+              type="button"
+              onClick={() => {
+                setEditingPredictionOnly(true);
+                setShowPredictionModal(true);
+              }}
+              className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition ${
+                existingPrediction != null
+                  ? 'border-amber-500/20 bg-amber-500/[0.06] hover:bg-amber-500/[0.1]'
+                  : 'border-blue-500/20 bg-blue-500/[0.06] hover:bg-blue-500/[0.1]'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-sm">🎯</span>
+                {existingPrediction != null ? (
+                  <span className="text-xs font-medium text-amber-200/80 truncate">
+                    Prediction: <span className="font-bold text-amber-300">{existingPrediction} pts</span>
+                  </span>
+                ) : (
+                  <span className="text-xs font-medium text-blue-200/80">
+                    Predict your team's total score for bonus points!
+                  </span>
+                )}
+              </div>
+              <span className={`flex-shrink-0 rounded-lg border px-2 py-1 text-[10px] font-semibold ${
+                existingPrediction != null
+                  ? 'border-amber-500/25 bg-amber-500/10 text-amber-300'
+                  : 'border-blue-500/25 bg-blue-500/10 text-blue-300'
+              }`}>
+                {existingPrediction != null ? 'Edit' : 'Add'}
+              </span>
+            </button>
+          </div>
+        )}
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="text-sm min-w-0">
             <span className={`font-bold ${selectedCount === 11 ? 'text-blue-400' : 'text-white/70'}`}>
@@ -1728,6 +1804,93 @@ export default function SelectTeamPage() {
           </button>
         </div>
       </div>
+
+      {/* Prediction Modal — before save */}
+      {showPredictionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 md:bg-black/70 md:backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl bg-gradient-to-b from-gray-900 to-black border border-white/10 shadow-2xl overflow-hidden">
+            <div className="px-6 pt-6 pb-4 text-center">
+              <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-amber-500/15 border border-amber-500/25 mb-3">
+                <span className="text-2xl">🎯</span>
+              </div>
+              <h3 className="text-lg font-bold text-white">Predict Your Score</h3>
+              <p className="mt-1 text-xs text-white/50">
+                How many total points will your team score?
+              </p>
+            </div>
+
+            <div className="px-6 pb-3">
+              <div className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-[11px] text-white/60">
+                <div className="flex items-center gap-2">
+                  <span className="text-amber-400">🎯</span>
+                  <span><span className="font-semibold text-amber-300">Perfect Strike +500</span> — Exact score</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-orange-400">🔥</span>
+                  <span><span className="font-semibold text-orange-300">Elite Precision +200</span> — Within ±5 pts</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-blue-400">⚡</span>
+                  <span><span className="font-semibold text-blue-300">Great Call +100</span> — Within ±10 pts</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 pb-4">
+              <label className="block text-xs font-medium text-white/50 mb-2">Your Prediction</label>
+              <input
+                type="number"
+                value={predictedPoints}
+                onChange={(e) => setPredictedPoints(e.target.value)}
+                placeholder={existingPrediction != null ? `Current: ${existingPrediction}` : 'e.g. 350'}
+                autoFocus
+                className="w-full rounded-xl border border-white/15 bg-white/[0.06] px-4 py-3 text-center text-lg font-bold text-white placeholder:text-white/25 focus:border-blue-500/50 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
+              />
+              {existingPrediction != null && (
+                <p className="mt-1.5 text-center text-[10px] text-white/40">
+                  Previous prediction: {existingPrediction} pts
+                </p>
+              )}
+            </div>
+
+            <div className="flex gap-3 px-6 pb-6">
+              <button
+                type="button"
+                onClick={() => {
+                  if (editingPredictionOnly) {
+                    setShowPredictionModal(false);
+                    setEditingPredictionOnly(false);
+                  } else {
+                    doSaveTeam(null);
+                  }
+                }}
+                className="flex-1 rounded-xl border border-white/10 bg-white/[0.06] py-3 text-sm font-semibold text-white/70 transition hover:bg-white/[0.1]"
+              >
+                {editingPredictionOnly ? 'Cancel' : 'Skip'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const val = parseFloat(predictedPoints);
+                  if (predictedPoints.trim() === '' || isNaN(val) || val < 0) {
+                    toast('Enter a valid prediction (0 or higher).', 'error');
+                    return;
+                  }
+                  const rounded = Math.round(val * 100) / 100;
+                  if (editingPredictionOnly) {
+                    doUpdatePredictionOnly(rounded);
+                  } else {
+                    doSaveTeam(rounded);
+                  }
+                }}
+                className="flex-1 rounded-xl bg-blue-500 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 transition hover:bg-blue-600"
+              >
+                {editingPredictionOnly ? 'Update Prediction' : 'Confirm & Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Team Preview Modal — after save */}
       {showPreview && (

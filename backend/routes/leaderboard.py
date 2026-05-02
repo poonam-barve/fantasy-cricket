@@ -9,6 +9,7 @@ from collections import defaultdict
 from backend.config import IST, get_current_datetime
 from backend.middleware.auth import get_current_user
 from backend.database import get_db
+from backend.services import data_service
 from backend.services.double_buffer_cache import DoubleBufferCache
 
 ENTRY_FEE = 50
@@ -205,6 +206,21 @@ def _load_effective_match_points(db) -> dict[int, list[dict]]:
                 "participated": False,
             })
 
+        # Add prediction bonuses to per-match points (affects match rankings & medals)
+        try:
+            bonuses = data_service.compute_prediction_bonuses(match_id)
+            for entry in normalized:
+                uid = entry["user_id"]
+                bonus_info = bonuses.get(uid)
+                if bonus_info:
+                    entry["points"] = round(entry["points"] + bonus_info["bonus"], 2)
+                    entry["prediction_bonus"] = bonus_info["bonus"]
+                    entry["prediction_label"] = bonus_info["label"]
+                else:
+                    entry["prediction_bonus"] = 0
+        except Exception:
+            pass
+
         normalized.sort(key=lambda item: (-item["points"], item["name"]))
         effective[match_id] = normalized
 
@@ -356,9 +372,11 @@ def _build_leaderboard(db, effective_match_points: dict[int, list[dict]] | None 
         effective_match_points = _load_effective_match_points(db)
     balances, _ = _calculate_balances(db, effective_match_points)
     totals_by_user = defaultdict(float)
+    prediction_bonus_totals: dict[int, float] = defaultdict(float)
     for contestants in effective_match_points.values():
         for contestant in contestants:
             totals_by_user[contestant["user_id"]] += float(contestant["points"])
+            prediction_bonus_totals[contestant["user_id"]] += float(contestant.get("prediction_bonus", 0))
 
     medals_by_user = _compute_medals(effective_match_points)
 
@@ -404,6 +422,7 @@ def _build_leaderboard(db, effective_match_points: dict[int, list[dict]] | None 
             "name": row["name"],
             "user_id": uid,
             "points": pts,
+            "prediction_bonus": round(prediction_bonus_totals.get(uid, 0), 2),
             "rank_change": current_rank_change.get(uid) if current_rank_change else None,
             "gold": user_medals["gold"],
             "silver": user_medals["silver"],

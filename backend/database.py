@@ -424,6 +424,7 @@ def _ensure_indexes_sqlite(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_team_backups_user_match ON team_backups(user_id, match_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_team_backups_match ON team_backups(match_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_score_predictions_match ON score_predictions(match_id)")
 
 
 def _ensure_matches_metadata_postgres(cursor):
@@ -579,6 +580,17 @@ def init_db():
         """)
         _ensure_weekend_tournaments_flexible_postgres(cursor)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS score_predictions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                match_id INTEGER NOT NULL REFERENCES matches(id),
+                predicted_points REAL NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(user_id, match_id)
+            )
+        """)
+
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_user_match ON user_teams(user_id, match_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_match ON user_teams(match_id)")
@@ -590,6 +602,7 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_team_backups_user_match ON team_backups(user_id, match_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_team_backups_match ON team_backups(match_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_score_predictions_match ON score_predictions(match_id)")
 
         conn.commit()
         conn.close()
@@ -714,6 +727,14 @@ def init_db():
                 winner_user_id INTEGER REFERENCES users(id),
                 status TEXT NOT NULL DEFAULT 'pending',
                 UNIQUE(tournament_id, round, match_position)
+            );
+            CREATE TABLE IF NOT EXISTS score_predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                match_id INTEGER NOT NULL REFERENCES matches(id),
+                predicted_points REAL NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(user_id, match_id)
             );
         """)
         _ensure_user_teams_updated_at_sqlite(conn)

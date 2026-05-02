@@ -842,10 +842,27 @@ export default function ViewScoresPage() {
                                 </span>
                               )}
                             </div>
+                            {c.predicted_points != null && (
+                              <p className="text-[10px] text-white/35 mt-0.5">
+                                Predicted: {c.predicted_points} pts
+                                {c.prediction_label && (
+                                  <span className="ml-1.5 text-amber-300/70">— {c.prediction_label}</span>
+                                )}
+                              </p>
+                            )}
                           </div>
                           <div className="ml-3 flex shrink-0 items-center gap-1.5">
                             <RankShiftBadge delta={contestantRankChanges[c.id] ?? undefined} compact />
                             <span className="text-blue-400 font-bold text-sm whitespace-nowrap">{c.points} pts</span>
+                            {(c.prediction_bonus != null && c.prediction_bonus > 0) && (
+                              <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                                c.prediction_bonus >= 500 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                  : c.prediction_bonus >= 200 ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30'
+                                  : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                              }`}>
+                                🎯+{c.prediction_bonus}
+                              </span>
+                            )}
                           </div>
                           <span className={`ml-3 text-[10px] text-white/40 transition-transform ${isSelected ? 'rotate-90' : ''}`}>&#9654;</span>
                         </button>

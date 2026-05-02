@@ -1057,3 +1057,115 @@ def save_player_points(rows: list[dict]) -> None:
         )
 
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Score Predictions
+# ---------------------------------------------------------------------------
+
+PREDICTION_BONUS_TIERS = [
+    {"label": "Perfect Strike", "max_diff": 0, "bonus": 500},
+    {"label": "Elite Precision", "max_diff": 5, "bonus": 200},
+    {"label": "Great Call", "max_diff": 10, "bonus": 100},
+]
+
+
+def save_score_prediction(user_id: int, match_id: int, predicted_points: float) -> None:
+    db = get_db()
+    created_at = get_current_datetime().strftime("%Y-%m-%d %H:%M:%S")
+    db.execute(
+        """
+        INSERT INTO score_predictions (user_id, match_id, predicted_points, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id, match_id) DO UPDATE SET
+            predicted_points = excluded.predicted_points,
+            created_at = excluded.created_at
+        """,
+        (user_id, match_id, predicted_points, created_at),
+    )
+    db.commit()
+
+
+def get_score_prediction(user_id: int, match_id: int) -> float | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT predicted_points FROM score_predictions WHERE user_id = ? AND match_id = ?",
+        (user_id, match_id),
+    ).fetchone()
+    return float(row["predicted_points"]) if row else None
+
+
+def get_match_predictions(match_id: int) -> dict[int, float]:
+    """Return {user_id: predicted_points} for all predictions on a match."""
+    db = get_db()
+    rows = db.execute(
+        "SELECT user_id, predicted_points FROM score_predictions WHERE match_id = ?",
+        (match_id,),
+    ).fetchall()
+    return {int(r["user_id"]): float(r["predicted_points"]) for r in rows}
+
+
+def compute_prediction_bonuses(match_id: int) -> dict[int, dict]:
+    """Compute prediction bonuses for a completed match.
+
+    Returns {user_id: {"bonus": float, "label": str, "diff": float, "predicted": float}}
+    """
+    predictions = get_match_predictions(match_id)
+    if not predictions:
+        return {}
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT user_id, points FROM contestant_points WHERE match_id = ?",
+        (match_id,),
+    ).fetchall()
+    actual_points = {int(r["user_id"]): float(r["points"]) for r in rows}
+
+    if not actual_points:
+        return {}
+
+    # Build list of (user_id, diff, predicted) for users who both predicted and participated
+    user_diffs = []
+    for user_id, predicted in predictions.items():
+        actual = actual_points.get(user_id)
+        if actual is None:
+            continue
+        diff = abs(predicted - actual)
+        user_diffs.append({"user_id": user_id, "diff": diff, "predicted": predicted})
+
+    if not user_diffs:
+        return {}
+
+    # Sort by diff ascending (closest first)
+    user_diffs.sort(key=lambda x: x["diff"])
+
+    awarded: dict[int, dict] = {}
+    remaining_users = list(user_diffs)
+
+    for tier in PREDICTION_BONUS_TIERS:
+        if not remaining_users:
+            break
+
+        # Find users within this tier
+        eligible = [u for u in remaining_users if u["diff"] <= tier["max_diff"]]
+        if not eligible:
+            continue
+
+        # Find the closest diff among eligible users
+        min_diff = min(u["diff"] for u in eligible)
+        winners = [u for u in eligible if u["diff"] == min_diff]
+
+        # All tied winners get the full bonus
+        for winner in winners:
+            awarded[winner["user_id"]] = {
+                "bonus": tier["bonus"],
+                "label": tier["label"],
+                "diff": winner["diff"],
+                "predicted": winner["predicted"],
+            }
+
+        # Remove all eligible users (not just winners) from remaining pool
+        eligible_ids = {u["user_id"] for u in eligible}
+        remaining_users = [u for u in remaining_users if u["user_id"] not in eligible_ids]
+
+    return awarded

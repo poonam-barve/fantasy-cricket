@@ -126,6 +126,9 @@ export type ContestantScore = {
   name: string;
   points: number;
   rank?: number;
+  predicted_points?: number | null;
+  prediction_bonus?: number | null;
+  prediction_label?: string | null;
 };
 
 export type LeaderboardEntry = {

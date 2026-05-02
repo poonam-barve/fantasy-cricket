@@ -21,6 +21,7 @@ class SubmitTeamBody(BaseModel):
     match_id: int
     players: List[PlayerSelection]
     backups: List[int] = []
+    predicted_points: float | None = None
 
 
 def get_now():
@@ -78,7 +79,9 @@ async def my_team(
         (user["id"], match_id),
     ).fetchall()
 
-    return [dict(row) for row in rows]
+    team = [dict(row) for row in rows]
+    predicted = data_service.get_score_prediction(user["id"], match_id)
+    return {"team": team, "predicted_points": predicted}
 
 
 @router.get("/my-backups")
@@ -319,7 +322,35 @@ async def submit_team(
     data_service.save_user_backups(user["id"], body.match_id, normalized_backups)
     data_service.prune_user_backups(user["id"], body.match_id, player_ids)
 
+    if body.predicted_points is not None:
+        data_service.save_score_prediction(user["id"], body.match_id, body.predicted_points)
+
     return {"success": True}
+
+
+class UpdatePredictionBody(BaseModel):
+    match_id: int
+    predicted_points: float
+
+
+@router.patch("/prediction")
+async def update_prediction(
+    body: UpdatePredictionBody,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+
+    match = db.execute(
+        "SELECT * FROM matches WHERE id = ?", (body.match_id,)
+    ).fetchone()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    if is_match_locked(match["match_date"], match["match_time"]):
+        raise HTTPException(status_code=400, detail="Match is locked, prediction cannot be changed")
+
+    data_service.save_score_prediction(user["id"], body.match_id, body.predicted_points)
+    return {"success": True, "predicted_points": body.predicted_points}
 
 
 @router.get("/contestants")
