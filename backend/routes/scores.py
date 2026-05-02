@@ -362,6 +362,11 @@ def _build_completed_match_scores_payload(match_id: int, match_row, registry, pl
         db_pp_lookup[str(row["player_id"])] = float(row["points"])
         db_role_lookup[str(row["player_id"])] = row["role"]
 
+    # For completed matches, stored player_points are authoritative (they were
+    # captured when dot-ball data was still available from the API). Only fall
+    # back to re-calculation if no stored points exist.
+    has_stored_pp = any(v != 0 for v in db_pp_lookup.values())
+
     players = []
     if match_obj and getattr(match_obj, "players", None):
         for p in match_obj.players.values():
@@ -373,7 +378,11 @@ def _build_completed_match_scores_payload(match_id: int, match_row, registry, pl
             else:
                 calculated_points = float(db_pp_lookup.get(pid_str, 0))
                 player_breakdown = []
-            points = round(calculated_points, 2)
+            # Prefer stored points if available — recalculation may lose dot balls
+            if has_stored_pp and pid_str in db_pp_lookup:
+                points = round(float(db_pp_lookup[pid_str]), 2)
+            else:
+                points = round(calculated_points, 2)
             players.append({
                 "player_id": int(p.player_id),
                 "name": p.name,
