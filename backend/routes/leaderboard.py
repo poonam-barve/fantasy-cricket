@@ -380,7 +380,8 @@ def _build_leaderboard(db, effective_match_points: dict[int, list[dict]] | None 
 
     medals_by_user = _compute_medals(effective_match_points)
 
-    # Weekend battle wins
+    # Weekend battle wins — each win awards +200 bonus points
+    WEEKEND_WIN_BONUS = 200
     weekend_wins: dict[int, int] = {}
     try:
         wt_rows = db.execute(
@@ -388,6 +389,7 @@ def _build_leaderboard(db, effective_match_points: dict[int, list[dict]] | None 
         ).fetchall()
         for r in wt_rows:
             weekend_wins[r["winner_user_id"]] = r["wins"]
+            totals_by_user[r["winner_user_id"]] += r["wins"] * WEEKEND_WIN_BONUS
     except Exception:
         pass
 
