@@ -136,6 +136,7 @@ export type LeaderboardEntry = {
   name: string;
   user_id: number;
   points: number;
+  prediction_bonus: number;
   rank_change?: number | null;
   gold: number;
   silver: number;

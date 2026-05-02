@@ -160,6 +160,16 @@ def _attach_user_match_ranks(payload: list[dict], user_id: int) -> list[dict]:
         })
 
     for match_id, contestants in match_points.items():
+        # Include prediction bonuses so card rank matches scores page rank
+        try:
+            bonuses = data_service.compute_prediction_bonuses(match_id)
+            for contestant in contestants:
+                bonus_info = bonuses.get(contestant["user_id"])
+                if bonus_info:
+                    contestant["points"] = round(contestant["points"] + bonus_info["bonus"], 2)
+        except Exception:
+            pass
+
         sorted_contestants = sorted(
             contestants,
             key=lambda item: (-item["points"], item["name"]),

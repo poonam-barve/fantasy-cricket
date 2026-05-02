@@ -5,7 +5,7 @@ import { useAuth } from '../auth/AuthContext';
 import type { LeaderboardEntry } from '../types';
 import RankShiftBadge from '../components/RankShiftBadge';
 
-type SortKey = 'points' | 'gold' | 'silver' | 'bronze' | 'total' | 'weekend_wins' | 'balance';
+type SortKey = 'points' | 'prediction_bonus' | 'gold' | 'silver' | 'bronze' | 'total' | 'weekend_wins' | 'balance';
 type SortDir = 'asc' | 'desc';
 
 function totalMedals(e: LeaderboardEntry) {
@@ -196,6 +196,7 @@ export default function LeaderboardPage() {
               <div className="w-6 sm:w-8 text-center">#</div>
               <div className="flex-1 ml-1 sm:ml-2">Player</div>
               {colHeader('points', <span>Pts</span>, 'w-14 sm:w-20')}
+              {colHeader('prediction_bonus', <span title="Prediction Bonus">PB</span>, 'w-8 sm:w-10')}
               {colHeader('gold', <span>&#x1F947;</span>, 'w-6 sm:w-8')}
               {colHeader('silver', <span>&#x1F948;</span>, 'w-6 sm:w-8')}
               {colHeader('bronze', <span>&#x1F949;</span>, 'w-6 sm:w-8')}
@@ -227,6 +228,11 @@ export default function LeaderboardPage() {
                         <RankShiftBadge delta={entry.rank_change} compact />
                         <span className="text-blue-400 text-xs sm:text-sm font-semibold">{entry.points}</span>
                       </div>
+                    </div>
+                    <div className="w-8 sm:w-10 text-center">
+                      <span className={`text-[10px] sm:text-xs font-semibold ${entry.prediction_bonus ? 'text-emerald-400' : 'text-white/15'}`}>
+                        {entry.prediction_bonus ? `+${entry.prediction_bonus}` : '-'}
+                      </span>
                     </div>
                     <div className="w-6 sm:w-8 text-center">
                       <span className={`text-[10px] sm:text-xs font-semibold ${entry.gold ? 'text-amber-400' : 'text-white/15'}`}>{entry.gold || '-'}</span>
