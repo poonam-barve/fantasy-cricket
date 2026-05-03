@@ -931,7 +931,19 @@ def _log_active_player_count(match_id: int, match_obj):
         print(f"[ALERT] Match {match_id}: active scoring player count is {active_count} (expected 22 to 24)")
 
 
-def _build_live_match_payload(match_id: int, match_row, registry, players_data, include_playing_xi=False):
+def _count_dot_ball_players(match_obj) -> tuple[int, int]:
+    players = getattr(match_obj, "players", {}) or {}
+    dot_ball_players = 0
+    dot_ball_total = 0
+    for player in players.values():
+        dot_balls = int(getattr(player, "dot_balls", 0) or 0)
+        if dot_balls > 0:
+            dot_ball_players += 1
+            dot_ball_total += dot_balls
+    return dot_ball_players, dot_ball_total
+
+
+def _build_live_match_payload(match_id: int, match_row, registry, players_data, include_playing_xi=False, force_refresh_scorecard: bool = False):
     cache_key = (match_id, include_playing_xi)
 
     team1 = clean_team_name(_row_value(match_row, "team1", "Team1", default=""))
@@ -969,18 +981,26 @@ def _build_live_match_payload(match_id: int, match_row, registry, players_data, 
     if html_content:
         match_obj.parse_cricbuzz_scorecard_html(html_content, reset_players=False)
 
-    espn_html = fetch_scorecard_html(match_id, team1, team2)
+    espn_html = fetch_scorecard_html(match_id, team1, team2, force_refresh=force_refresh_scorecard)
     if espn_html:
         soup = BeautifulSoup(espn_html, "html.parser")
         match_obj.parse_espn_bowling_dot_balls(soup, get_last_fetched_espn_scorecard_url(match_id))
         if include_playing_xi:
             _log_active_player_count(match_id, match_obj)
+        dot_ball_players, dot_ball_total = _count_dot_ball_players(match_obj)
+        print(
+            f"[scores-cache] ESPN dot-ball parse match={match_id} "
+            f"url={get_last_fetched_espn_scorecard_url(match_id) or '<unknown>'} "
+            f"force_refresh={force_refresh_scorecard} "
+            f"dot_ball_players={dot_ball_players} dot_balls_total={dot_ball_total}"
+        )
 
     payload = {
         "match_obj": match_obj,
         "html_content": html_content,
         "playing_xi": playing_xi,
         "fetched_at": time.time(),
+        "match_status": _match_status_value(match_row),
     }
     with MATCH_DATA_CACHE_LOCK:
         MATCH_DATA_CACHE[cache_key] = payload
@@ -988,7 +1008,7 @@ def _build_live_match_payload(match_id: int, match_row, registry, players_data, 
     return payload
 
 
-def _refresh_live_match_payload_async(match_id: int, match_row, registry, players_data, include_playing_xi=False):
+def _refresh_live_match_payload_async(match_id: int, match_row, registry, players_data, include_playing_xi=False, force_refresh_scorecard: bool = False):
     cache_key = (match_id, include_playing_xi)
 
     with MATCH_DATA_CACHE_LOCK:
@@ -998,7 +1018,14 @@ def _refresh_live_match_payload_async(match_id: int, match_row, registry, player
 
     def _run():
         try:
-            _build_live_match_payload(match_id, match_row, registry, players_data, include_playing_xi=include_playing_xi)
+            _build_live_match_payload(
+                match_id,
+                match_row,
+                registry,
+                players_data,
+                include_playing_xi=include_playing_xi,
+                force_refresh_scorecard=force_refresh_scorecard,
+            )
         except Exception as exc:
             print(f"[scores-cache] async refresh failed for match {match_id}: {exc}")
             with MATCH_DATA_CACHE_LOCK:
@@ -1010,13 +1037,34 @@ def _refresh_live_match_payload_async(match_id: int, match_row, registry, player
 def _hydrate_match_from_live_data(match_id: int, match_row, registry, players_data, include_playing_xi=False):
     cache_key = (match_id, include_playing_xi)
     now_ts = time.time()
+    current_status = _match_status_value(match_row)
 
     with MATCH_DATA_CACHE_LOCK:
         cached = MATCH_DATA_CACHE.get(cache_key)
 
     if cached:
-        if (not include_playing_xi) or (now_ts - cached["fetched_at"] < LIVE_MATCH_CACHE_TTL_SECONDS):
+        cached_status = cached.get("match_status")
+        status_changed = cached_status != current_status
+        if (not include_playing_xi) and not status_changed:
             return cached["match_obj"], cached["html_content"], cached["playing_xi"]
+        if (not status_changed) and (now_ts - cached["fetched_at"] < LIVE_MATCH_CACHE_TTL_SECONDS):
+            return cached["match_obj"], cached["html_content"], cached["playing_xi"]
+
+        if status_changed:
+            print(
+                f"[scores-cache] live transition match={match_id} "
+                f"stored_status={cached_status or 'unknown'} resolved_status={current_status} "
+                f"force_refresh_scorecard=True"
+            )
+            payload = _build_live_match_payload(
+                match_id,
+                match_row,
+                registry,
+                players_data,
+                include_playing_xi=include_playing_xi,
+                force_refresh_scorecard=True,
+            )
+            return payload["match_obj"], payload["html_content"], payload["playing_xi"]
 
         # Stale-while-refresh: keep serving previous snapshot while refresh runs in background.
         _refresh_live_match_payload_async(
@@ -1025,6 +1073,7 @@ def _hydrate_match_from_live_data(match_id: int, match_row, registry, players_da
             registry,
             players_data,
             include_playing_xi=include_playing_xi,
+            force_refresh_scorecard=False,
         )
         return cached["match_obj"], cached["html_content"], cached["playing_xi"]
 
@@ -1034,6 +1083,13 @@ def _hydrate_match_from_live_data(match_id: int, match_row, registry, players_da
         registry,
         players_data,
         include_playing_xi=include_playing_xi,
+        force_refresh_scorecard=True,
+    )
+    dot_ball_players, dot_ball_total = _count_dot_ball_players(payload["match_obj"])
+    print(
+        f"[scores-cache] initial live hydrate match={match_id} "
+        f"status={current_status} espn_url={get_last_fetched_espn_scorecard_url(match_id) or '<unknown>'} "
+        f"dot_ball_players={dot_ball_players} dot_balls_total={dot_ball_total}"
     )
     return payload["match_obj"], payload["html_content"], payload["playing_xi"]
 

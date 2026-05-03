@@ -271,12 +271,28 @@ class Tournament:
             return True
         return get_current_datetime() >= match_datetime
 
+    def _should_force_scorecard_refresh(self, match_row, runtime_status: str) -> bool:
+        stored_status = str((match_row or {}).get("Status") or (match_row or {}).get("status") or "").strip().lower()
+        if runtime_status in {"live", "completed"} and stored_status not in {"live", "completed", "nr"}:
+            return True
+        return False
+
+    def _log_scorecard_transition(self, match_id: str, match_row, runtime_status: str, force_refresh_scorecard: bool):
+        stored_status = str((match_row or {}).get("Status") or (match_row or {}).get("status") or "").strip().lower() or "unknown"
+        if runtime_status == "live" and force_refresh_scorecard:
+            self._scheduler_log(
+                "SCORE",
+                f"live transition match={match_id} stored_status={stored_status} "
+                f"resolved_status={runtime_status} force_refresh_scorecard={force_refresh_scorecard}",
+            )
+
     def update_match_data(
         self,
         match_id,
         use_playing_xi=False,
         include_scorecards=True,
         force_refresh_playing_xi=False,
+        force_refresh_scorecard=False,
         apply_backups=False,
         reset_scorecard_players=False,
     ):
@@ -345,7 +361,12 @@ class Tournament:
             # to request resetting player state before parsing.
             match.parse_cricbuzz_scorecard_html(cricbuzz_html, reset_players=bool(reset_scorecard_players))
 
-        espn_html_text = fetch_scorecard_html(int(match_id), match.team1, match.team2)
+        espn_html_text = fetch_scorecard_html(
+            int(match_id),
+            match.team1,
+            match.team2,
+            force_refresh=force_refresh_scorecard,
+        )
         if espn_html_text:
             soup = BeautifulSoup(espn_html_text, "html.parser")
             match.parse_espn_bowling_dot_balls(soup, get_last_fetched_espn_scorecard_url(int(match_id)))
@@ -573,6 +594,7 @@ class Tournament:
                         use_playing_xi=True,
                         include_scorecards=False,
                         force_refresh_playing_xi=True,
+                        force_refresh_scorecard=False,
                         apply_backups=True,
                     )
                     if finalized_from_scorecard:
@@ -580,11 +602,14 @@ class Tournament:
                         continue
                 elif status == "live":
                     self._scheduler_log("SCORE", f"match {match_id} live -> refreshing scores")
+                    force_scorecard_refresh = self._should_force_scorecard_refresh(m, status)
+                    self._log_scorecard_transition(match_id, m, status, force_scorecard_refresh)
                     finalized_from_scorecard = self.update_match_data(
                         match_id,
                         use_playing_xi=True,
                         include_scorecards=True,
                         force_refresh_playing_xi=True,
+                        force_refresh_scorecard=force_scorecard_refresh,
                         apply_backups=True,
                     )
                     if finalized_from_scorecard:
@@ -601,11 +626,14 @@ class Tournament:
                     if match_id in computed_matches or data_service.has_persisted_match_points(int(match_id)):
                         continue
                     self._scheduler_log("SCORE", f"match {match_id} completed -> revalidating")
+                    force_scorecard_refresh = self._should_force_scorecard_refresh(m, status)
+                    self._log_scorecard_transition(match_id, m, status, force_scorecard_refresh)
                     finalized_from_scorecard = self.update_match_data(
                         match_id,
                         use_playing_xi=True,
                         include_scorecards=True,
                         force_refresh_playing_xi=True,
+                        force_refresh_scorecard=force_scorecard_refresh,
                         apply_backups=True,
                     )
                     if finalized_from_scorecard:
