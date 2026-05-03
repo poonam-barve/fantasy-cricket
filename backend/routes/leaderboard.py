@@ -10,6 +10,7 @@ from backend.config import IST, get_current_datetime
 from backend.middleware.auth import get_current_user
 from backend.database import get_db
 from backend.services import data_service
+from backend.services.match_status import resolve_match_status_from_row
 from backend.services.double_buffer_cache import DoubleBufferCache
 
 ENTRY_FEE = 50
@@ -126,6 +127,17 @@ def _get_completed_match_ids(db) -> list[int]:
     return completed_ids
 
 
+def _is_match_completed(db, match_id: int) -> bool:
+    row = db.execute(
+        "SELECT match_date, match_time, status, toss_time FROM matches WHERE id = ?",
+        (match_id,),
+    ).fetchone()
+    if not row:
+        return False
+    status, _locked = resolve_match_status_from_row(row)
+    return status == "completed"
+
+
 def _load_effective_match_points(db) -> dict[int, list[dict]]:
     stored_rows = db.execute(
         """
@@ -206,17 +218,21 @@ def _load_effective_match_points(db) -> dict[int, list[dict]]:
                 "participated": False,
             })
 
-        # Add prediction bonuses to per-match points (affects match rankings & medals)
+        # Add prediction bonuses only after the match is complete.
         try:
-            bonuses = data_service.compute_prediction_bonuses(match_id)
-            for entry in normalized:
-                uid = entry["user_id"]
-                bonus_info = bonuses.get(uid)
-                if bonus_info:
-                    entry["points"] = round(entry["points"] + bonus_info["bonus"], 2)
-                    entry["prediction_bonus"] = bonus_info["bonus"]
-                    entry["prediction_label"] = bonus_info["label"]
-                else:
+            if _is_match_completed(db, match_id):
+                bonuses = data_service.compute_prediction_bonuses(match_id)
+                for entry in normalized:
+                    uid = entry["user_id"]
+                    bonus_info = bonuses.get(uid)
+                    if bonus_info:
+                        entry["points"] = round(entry["points"] + bonus_info["bonus"], 2)
+                        entry["prediction_bonus"] = bonus_info["bonus"]
+                        entry["prediction_label"] = bonus_info["label"]
+                    else:
+                        entry["prediction_bonus"] = 0
+            else:
+                for entry in normalized:
                     entry["prediction_bonus"] = 0
         except Exception:
             pass
