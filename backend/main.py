@@ -308,6 +308,27 @@ def _run_deferred_match_warmup():
         except Exception as exc:
             print(f"[BOOT] Venue backfill failed: {exc}")
 
+        try:
+            print("[BOOT] Deferred completed-match score warmup starting")
+            summary = scores.refresh_scores_response_cache_once(match_statuses={"completed", "nr"})
+            print(
+                "[BOOT] Deferred completed-match score warmup complete "
+                f"matches={summary['matches']} eligible={summary['eligible']} "
+                f"refreshed={summary['refreshed']} errors={summary['errors']}"
+            )
+        except Exception as exc:
+            print(f"[BOOT] Deferred completed-match score warmup failed: {exc}")
+
+        try:
+            print("[BOOT] Deferred leaderboard warmup starting")
+            summary = leaderboard.refresh_leaderboard_cache_once()
+            print(
+                "[BOOT] Deferred leaderboard warmup complete "
+                f"leaderboard={summary['leaderboard']} points_table={summary['points_table']}"
+            )
+        except Exception as exc:
+            print(f"[BOOT] Deferred leaderboard warmup failed: {exc}")
+
         print("[BOOT] Deferred match warmup complete")
     except Exception as exc:
         print(f"[BOOT] Deferred warmup error: {exc}")
@@ -361,32 +382,24 @@ def _run_background_warmup():
             tournament.start_lineup_cache_scheduler()
             tournament.start_toss_cache_scheduler()
             tournament.start_scheduler()
-            print("[BOOT] Starting scores cache scheduler")
-            scores.start_scores_cache_scheduler()
-            print("[BOOT] Starting leaderboard cache scheduler")
-            leaderboard.start_leaderboard_cache_scheduler()
 
-            print("[BOOT] Priming scores cache")
+            print("[BOOT] Priming live scores cache")
             try:
-                prime_summary = scores.refresh_scores_response_cache_once()
+                prime_summary = scores.refresh_scores_response_cache_once(match_statuses={"live", "nr"})
                 print(
-                    "[BOOT] Scores cache primed "
+                    "[BOOT] Live scores cache primed "
                     f"matches={prime_summary['matches']} "
                     f"eligible={prime_summary['eligible']} "
                     f"refreshed={prime_summary['refreshed']} "
                     f"errors={prime_summary['errors']}"
                 )
             except Exception as exc:
-                print(f"[BOOT] Scores cache prime failed: {exc}")
-            try:
-                leaderboard_summary = leaderboard.refresh_leaderboard_cache_once()
-                print(
-                    "[BOOT] Leaderboard cache primed "
-                    f"leaderboard={leaderboard_summary['leaderboard']} "
-                    f"points_table={leaderboard_summary['points_table']}"
-                )
-            except Exception as exc:
-                print(f"[BOOT] Leaderboard cache prime failed: {exc}")
+                print(f"[BOOT] Live scores cache prime failed: {exc}")
+
+            print("[BOOT] Starting scores cache scheduler")
+            scores.start_scores_cache_scheduler()
+            print("[BOOT] Starting leaderboard cache scheduler")
+            leaderboard.start_leaderboard_cache_scheduler()
 
             bootstrap_warmup_complete = True
             bootstrap_warmup_error = None

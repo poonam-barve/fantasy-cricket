@@ -320,7 +320,7 @@ def _build_match_scores_payload(match_id: int, match_row, registry, players_data
     # the main scores response so that these totals stay in sync with the
     # team breakdown (which uses the cached snapshot).
     contestants = _compute_contestants_from_player_points(db, match_id, live_pp_lookup)
-    contestants = _enrich_contestants_with_predictions(contestants, match_id)
+    contestants = _enrich_contestants_with_predictions(contestants, match_id, match_row)
     contestants = _rank_contestants(contestants)
 
     return {
@@ -453,7 +453,7 @@ def _build_completed_match_scores_payload(match_id: int, match_row, registry, pl
     players.sort(key=lambda x: x["points"], reverse=True)
     live_points_lookup = {str(player["player_id"]): float(player.get("points", 0)) for player in players}
     contestants = _compute_contestants_from_player_points(db, match_id, live_points_lookup)
-    contestants = _enrich_contestants_with_predictions(contestants, match_id)
+    contestants = _enrich_contestants_with_predictions(contestants, match_id, match_row)
     contestants = _rank_contestants(contestants)
 
     return {
@@ -465,7 +465,8 @@ def _build_completed_match_scores_payload(match_id: int, match_row, registry, pl
     }
 
 
-def refresh_scores_response_cache_once() -> dict:
+def refresh_scores_response_cache_once(match_statuses: set[str] | None = None) -> dict:
+    normalized_statuses = {str(status).strip().lower() for status in match_statuses} if match_statuses else None
     if not SCORES_REFRESH_LOCK.acquire(blocking=False):
         _log_scores_cache("refresh already running, skipping")
         snapshot = SCORES_RESPONSE_CACHE.read() or {}
@@ -487,11 +488,16 @@ def refresh_scores_response_cache_once() -> dict:
             errors = 0
             updated_match_ids: set[int] = set()
 
-            _log_scores_cache(f"refresh tick start matches={len(matches_data)}")
+            _log_scores_cache(
+                f"refresh tick start matches={len(matches_data)} "
+                f"filter={sorted(normalized_statuses) if normalized_statuses else 'all'}"
+            )
 
             for match_row in matches_data:
                 match_id = int(match_row["MatchID"])
                 status = _match_status_value(match_row)
+                if normalized_statuses and status not in normalized_statuses:
+                    continue
                 try:
                     if status == "future":
                         continue
@@ -655,17 +661,19 @@ def _compute_contestants_from_player_points(db, match_id: int, pp_lookup: dict[s
     return contestants
 
 
-def _enrich_contestants_with_predictions(contestants: list[dict], match_id: int) -> list[dict]:
+def _enrich_contestants_with_predictions(contestants: list[dict], match_id: int, match_row) -> list[dict]:
     """Add prediction_bonus, predicted_points, and prediction_label to each contestant.
 
     Bonus points are added to the contestant's total so that rankings and
-    medals reflect prediction bonuses (consistent with the leaderboard).
+    medals reflect prediction bonuses once the match is completed.
     """
     try:
         predictions = data_service.get_match_predictions(match_id)
         bonuses = data_service.compute_prediction_bonuses(match_id)
     except Exception:
         return contestants
+
+    apply_bonus = _is_completed_score_target(match_row)
 
     for contestant in contestants:
         uid = contestant.get("user_id") or contestant.get("id")
@@ -674,7 +682,7 @@ def _enrich_contestants_with_predictions(contestants: list[dict], match_id: int)
         uid = int(uid)
         contestant["predicted_points"] = predictions.get(uid)
         bonus_info = bonuses.get(uid)
-        if bonus_info:
+        if apply_bonus and bonus_info:
             contestant["prediction_bonus"] = bonus_info["bonus"]
             contestant["prediction_label"] = bonus_info["label"]
             contestant["points"] = round(float(contestant.get("points", 0)) + bonus_info["bonus"], 2)
