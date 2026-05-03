@@ -8,7 +8,7 @@ from backend.database import get_db
 from backend.middleware.auth import get_current_user
 from backend.services import data_service
 from backend.services.double_buffer_cache import DoubleBufferCache
-from backend.services.match_status import resolve_match_status
+from backend.services.match_status import resolve_match_status, resolve_match_status_from_row
 from backend.services.scraper import get_cached_toss_info
 from backend.services.venue_stats import (
     get_today_cached_venue_stats,
@@ -114,6 +114,17 @@ def _get_matches_payload(cache_key: str) -> list[dict]:
     return payload
 
 
+def _is_match_completed(db, match_id: int) -> bool:
+    row = db.execute(
+        "SELECT match_date, match_time, status, toss_time FROM matches WHERE id = ?",
+        (match_id,),
+    ).fetchone()
+    if not row:
+        return False
+    status, _locked = resolve_match_status_from_row(row)
+    return status == "completed"
+
+
 def _attach_user_match_ranks(payload: list[dict], user_id: int) -> list[dict]:
     db = get_db()
     relevant_match_ids = [
@@ -160,13 +171,13 @@ def _attach_user_match_ranks(payload: list[dict], user_id: int) -> list[dict]:
         })
 
     for match_id, contestants in match_points.items():
-        # Include prediction bonuses so card rank matches scores page rank
         try:
-            bonuses = data_service.compute_prediction_bonuses(match_id)
-            for contestant in contestants:
-                bonus_info = bonuses.get(contestant["user_id"])
-                if bonus_info:
-                    contestant["points"] = round(contestant["points"] + bonus_info["bonus"], 2)
+            if _is_match_completed(db, match_id):
+                bonuses = data_service.compute_prediction_bonuses(match_id)
+                for contestant in contestants:
+                    bonus_info = bonuses.get(contestant["user_id"])
+                    if bonus_info:
+                        contestant["points"] = round(contestant["points"] + bonus_info["bonus"], 2)
         except Exception:
             pass
 
