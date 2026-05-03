@@ -379,8 +379,12 @@ class Match:
 
         return None
 
-    def parse_espn_bowling_dot_balls(self, soup: BeautifulSoup):
+    def parse_espn_bowling_dot_balls(self, soup: BeautifulSoup, source_url: str | None = None):
         lines = [line.strip() for line in soup.get_text("\n").splitlines() if line.strip()]
+        if source_url:
+            print(f"[Match {self.match_id}] ESPN dot-ball parse source={source_url}")
+        else:
+            print(f"[Match {self.match_id}] ESPN dot-ball parse source=<unknown>")
 
         def _apply_bowling_row(player_name, bowling_team, overs, maidens, runs, wickets, economy, dot_balls=None, player_id=None):
             pid = player_id or self.get_player_id(player_name, bowling_team)
@@ -400,6 +404,10 @@ class Match:
             player.economy = economy
             if dot_balls is not None and player.dot_balls <= 0:
                 player.dot_balls = dot_balls
+                print(
+                    f"[Match {self.match_id}] ESPN dot balls parsed: "
+                    f"{player.name} ({bowling_team}) = {dot_balls}"
+                )
             return True
 
         def _parse_compact_bowling_row(line, bowling_team):
@@ -533,6 +541,10 @@ class Match:
                         dot_balls = int(dot_balls_group)
                         if dot_balls > 0:
                             player.dot_balls = dot_balls
+                            print(
+                                f"[Match {self.match_id}] ESPN dot balls parsed: "
+                                f"{player.name} ({player.team or 'unknown'}) = {dot_balls}"
+                            )
                             parsed_any = True
                 except Exception:
                     continue

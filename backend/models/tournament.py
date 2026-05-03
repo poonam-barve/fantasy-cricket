@@ -12,6 +12,7 @@ from backend.services.scraper import (
     fetch_toss_info,
     fetch_scorecard_html,
     fetch_cricbuzz_scorecard_html,
+    get_last_fetched_espn_scorecard_url,
     initialize_espn_match_map,
     initialize_cricbuzz_match_map,
     is_cached_toss_announced,
@@ -347,7 +348,7 @@ class Tournament:
         espn_html_text = fetch_scorecard_html(int(match_id), match.team1, match.team2)
         if espn_html_text:
             soup = BeautifulSoup(espn_html_text, "html.parser")
-            match.parse_espn_bowling_dot_balls(soup)
+            match.parse_espn_bowling_dot_balls(soup, get_last_fetched_espn_scorecard_url(int(match_id)))
             self._log_active_player_count(match_id, match)
 
         completion_state = getattr(match, "get_scorecard_completion_state", lambda: None)()

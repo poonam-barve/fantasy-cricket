@@ -218,6 +218,10 @@ class Player:
         points += self.runout_indirect * 6
 
         self.points = points
+        print(
+            f"[Points] {self.name} role={role} played={self.played} "
+            f"dot_balls={self.dot_balls} total={points}"
+        )
         return points
 
     def get_points_breakdown(self):

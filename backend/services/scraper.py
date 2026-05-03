@@ -33,6 +33,7 @@ TOSS_INFO_CACHE: dict[int, dict] = {}
 TOSS_INFO_TTL_SECONDS = 60
 PLAYING_XI_CACHE_LOCK = get_cache_lock("scraper_playing_xi")
 TOSS_INFO_CACHE_LOCK = get_cache_lock("scraper_toss_info")
+LAST_ESPN_SCORECARD_URL: dict[int, str] = {}
 _ESPN_SESSION = requests.Session()
 _ESPN_SESSION.trust_env = False
 _ESPN_SESSION.headers.update(
@@ -318,10 +319,12 @@ def fetch_scorecard_html(match_id, team1: str | None = None, team2: str | None =
             if quality >= 2:
                 successful += 1
                 strong_fallback_html = res.text
+                LAST_ESPN_SCORECARD_URL[int(match_id)] = url
                 return res.text
             if quality == 1 and weak_fallback_html is None:
                 successful += 1
                 weak_fallback_html = res.text
+                LAST_ESPN_SCORECARD_URL[int(match_id)] = url
             elif weak_fallback_html is None:
                 weak_fallback_html = res.text
 
@@ -345,6 +348,10 @@ def fetch_scorecard_html(match_id, team1: str | None = None, team2: str | None =
                 return fetched_html
 
     return None
+
+
+def get_last_fetched_espn_scorecard_url(match_id: int) -> str | None:
+    return LAST_ESPN_SCORECARD_URL.get(int(match_id))
 
 
 def fetch_cricbuzz_scorecard_html(match_id: int, team1: str | None = None, team2: str | None = None):

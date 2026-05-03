@@ -14,6 +14,7 @@ from backend.services.scraper import (
     fetch_cricbuzz_scorecard_html,
     fetch_scorecard_html,
     get_cached_toss_info,
+    get_last_fetched_espn_scorecard_url,
 )
 from bs4 import BeautifulSoup
 
@@ -174,7 +175,7 @@ def _load_last_completed_team_xi(
     espn_html = fetch_scorecard_html(last_match_id, last_team1, last_team2)
     if espn_html:
         soup = BeautifulSoup(espn_html, "html.parser")
-        match_obj.parse_espn_bowling_dot_balls(soup)
+        match_obj.parse_espn_bowling_dot_balls(soup, get_last_fetched_espn_scorecard_url(last_match_id))
 
     player_team_lookup = {int(row["id"]): row["team"] for row in last_players}
     team_order = [pid for pid in playing_ids if player_team_lookup.get(pid) == team]

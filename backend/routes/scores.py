@@ -16,7 +16,12 @@ from backend.services.double_buffer_cache import DoubleBufferCache
 from backend.services.cache_locks import acquire_cache_locks, get_cache_lock
 from backend.services.match_status import resolve_match_status_from_row
 from backend.services.live_scores import append_missing_live_team_players
-from backend.services.scraper import fetch_scorecard_html, fetch_cricbuzz_scorecard_html, refresh_playing_xi_cache
+from backend.services.scraper import (
+    fetch_scorecard_html,
+    fetch_cricbuzz_scorecard_html,
+    get_last_fetched_espn_scorecard_url,
+    refresh_playing_xi_cache,
+)
 from bs4 import BeautifulSoup
 
 router = APIRouter(prefix="/api/scores", tags=["scores"])
@@ -943,7 +948,7 @@ def _build_live_match_payload(match_id: int, match_row, registry, players_data, 
     espn_html = fetch_scorecard_html(match_id, team1, team2)
     if espn_html:
         soup = BeautifulSoup(espn_html, "html.parser")
-        match_obj.parse_espn_bowling_dot_balls(soup)
+        match_obj.parse_espn_bowling_dot_balls(soup, get_last_fetched_espn_scorecard_url(match_id))
         if include_playing_xi:
             _log_active_player_count(match_id, match_obj)
 
