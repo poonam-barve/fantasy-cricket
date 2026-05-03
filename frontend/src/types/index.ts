@@ -129,6 +129,8 @@ export type ContestantScore = {
   predicted_points?: number | null;
   prediction_bonus?: number | null;
   prediction_label?: string | null;
+  prediction_tier_bonus?: number | null;
+  prediction_tier_label?: string | null;
 };
 
 export type LeaderboardEntry = {

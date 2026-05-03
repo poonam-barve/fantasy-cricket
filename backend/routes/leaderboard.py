@@ -1,10 +1,17 @@
 import threading
 import time
 import copy
+import io
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from collections import defaultdict
+
+try:
+    from openpyxl import Workbook
+except ImportError:  # pragma: no cover - optional dependency in local dev
+    Workbook = None
 
 from backend.config import IST, get_current_datetime
 from backend.middleware.auth import get_current_user
@@ -475,6 +482,18 @@ def _build_points_table(db, effective_match_points: dict[int, list[dict]] | None
     return result
 
 
+def _get_weekend_bonus_map(db) -> dict[int, int]:
+    rows = db.execute(
+        """
+        SELECT winner_user_id, COUNT(*) AS wins
+        FROM weekend_tournaments
+        WHERE status = 'completed' AND winner_user_id IS NOT NULL
+        GROUP BY winner_user_id
+        """
+    ).fetchall()
+    return {int(row["winner_user_id"]): int(row["wins"]) * 200 for row in rows}
+
+
 def _wait_for_leaderboard_cache(timeout_seconds: float = 8.0, poll_seconds: float = 0.25) -> dict | None:
     return _get_cached_leaderboard_snapshot()
 
@@ -530,3 +549,78 @@ async def points_table(user: dict = Depends(get_current_user)):
     if cached_snapshot is None:
         return []
     return cached_snapshot["points_table"]
+
+
+@router.get("/points-table/export")
+async def export_points_table(user: dict = Depends(get_current_user)):
+    if Workbook is None:
+        raise HTTPException(status_code=500, detail="Excel export dependency is not available")
+
+    db = get_db()
+    effective_match_points = _load_effective_match_points(db)
+    points_table = _build_points_table(db, effective_match_points)
+    weekend_bonus_map = _get_weekend_bonus_map(db)
+    matches = db.execute(
+        "SELECT id, team1, team2 FROM matches"
+    ).fetchall()
+    match_label_map = {
+        int(row["id"]): f"{row['team1']} vs {row['team2']}"
+        for row in matches
+    }
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Points Table"
+    headers = [
+        "Match ID",
+        "Match",
+        "User ID",
+        "User",
+        "Match Points",
+        "Weekend Battle Bonus Total",
+        "Total With Weekend Bonus",
+        "Last Updated",
+        "Adjusted",
+        "Participated",
+    ]
+    worksheet.append(headers)
+
+    for row in points_table:
+        weekend_bonus = weekend_bonus_map.get(int(row["user_id"]), 0)
+        match_points = round(float(row.get("points", 0)), 2)
+        worksheet.append([
+            int(row["match_id"]),
+            match_label_map.get(int(row["match_id"]), f"M{row['match_id']}"),
+            int(row["user_id"]),
+            row["name"],
+            match_points,
+            weekend_bonus,
+            round(match_points + weekend_bonus, 2),
+            row.get("last_updated", ""),
+            bool(row.get("adjusted", False)),
+            bool(row.get("participated", True)),
+        ])
+
+    for column_cells in worksheet.columns:
+        max_length = 0
+        column_letter = column_cells[0].column_letter
+        for cell in column_cells:
+            value = "" if cell.value is None else str(cell.value)
+            max_length = max(max_length, len(value))
+        worksheet.column_dimensions[column_letter].width = min(max_length + 2, 40)
+
+    worksheet.freeze_panes = "A2"
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    filename = f"points-table-export-{get_current_datetime().strftime('%Y%m%d-%H%M%S')}.xlsx"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Cache-Control": "no-store",
+    }
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )

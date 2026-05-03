@@ -15,6 +15,7 @@ from backend.services.scraper import (
     fetch_scorecard_html,
     get_cached_toss_info,
     get_last_fetched_espn_scorecard_url,
+    refresh_playing_xi_cache,
 )
 from bs4 import BeautifulSoup
 
@@ -345,6 +346,32 @@ async def list_players(
             match_date,
             match_time,
         )
+        if lineup_window_open and (
+            not cached_playing_xi
+            or not cached_playing_xi.get("announced")
+            or not data_service.is_cached_playing_xi_final(match_id, team1, team2, match_date, match_time)
+        ):
+            try:
+                player_rows = db.execute(
+                    """
+                    SELECT id, name, team, role, aliases
+                    FROM players
+                    WHERE team IN (?, ?)
+                    """,
+                    (team1, team2),
+                ).fetchall()
+                cached_playing_xi = refresh_playing_xi_cache(
+                    match_id,
+                    team1,
+                    team2,
+                    [dict(row) for row in player_rows],
+                    match_date,
+                    match_time,
+                    toss_time,
+                    force_refresh=True,
+                )
+            except Exception:
+                pass
         if cached_playing_xi and cached_playing_xi.get("announced"):
             playing_xi_data = cached_playing_xi
 

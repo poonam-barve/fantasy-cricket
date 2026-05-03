@@ -12,6 +12,7 @@ export default function PointsTablePage() {
   const [data, setData] = useState<(PointsTableEntry & { net?: number })[]>([]);
   const [matchInfo, setMatchInfo] = useState<Record<string, { team1: string; team2: string }>>({});
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [matchPage, setMatchPage] = useState(0);
   const { profile } = useAuth();
 
@@ -31,6 +32,26 @@ export default function PointsTablePage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const handleExport = async () => {
+    try {
+      setExporting(true);
+      const res = await client.get('/api/points-table/export', { responseType: 'blob' });
+      const blob = new Blob([res.data], {
+        type: res.headers?.['content-type'] || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'points-table-export.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const contestantSet = new Set<string>();
   const matchMap = new Map<string, Record<string, number>>();
@@ -114,12 +135,25 @@ export default function PointsTablePage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold text-white">Points Table</h2>
-        <Link to="/dashboard" className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-white/70 hover:bg-white/10 hover:text-white transition-all">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Back
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting}
+            className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200 transition-all disabled:opacity-50"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3h16v-3" />
+            </svg>
+            {exporting ? 'Exporting...' : 'Export'}
+          </button>
+          <Link to="/dashboard" className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-white/70 hover:bg-white/10 hover:text-white transition-all">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Back
+          </Link>
+        </div>
       </div>
       <p className="mb-4 text-xs text-white/40">
         <span className="font-semibold text-amber-300">Adj.</span> marks non-participant adjustment points used only for standings.

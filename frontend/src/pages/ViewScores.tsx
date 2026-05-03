@@ -818,6 +818,8 @@ export default function ViewScoresPage() {
                   rankedContestants.map((c) => {
                     const isSelected = selectedContestantId === c.id;
                     const isCurrentUser = c.id === profile?.id;
+                    const predictionBadgeLabel = c.prediction_tier_label || c.prediction_label;
+                    const predictionBadgeBonus = c.prediction_tier_bonus ?? c.prediction_bonus ?? 0;
                     return (
                       <div key={c.id}>
                         <button
@@ -841,15 +843,15 @@ export default function ViewScoresPage() {
                                   You
                                 </span>
                               )}
-                              {c.prediction_label && (
+                              {predictionBadgeLabel && (
                                 <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                  c.prediction_bonus != null && c.prediction_bonus >= 500
+                                  predictionBadgeBonus >= 500
                                     ? 'bg-amber-500/15 text-amber-300 border border-amber-500/25'
-                                    : c.prediction_bonus != null && c.prediction_bonus >= 200
+                                    : predictionBadgeBonus >= 200
                                     ? 'bg-orange-500/15 text-orange-300 border border-orange-500/25'
                                     : 'bg-blue-500/15 text-blue-300 border border-blue-500/25'
                                 }`}>
-                                  🎯 {c.prediction_label}
+                                  🎯 {predictionBadgeLabel}
                                 </span>
                               )}
                             </div>

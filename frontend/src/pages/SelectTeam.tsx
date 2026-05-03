@@ -197,6 +197,37 @@ export default function SelectTeamPage() {
   const showAvailabilityDetails = lineupWindowOpen;
   const isTodayMatch = Boolean(playingXi.isTodayMatch);
 
+  const refreshAvailabilityData = async () => {
+    try {
+      const res = await client.get(`/api/players?match_id=${matchId}`);
+      const data = res.data || {};
+      const groupedPlayers = data.players || data;
+      const flat = Array.isArray(groupedPlayers)
+        ? groupedPlayers
+        : (Object.values(groupedPlayers).flat() as Player[]);
+      setPlayers(flat);
+      setMatchTeams(Array.isArray(data.match_teams) ? data.match_teams : []);
+      setPlayingXi({
+        announced: Boolean(data.playing_xi?.announced),
+        url: data.playing_xi?.url || null,
+        playingCount: data.playing_xi?.playing_count || 0,
+        substituteCount: data.playing_xi?.substitute_count || 0,
+        lineupWindowOpen: Boolean(data.lineup_window_open),
+        isTodayMatch: Boolean(data.is_today_match),
+      });
+      setTossInfo(data.toss || null);
+      setLastMatchXi(data.last_match_xi || {});
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const openAvailabilitySearch = async () => {
+    await refreshAvailabilityData();
+    setShowPlayerSearch(true);
+  };
+
   const hasFullAvailabilityBreakdown =
     showAvailabilityDetails &&
     playingXi.announced &&
@@ -273,30 +304,7 @@ export default function SelectTeamPage() {
 
     if (!loading && showAvailabilityDetails && (!playingXi.announced || !hasFullAvailabilityBreakdown)) {
       refreshTimerRef.current = window.setInterval(() => {
-        void (async () => {
-          try {
-            const res = await client.get(`/api/players?match_id=${matchId}`);
-            const data = res.data || {};
-            const groupedPlayers = data.players || data;
-            const flat = Array.isArray(groupedPlayers)
-              ? groupedPlayers
-              : (Object.values(groupedPlayers).flat() as Player[]);
-            setPlayers(flat);
-            setMatchTeams(Array.isArray(data.match_teams) ? data.match_teams : []);
-            setPlayingXi({
-              announced: Boolean(data.playing_xi?.announced),
-              url: data.playing_xi?.url || null,
-              playingCount: data.playing_xi?.playing_count || 0,
-              substituteCount: data.playing_xi?.substitute_count || 0,
-              lineupWindowOpen: Boolean(data.lineup_window_open),
-              isTodayMatch: Boolean(data.is_today_match),
-            });
-            setTossInfo(data.toss || null);
-            setLastMatchXi(data.last_match_xi || {});
-          } catch {
-            // keep trying until the cache becomes ready
-          }
-        })();
+        void refreshAvailabilityData();
       }, 15000);
     }
 
@@ -307,6 +315,12 @@ export default function SelectTeamPage() {
       }
     };
   }, [matchId, loading, showAvailabilityDetails, playingXi.announced, hasFullAvailabilityBreakdown]);
+
+  useEffect(() => {
+    if (showAvailabilityDetails) {
+      void refreshAvailabilityData();
+    }
+  }, [activeTab, showAvailabilityDetails]);
 
   useEffect(() => {
     if (!showBackupPanel) return;
@@ -897,7 +911,7 @@ export default function SelectTeamPage() {
             {!showAvailabilityDetails && (
               <button
                 type="button"
-                onClick={() => setShowPlayerSearch(true)}
+                onClick={() => { void openAvailabilitySearch(); }}
                 className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 transition hover:bg-white/10 hover:text-white"
                 aria-label="Search players"
               >
@@ -1079,13 +1093,14 @@ export default function SelectTeamPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setShowPlayerSearch(true)}
-                    className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 transition hover:bg-white/10 hover:text-white"
-                    aria-label="Search players"
+                    onClick={() => { void openAvailabilitySearch(); }}
+                    className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+                    aria-label="Who's missing"
                   >
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m21 21-4.35-4.35m1.85-5.15a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z" />
                     </svg>
+                    Who&apos;s missing
                   </button>
                 </div>
               )}

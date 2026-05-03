@@ -675,12 +675,28 @@ def _enrich_contestants_with_predictions(contestants: list[dict], match_id: int,
 
     apply_bonus = _is_completed_score_target(match_row)
 
+    def _prediction_tier_for_diff(diff: float) -> tuple[str | None, float]:
+        for tier in data_service.PREDICTION_BONUS_TIERS:
+            if diff <= float(tier["max_diff"]):
+                return str(tier["label"]), float(tier["bonus"])
+        return None, 0.0
+
     for contestant in contestants:
         uid = contestant.get("user_id") or contestant.get("id")
         if uid is None:
             continue
         uid = int(uid)
-        contestant["predicted_points"] = predictions.get(uid)
+        predicted_points = predictions.get(uid)
+        contestant["predicted_points"] = predicted_points
+        actual_points = float(contestant.get("points", 0) or 0)
+        if predicted_points is not None:
+            tier_label, tier_bonus = _prediction_tier_for_diff(abs(float(predicted_points) - actual_points))
+            contestant["prediction_tier_label"] = tier_label
+            contestant["prediction_tier_bonus"] = tier_bonus if tier_label else 0
+        else:
+            contestant["prediction_tier_label"] = None
+            contestant["prediction_tier_bonus"] = 0
+
         bonus_info = bonuses.get(uid)
         if apply_bonus and bonus_info:
             contestant["prediction_bonus"] = bonus_info["bonus"]
@@ -688,7 +704,7 @@ def _enrich_contestants_with_predictions(contestants: list[dict], match_id: int,
             contestant["points"] = round(float(contestant.get("points", 0)) + bonus_info["bonus"], 2)
         else:
             contestant["prediction_bonus"] = 0
-            contestant["prediction_label"] = None
+            contestant["prediction_label"] = contestant.get("prediction_tier_label")
 
     # Re-sort so that ranking reflects updated totals
     contestants.sort(key=lambda item: (-item["points"], item["name"]))

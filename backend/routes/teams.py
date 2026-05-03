@@ -8,6 +8,7 @@ from backend.middleware.auth import get_current_user
 from backend.database import get_db
 from backend.config import IST, ROLES, get_current_datetime
 from backend.services import data_service
+from backend.services.scraper import refresh_playing_xi_cache
 router = APIRouter(prefix="/api/teams", tags=["teams"])
 
 
@@ -180,6 +181,38 @@ async def my_lineup_statuses(
             match["match_date"],
             match["match_time"],
         )
+        if lineup_window_open and (
+            not cached_playing_xi
+            or not cached_playing_xi.get("announced")
+            or not data_service.is_cached_playing_xi_final(
+                match_id,
+                match["team1"],
+                match["team2"],
+                match["match_date"],
+                match["match_time"],
+            )
+        ):
+            try:
+                player_rows = db.execute(
+                    """
+                    SELECT id, name, team, role, aliases
+                    FROM players
+                    WHERE team IN (?, ?)
+                    """,
+                    (match["team1"], match["team2"]),
+                ).fetchall()
+                cached_playing_xi = refresh_playing_xi_cache(
+                    match_id,
+                    match["team1"],
+                    match["team2"],
+                    [dict(row) for row in player_rows],
+                    match["match_date"],
+                    match["match_time"],
+                    match.get("toss_time") or match.get("TossTime"),
+                    force_refresh=True,
+                )
+            except Exception:
+                pass
         if cached_playing_xi and cached_playing_xi.get("announced"):
             playing_xi = cached_playing_xi
         else:
