@@ -577,11 +577,10 @@ async def export_points_table(user: dict = Depends(get_current_user)):
         "User ID",
         "User",
         "Match Points",
-        "Weekend Battle Bonus Total",
-        "Total With Weekend Bonus",
         "Last Updated",
         "Adjusted",
         "Participated",
+        "Weekend Battle Winner Bonus",
     ]
     worksheet.append(headers)
 
@@ -594,11 +593,10 @@ async def export_points_table(user: dict = Depends(get_current_user)):
             int(row["user_id"]),
             row["name"],
             match_points,
-            weekend_bonus,
-            round(match_points + weekend_bonus, 2),
             row.get("last_updated", ""),
             bool(row.get("adjusted", False)),
             bool(row.get("participated", True)),
+            weekend_bonus,
         ])
 
     for column_cells in worksheet.columns:
