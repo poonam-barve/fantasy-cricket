@@ -558,46 +558,43 @@ async def export_points_table(user: dict = Depends(get_current_user)):
 
     db = get_db()
     effective_match_points = _load_effective_match_points(db)
-    points_table = _build_points_table(db, effective_match_points)
+    leaderboard_rows = _build_leaderboard(db, effective_match_points)
     weekend_bonus_map = _get_weekend_bonus_map(db)
-    matches = db.execute(
-        "SELECT id, team1, team2 FROM matches"
-    ).fetchall()
-    match_label_map = {
-        int(row["id"]): f"{row['team1']} vs {row['team2']}"
-        for row in matches
-    }
+
+    users = [
+        {
+            "user_id": int(row["user_id"]),
+            "name": row["name"],
+            "leaderboard_points": round(float(row["points"]), 2),
+        }
+        for row in leaderboard_rows
+    ]
+
+    leaderboard_total_map = {entry["user_id"]: entry["leaderboard_points"] for entry in users}
 
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Points Table"
-    headers = [
-        "Match ID",
-        "Match",
-        "User ID",
-        "User",
-        "Match Points",
-        "Last Updated",
-        "Adjusted",
-        "Participated",
-        "Weekend Battle Winner Bonus",
-    ]
+    headers = ["Match ID"] + [user_row["name"] for user_row in users]
     worksheet.append(headers)
 
-    for row in points_table:
-        weekend_bonus = weekend_bonus_map.get(int(row["user_id"]), 0)
-        match_points = round(float(row.get("points", 0)), 2)
-        worksheet.append([
-            int(row["match_id"]),
-            match_label_map.get(int(row["match_id"]), f"M{row['match_id']}"),
-            int(row["user_id"]),
-            row["name"],
-            match_points,
-            row.get("last_updated", ""),
-            bool(row.get("adjusted", False)),
-            bool(row.get("participated", True)),
-            weekend_bonus,
-        ])
+    for match_id in sorted(effective_match_points.keys()):
+        contestants = effective_match_points.get(match_id, [])
+        points_map = {int(contestant["user_id"]): round(float(contestant["points"]), 2) for contestant in contestants}
+        row = [int(match_id)]
+        for user_row in users:
+            row.append(points_map.get(user_row["user_id"], 0))
+        worksheet.append(row)
+
+    weekend_bonus_row = ["Weekend Battle Winner Bonus"]
+    for user_row in users:
+        weekend_bonus_row.append(weekend_bonus_map.get(user_row["user_id"], 0))
+    worksheet.append(weekend_bonus_row)
+
+    total_row = ["Total"]
+    for user_row in users:
+        total_row.append(leaderboard_total_map.get(user_row["user_id"], 0))
+    worksheet.append(total_row)
 
     for column_cells in worksheet.columns:
         max_length = 0
