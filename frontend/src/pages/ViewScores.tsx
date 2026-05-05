@@ -824,7 +824,7 @@ export default function ViewScoresPage() {
                     const predictionBadgeLabel = wonBonus
                       ? (c.prediction_label || c.prediction_tier_label)
                       : (c.prediction_tier_label || null);
-                    const predictionBadgeBonus = wonBonus ? c.prediction_bonus : 0;
+                    const predictionBadgeBonus = wonBonus ? c.prediction_bonus! : 0;
                     return (
                       <div key={c.id}>
                         <button
