@@ -511,10 +511,16 @@ def refresh_scores_response_cache_once(match_statuses: set[str] | None = None) -
                     if status == "completed":
                         eligible += 1
                         existing_payload = snapshot.get(match_id)
-                        if existing_payload and existing_payload.get("match_status") in {"completed", "nr"}:
+                        if existing_payload and existing_payload.get("match_status") == "nr":
+                            continue
+                        # Always rebuild when transitioning from live to completed
+                        # so prediction bonuses are computed against final stored
+                        # points, not transient live-calculated points.
+                        if existing_payload and existing_payload.get("match_status") == "completed" and existing_payload.get("_completed_final"):
                             continue
                         payload = _build_completed_match_scores_payload(match_id, match_row, registry, players_data, db)
                         if payload is not None:
+                            payload["_completed_final"] = True
                             snapshot[match_id] = payload
                             updated_match_ids.add(match_id)
                             refreshed += 1
@@ -704,7 +710,7 @@ def _enrich_contestants_with_predictions(contestants: list[dict], match_id: int,
             contestant["points"] = round(float(contestant.get("points", 0)) + bonus_info["bonus"], 2)
         else:
             contestant["prediction_bonus"] = 0
-            contestant["prediction_label"] = contestant.get("prediction_tier_label")
+            contestant["prediction_label"] = None
 
     # Re-sort so that ranking reflects updated totals
     contestants.sort(key=lambda item: (-item["points"], item["name"]))
