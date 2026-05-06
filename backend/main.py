@@ -371,6 +371,8 @@ def _run_background_warmup():
         try:
             print("[BOOT] Background warmup starting")
             data_service.prime_static_cache()
+            prediction_summary = data_service.prime_score_prediction_cache()
+            print(f"[BOOT] Primed score prediction cache matches={len(prediction_summary)}")
 
             _, today_live_matches, live_match_ids = _load_todays_live_matches()
             prime_today_venue_cache(today_live_matches)

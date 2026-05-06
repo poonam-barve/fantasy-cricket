@@ -35,10 +35,12 @@ STATIC_CACHE_DOMAIN = {
 PLAYER_MATCH_PAYLOAD_LOCK = get_cache_lock("player_match_payloads")
 PLAYING_XI_STATUS_LOCK = get_cache_lock("playing_xi_status")
 LAST_MATCH_XI_LOCK = get_cache_lock("last_match_xi")
+SCORE_PREDICTION_LOCK = get_cache_lock("score_prediction")
 
 PLAYER_MATCH_PAYLOAD_CACHE: dict[int, dict] = {}
 PLAYING_XI_STATUS_CACHE: dict[tuple, dict] = {}
 LAST_MATCH_XI_CACHE: dict[tuple[int, str], dict] = {}
+SCORE_PREDICTION_CACHE: dict[int, dict[int, float]] = {}
 
 
 def _row_to_dict(row) -> dict:
@@ -163,6 +165,56 @@ def set_cached_last_match_xi(match_id: int, team: str, payload: dict) -> dict:
     with LAST_MATCH_XI_LOCK:
         LAST_MATCH_XI_CACHE[cache_key] = copy.deepcopy(payload)
         return copy.deepcopy(LAST_MATCH_XI_CACHE[cache_key])
+
+
+def invalidate_score_prediction_cache(match_id: int | None = None) -> None:
+    with SCORE_PREDICTION_LOCK:
+        if match_id is None:
+            SCORE_PREDICTION_CACHE.clear()
+        else:
+            SCORE_PREDICTION_CACHE.pop(int(match_id), None)
+
+
+def _copy_score_prediction_map(predictions: dict[int, float] | None) -> dict[int, float]:
+    if not predictions:
+        return {}
+    return {int(user_id): float(points) for user_id, points in predictions.items()}
+
+
+def get_cached_match_predictions(match_id: int) -> dict[int, float]:
+    with SCORE_PREDICTION_LOCK:
+        return _copy_score_prediction_map(SCORE_PREDICTION_CACHE.get(int(match_id)))
+
+
+def set_cached_score_prediction(user_id: int, match_id: int, predicted_points: float) -> None:
+    with SCORE_PREDICTION_LOCK:
+        match_predictions = SCORE_PREDICTION_CACHE.setdefault(int(match_id), {})
+        match_predictions[int(user_id)] = float(predicted_points)
+
+
+def prime_score_prediction_cache(match_ids: list[int] | None = None) -> dict[int, int]:
+    db = get_db()
+    params: list[int] = []
+    query = "SELECT match_id, user_id, predicted_points FROM score_predictions"
+    if match_ids:
+        normalized_ids = [int(match_id) for match_id in match_ids]
+        placeholders = ",".join("?" * len(normalized_ids))
+        query += f" WHERE match_id IN ({placeholders})"
+        params.extend(normalized_ids)
+
+    rows = db.execute(query, params).fetchall()
+    grouped: dict[int, dict[int, float]] = {}
+    for row in rows:
+        match_id = int(row["match_id"])
+        grouped.setdefault(match_id, {})[int(row["user_id"])] = float(row["predicted_points"])
+
+    with SCORE_PREDICTION_LOCK:
+        if match_ids is None:
+            SCORE_PREDICTION_CACHE.clear()
+        for match_id, predictions in grouped.items():
+            SCORE_PREDICTION_CACHE[match_id] = predictions
+
+    return {match_id: len(predictions) for match_id, predictions in grouped.items()}
 
 
 def prime_static_cache():
@@ -1084,25 +1136,42 @@ def save_score_prediction(user_id: int, match_id: int, predicted_points: float) 
         (user_id, match_id, predicted_points, created_at),
     )
     db.commit()
+    set_cached_score_prediction(user_id, match_id, predicted_points)
 
 
 def get_score_prediction(user_id: int, match_id: int) -> float | None:
+    cached = get_cached_match_predictions(match_id)
+    if user_id in cached:
+        return float(cached[int(user_id)])
+
     db = get_db()
     row = db.execute(
         "SELECT predicted_points FROM score_predictions WHERE user_id = ? AND match_id = ?",
         (user_id, match_id),
     ).fetchone()
-    return float(row["predicted_points"]) if row else None
+    if row:
+        predicted_points = float(row["predicted_points"])
+        set_cached_score_prediction(user_id, match_id, predicted_points)
+        return predicted_points
+    return None
 
 
 def get_match_predictions(match_id: int) -> dict[int, float]:
     """Return {user_id: predicted_points} for all predictions on a match."""
+    cached = get_cached_match_predictions(match_id)
+    if cached:
+        return cached
+
     db = get_db()
     rows = db.execute(
         "SELECT user_id, predicted_points FROM score_predictions WHERE match_id = ?",
         (match_id,),
     ).fetchall()
-    return {int(r["user_id"]): float(r["predicted_points"]) for r in rows}
+    predictions = {int(r["user_id"]): float(r["predicted_points"]) for r in rows}
+    if predictions:
+        with SCORE_PREDICTION_LOCK:
+            SCORE_PREDICTION_CACHE[int(match_id)] = dict(predictions)
+    return predictions
 
 
 def compute_prediction_bonuses(match_id: int) -> dict[int, dict]:

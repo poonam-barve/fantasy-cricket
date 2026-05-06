@@ -247,17 +247,15 @@ def _build_match_scores_payload(match_id: int, match_row, registry, players_data
     if not html_content:
         return None
 
-    pp_rows = db.execute(
-        "SELECT * FROM player_points WHERE match_id = ?",
-        (match_id,),
-    ).fetchall()
     pp_lookup: dict[str, float] = {}
     role_lookup: dict[str, str] = {}
-    for row in pp_rows:
-        pp_lookup[str(row["player_id"])] = float(row["points"])
-        role_lookup[str(row["player_id"])] = row["role"]
+    for p in match_obj.players.values():
+        pid_str = str(p.player_id)
+        role = registry.players.get(p.player_id, {}).get("Role")
+        if role:
+            role_lookup[pid_str] = role
+        pp_lookup[pid_str] = float(p.calculate_player_points(role) if role else 0)
 
-    pp_lookup, role_lookup = _fill_missing_player_points(match_obj, registry, pp_lookup, role_lookup)
     owners_by_player = _load_player_owners(db, match_id)
     team1 = clean_team_name(_row_value(match_row, "team1", "Team1", default=""))
     team2 = clean_team_name(_row_value(match_row, "team2", "Team2", default=""))
@@ -281,14 +279,10 @@ def _build_match_scores_payload(match_id: int, match_row, registry, players_data
         ).fetchall()
 
     players = []
-    # Build a live per-player points lookup from calculated values so
-    # contestant totals use the same source as the per-player breakdown.
-    live_pp_lookup: dict[str, float] = {}
     for p in match_obj.players.values():
         pid_str = str(p.player_id)
         role = role_lookup.get(pid_str) or registry.players.get(p.player_id, {}).get("Role")
         calculated_points = p.calculate_player_points(role) if role else 0
-        live_pp_lookup[pid_str] = float(calculated_points)
         players.append({
             "player_id": int(p.player_id),
             "name": p.name,
@@ -330,7 +324,7 @@ def _build_match_scores_payload(match_id: int, match_row, registry, players_data
     # Use live-calculated per-player points to compute contestant totals for
     # the main scores response so that these totals stay in sync with the
     # team breakdown (which uses the cached snapshot).
-    contestants = _compute_contestants_from_player_points(db, match_id, live_pp_lookup)
+    contestants = _compute_contestants_from_player_points(db, match_id, pp_lookup)
     contestants = _enrich_contestants_with_predictions(contestants, match_id, match_row)
     contestants = _rank_contestants(contestants)
 
