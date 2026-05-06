@@ -11,6 +11,7 @@ from backend.services.double_buffer_cache import DoubleBufferCache
 from backend.services.match_status import resolve_match_status, resolve_match_status_from_row
 from backend.services.scraper import get_cached_toss_info
 from backend.services.venue_stats import (
+    get_venue_stats,
     get_today_cached_venue_stats,
     prime_today_venue_cache,
 )
@@ -83,7 +84,14 @@ def _build_matches_payload() -> list[dict]:
 
     result = []
     for match in prepared_matches:
-        match["venue"] = get_today_cached_venue_stats(match["id"], match["match_date"], match["status"])
+        venue_stats = get_today_cached_venue_stats(match["id"], match["match_date"], match["status"])
+        if venue_stats is None and match["match_date"] == today_key and match["status"] in {"future", "lineups"}:
+            venue_stats = get_venue_stats(
+                match.get("team1", ""),
+                match.get("team2", ""),
+                match.get("venue"),
+            )
+        match["venue"] = venue_stats
         cached_toss = get_cached_toss_info(int(match["id"]))
         match["toss"] = cached_toss if cached_toss and cached_toss.get("announced") else None
         result.append(match)
@@ -169,6 +177,29 @@ def _attach_user_match_ranks(payload: list[dict], user_id: int) -> list[dict]:
             "name": row["name"],
             "points": round(float(row["points"] or 0), 2),
         })
+
+    # Prefer the live in-memory scores snapshot for live matches so the
+    # dashboard rank does not depend on DB writes from every scheduler tick.
+    try:
+        from backend.routes.scores import get_cached_live_match_contestants
+
+        for match in payload:
+            if match.get("status") != "live":
+                continue
+            match_id = int(match["id"])
+            cached_contestants = get_cached_live_match_contestants(match_id)
+            if cached_contestants:
+                match_points[match_id] = [
+                    {
+                        "user_id": int(contestant["user_id"]),
+                        "name": contestant["name"],
+                        "points": round(float(contestant.get("points", 0) or 0), 2),
+                    }
+                    for contestant in cached_contestants
+                    if contestant.get("user_id") is not None
+                ]
+    except Exception:
+        pass
 
     for match_id, contestants in match_points.items():
         try:

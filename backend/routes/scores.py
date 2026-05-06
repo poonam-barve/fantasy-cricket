@@ -102,6 +102,17 @@ def _get_cached_score_payload(match_id: int) -> dict | None:
     return _copy_score_payload(payload)
 
 
+def get_cached_live_match_contestants(match_id: int) -> list[dict] | None:
+    snapshot = SCORES_RESPONSE_CACHE.read()
+    if not snapshot:
+        return None
+    payload = snapshot.get(int(match_id))
+    if not payload or payload.get("match_status") != "live":
+        return None
+    contestants = payload.get("contestants") or []
+    return copy.deepcopy(contestants)
+
+
 def _get_scores_cache_version() -> int:
     return 0
 
@@ -540,9 +551,15 @@ def refresh_scores_response_cache_once(match_statuses: set[str] | None = None) -
                     traceback.print_exc()
 
             _store_scores_response_cache(snapshot)
-            if updated_match_ids:
+            persisted_match_ids = {
+                int(match_id)
+                for match_id in updated_match_ids
+                if str(snapshot.get(int(match_id), {}).get("match_status") or "").strip().lower() in {"completed", "nr"}
+            }
+
+            if persisted_match_ids:
                 try:
-                    _persist_scores_snapshot_to_db(snapshot, updated_match_ids)
+                    _persist_scores_snapshot_to_db(snapshot, persisted_match_ids)
                 except Exception as exc:
                     _log_scores_cache(f"targeted persistence failed: {exc}")
                     traceback.print_exc()
