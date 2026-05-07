@@ -36,11 +36,13 @@ PLAYER_MATCH_PAYLOAD_LOCK = get_cache_lock("player_match_payloads")
 PLAYING_XI_STATUS_LOCK = get_cache_lock("playing_xi_status")
 LAST_MATCH_XI_LOCK = get_cache_lock("last_match_xi")
 SCORE_PREDICTION_LOCK = get_cache_lock("score_prediction")
+TEAM_CONTESTANT_LOCK = get_cache_lock("team_contestants")
 
 PLAYER_MATCH_PAYLOAD_CACHE: dict[int, dict] = {}
 PLAYING_XI_STATUS_CACHE: dict[tuple, dict] = {}
 LAST_MATCH_XI_CACHE: dict[tuple[int, str], dict] = {}
 SCORE_PREDICTION_CACHE: dict[int, dict[int, float]] = {}
+TEAM_CONTESTANT_CACHE: dict[int, list[dict]] = {}
 
 
 def _row_to_dict(row) -> dict:
@@ -215,6 +217,96 @@ def prime_score_prediction_cache(match_ids: list[int] | None = None) -> dict[int
             SCORE_PREDICTION_CACHE[match_id] = predictions
 
     return {match_id: len(predictions) for match_id, predictions in grouped.items()}
+
+
+def _fetch_team_contestants(match_ids: list[int] | None = None) -> dict[int, list[dict]]:
+    db = get_db()
+    params: list[int] = []
+    query = """
+        SELECT
+            ut.match_id,
+            u.id AS user_id,
+            u.name AS user_name,
+            MAX(COALESCE(ut.updated_at, '')) AS last_team_updated
+        FROM user_teams ut
+        JOIN users u ON u.id = ut.user_id
+        WHERE u.is_active = 1
+    """
+    if match_ids:
+        normalized_ids = [int(match_id) for match_id in match_ids]
+        placeholders = ",".join("?" * len(normalized_ids))
+        query += f" AND ut.match_id IN ({placeholders})"
+        params.extend(normalized_ids)
+
+    query += """
+        GROUP BY ut.match_id, u.id, u.name
+        ORDER BY ut.match_id, last_team_updated DESC, u.name ASC
+    """
+
+    rows = db.execute(query, params).fetchall()
+    grouped: dict[int, list[dict]] = {}
+    for row in rows:
+        mid = int(row["match_id"])
+        grouped.setdefault(mid, []).append(
+            {
+                "user_id": int(row["user_id"]),
+                "name": row["user_name"],
+                "last_team_updated": row["last_team_updated"] or None,
+            }
+        )
+    return grouped
+
+
+def get_cached_match_contestants(match_id: int) -> list[dict] | None:
+    with TEAM_CONTESTANT_LOCK:
+        payload = TEAM_CONTESTANT_CACHE.get(int(match_id))
+        return copy.deepcopy(payload) if payload is not None else None
+
+
+def set_cached_match_contestants(match_id: int, contestants: list[dict]) -> None:
+    with TEAM_CONTESTANT_LOCK:
+        TEAM_CONTESTANT_CACHE[int(match_id)] = copy.deepcopy(contestants)
+
+
+def invalidate_match_contestant_cache(match_id: int | None = None) -> None:
+    with TEAM_CONTESTANT_LOCK:
+        if match_id is None:
+            TEAM_CONTESTANT_CACHE.clear()
+        else:
+            TEAM_CONTESTANT_CACHE.pop(int(match_id), None)
+
+
+def refresh_match_contestant_cache(match_id: int) -> list[dict]:
+    grouped = _fetch_team_contestants([int(match_id)])
+    contestants = grouped.get(int(match_id), [])
+    set_cached_match_contestants(int(match_id), contestants)
+    return copy.deepcopy(contestants)
+
+
+def prime_contestant_cache(match_ids: list[int] | None = None) -> dict[int, int]:
+    db = get_db()
+    params: list[int] = []
+    query = "SELECT id FROM matches"
+    if match_ids:
+        normalized_ids = [int(match_id) for match_id in match_ids]
+        placeholders = ",".join("?" * len(normalized_ids))
+        query += f" WHERE id IN ({placeholders})"
+        params.extend(normalized_ids)
+
+    match_rows = db.execute(query, params).fetchall()
+    all_match_ids = [int(row["id"]) for row in match_rows]
+    if match_ids is None:
+        grouped = _fetch_team_contestants()
+    else:
+        grouped = _fetch_team_contestants(all_match_ids)
+
+    with TEAM_CONTESTANT_LOCK:
+        if match_ids is None:
+            TEAM_CONTESTANT_CACHE.clear()
+        for match_id in all_match_ids:
+            TEAM_CONTESTANT_CACHE[int(match_id)] = copy.deepcopy(grouped.get(int(match_id), []))
+
+    return {match_id: len(TEAM_CONTESTANT_CACHE.get(match_id, [])) for match_id in all_match_ids}
 
 
 def prime_static_cache():
@@ -910,6 +1002,7 @@ def save_team(mobile, name, match_id, selected_players, captain, vice_captain, p
 
     db.commit()
     prune_user_backups(user_id, mid, [int(pid) for pid in selected_players])
+    refresh_match_contestant_cache(mid)
 
 
 # ---------------------------------------------------------------------------

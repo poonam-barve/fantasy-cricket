@@ -9,11 +9,23 @@ matches complete.
 
 import json
 import random
+import copy
+import threading
 from datetime import datetime, timedelta
 from collections import defaultdict
 
 from backend.config import IST
 from backend.database import get_db
+
+WEEKEND_TOURNAMENT_CACHE_LOCK = threading.Lock()
+WEEKEND_TOURNAMENT_CACHE = {
+    "primed": False,
+    "current": None,
+    "upcoming": None,
+    "history": [],
+    "by_id": {},
+    "match_tags": {},
+}
 
 
 def _get_round_labels(num_rounds: int) -> dict[int, str]:
@@ -140,6 +152,9 @@ def detect_and_create_tournaments() -> list[int]:
             print(f"[WEEKEND] Created tournament #{row['id']} qualifier=M{qualifier['id']} "
                   f"weekend=M{weekend_match_ids} rounds={num_rounds}")
 
+    if created_ids:
+        invalidate_weekend_tournament_cache()
+        prime_weekend_tournament_cache()
     return created_ids
 
 
@@ -232,6 +247,8 @@ def seed_bracket(tournament_id: int) -> dict:
         (tournament_id,),
     )
     db.commit()
+    invalidate_weekend_tournament_cache()
+    prime_weekend_tournament_cache()
 
     print(f"[WEEKEND] Seeded tournament #{tournament_id} with {num_players} players, "
           f"{num_matchups} matchups, {num_rounds} rounds")
@@ -315,6 +332,8 @@ def advance_round(tournament_id: int, completed_match_id: int) -> dict:
             (winners[0], tournament_id),
         )
         db.commit()
+        invalidate_weekend_tournament_cache()
+        prime_weekend_tournament_cache()
         print(f"[WEEKEND] Tournament #{tournament_id} completed! Winner: user #{winners[0]}")
         return {"status": "completed", "winner_user_id": winners[0]}
 
@@ -336,6 +355,8 @@ def advance_round(tournament_id: int, completed_match_id: int) -> dict:
         )
 
     db.commit()
+    invalidate_weekend_tournament_cache()
+    prime_weekend_tournament_cache()
     print(f"[WEEKEND] Advanced tournament #{tournament_id} to round {next_round} "
           f"({round_labels.get(next_round, '')}), {num_matchups} matchups")
     return {"status": "advanced", "round": next_round, "matchups": num_matchups}
@@ -382,117 +403,30 @@ def on_match_completed(match_id: int):
 
 def get_current_tournament() -> dict | None:
     """Get the active or most recent tournament with full bracket data."""
-    db = get_db()
-
-    tournament = db.execute(
-        """
-        SELECT * FROM weekend_tournaments
-        WHERE status IN ('active', 'qualifying')
-        ORDER BY id DESC LIMIT 1
-        """
-    ).fetchone()
-
-    if not tournament:
-        # Fall back to next upcoming pending tournament (by qualifier date)
-        tournament = db.execute(
-            """
-            SELECT wt.* FROM weekend_tournaments wt
-            JOIN matches m ON m.id = wt.qualifying_match_id
-            WHERE wt.status = 'pending'
-            ORDER BY m.match_date ASC LIMIT 1
-            """
-        ).fetchone()
-
-    if not tournament:
-        # Fall back to most recent completed
-        tournament = db.execute(
-            "SELECT * FROM weekend_tournaments WHERE status = 'completed' ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-
-    if not tournament:
-        return None
-
-    return _build_tournament_response(db, tournament)
+    cached = _read_weekend_tournament_cache()
+    return cached["current"]
 
 
 def get_tournament_by_id(tournament_id: int) -> dict | None:
-    db = get_db()
-    tournament = db.execute(
-        "SELECT * FROM weekend_tournaments WHERE id = ?", (tournament_id,)
-    ).fetchone()
-    if not tournament:
-        return None
-    return _build_tournament_response(db, tournament)
+    cached = _read_weekend_tournament_cache()
+    return cached["by_id"].get(int(tournament_id))
 
 
 def get_tournament_history() -> list[dict]:
-    db = get_db()
-    rows = db.execute(
-        """
-        SELECT wt.id, wt.status, wt.qualifying_match_id,
-               wt.winner_user_id, u.name AS winner_name,
-               m.match_date AS qualifier_date
-        FROM weekend_tournaments wt
-        LEFT JOIN users u ON u.id = wt.winner_user_id
-        LEFT JOIN matches m ON m.id = wt.qualifying_match_id
-        ORDER BY wt.id DESC
-        """
-    ).fetchall()
-
-    return [
-        {
-            "id": r["id"],
-            "status": r["status"],
-            "qualifier_date": r["qualifier_date"],
-            "winner": {"user_id": r["winner_user_id"], "name": r["winner_name"]}
-            if r["winner_user_id"]
-            else None,
-        }
-        for r in rows
-    ]
+    cached = _read_weekend_tournament_cache()
+    return cached["history"]
 
 
 def get_upcoming_tournament() -> dict | None:
     """Get the next pending tournament that hasn't started yet."""
-    db = get_db()
-    tournament = db.execute(
-        """
-        SELECT wt.*
-        FROM weekend_tournaments wt
-        LEFT JOIN matches m ON m.id = wt.qualifying_match_id
-        WHERE wt.status = 'pending'
-        ORDER BY m.match_date ASC, m.match_time ASC, wt.id ASC
-        LIMIT 1
-        """
-    ).fetchone()
-    if not tournament:
-        return None
-    return _build_tournament_response(db, tournament)
+    cached = _read_weekend_tournament_cache()
+    return cached["upcoming"]
 
 
 def get_tournament_match_tags() -> dict[int, dict]:
     """Returns a map of match_id -> tournament tag info for all active/pending tournaments."""
-    db = get_db()
-    tournaments = db.execute(
-        "SELECT * FROM weekend_tournaments WHERE status IN ('pending', 'qualifying', 'active')"
-    ).fetchall()
-
-    tags = {}
-    for t in tournaments:
-        tags[t["qualifying_match_id"]] = {
-            "tournament_id": t["id"],
-            "is_qualifier": True,
-            "round_label": "Qualifier",
-        }
-        match_ids = _get_weekend_match_ids(t)
-        labels = _get_round_labels(len(match_ids))
-        for i, mid in enumerate(match_ids):
-            tags[mid] = {
-                "tournament_id": t["id"],
-                "is_qualifier": False,
-                "round_label": labels.get(i + 1, f"Round {i + 1}"),
-            }
-    return tags
+    cached = _read_weekend_tournament_cache()
+    return cached["match_tags"]
 
 
 # ──────────────────────────────────────────────
@@ -702,3 +636,108 @@ def _get_round_for_match(tournament, match_id: int) -> int | None:
         if mid == match_id:
             return i + 1
     return None
+
+
+def invalidate_weekend_tournament_cache() -> None:
+    with WEEKEND_TOURNAMENT_CACHE_LOCK:
+        WEEKEND_TOURNAMENT_CACHE["primed"] = False
+        WEEKEND_TOURNAMENT_CACHE["current"] = None
+        WEEKEND_TOURNAMENT_CACHE["upcoming"] = None
+        WEEKEND_TOURNAMENT_CACHE["history"] = []
+        WEEKEND_TOURNAMENT_CACHE["by_id"] = {}
+        WEEKEND_TOURNAMENT_CACHE["match_tags"] = {}
+
+
+def prime_weekend_tournament_cache() -> dict:
+    db = get_db()
+
+    current = None
+    upcoming = None
+    history: list[dict] = []
+    by_id: dict[int, dict] = {}
+    match_tags: dict[int, dict] = {}
+
+    tournament_rows = db.execute(
+        "SELECT * FROM weekend_tournaments ORDER BY id DESC"
+    ).fetchall()
+
+    active_or_qualifying = None
+    pending_upcoming = None
+    completed_latest = None
+
+    for tournament in tournament_rows:
+        response = _build_tournament_response(db, tournament)
+        by_id[int(tournament["id"])] = response
+
+        status = str(tournament["status"] or "").strip().lower()
+        if status in {"active", "qualifying"} and active_or_qualifying is None:
+            active_or_qualifying = response
+        elif status == "pending" and pending_upcoming is None:
+            pending_upcoming = response
+        elif status == "completed" and completed_latest is None:
+            completed_latest = response
+
+        if status in {"pending", "qualifying", "active"}:
+            tags = response.get("matches", {})
+            weekend_match_ids = response.get("weekend_match_ids", [])
+            match_tags[int(tournament["qualifying_match_id"])] = {
+                "tournament_id": int(tournament["id"]),
+                "is_qualifier": True,
+                "round_label": "Qualifier",
+            }
+            labels = _get_round_labels(len(weekend_match_ids))
+            for i, mid in enumerate(weekend_match_ids):
+                match_tags[int(mid)] = {
+                    "tournament_id": int(tournament["id"]),
+                    "is_qualifier": False,
+                    "round_label": labels.get(i + 1, f"Round {i + 1}"),
+                }
+
+    if active_or_qualifying:
+        current = active_or_qualifying
+    elif pending_upcoming:
+        current = pending_upcoming
+    else:
+        current = completed_latest
+
+    history_rows = db.execute(
+        """
+        SELECT wt.id, wt.status, wt.qualifying_match_id,
+               wt.winner_user_id, u.name AS winner_name,
+               m.match_date AS qualifier_date
+        FROM weekend_tournaments wt
+        LEFT JOIN users u ON u.id = wt.winner_user_id
+        LEFT JOIN matches m ON m.id = wt.qualifying_match_id
+        ORDER BY wt.id DESC
+        """
+    ).fetchall()
+    for r in history_rows:
+        history.append({
+            "id": r["id"],
+            "status": r["status"],
+            "qualifier_date": r["qualifier_date"],
+            "winner": {"user_id": r["winner_user_id"], "name": r["winner_name"]}
+            if r["winner_user_id"]
+            else None,
+        })
+
+    with WEEKEND_TOURNAMENT_CACHE_LOCK:
+        WEEKEND_TOURNAMENT_CACHE["primed"] = True
+        WEEKEND_TOURNAMENT_CACHE["current"] = copy.deepcopy(current)
+        WEEKEND_TOURNAMENT_CACHE["upcoming"] = copy.deepcopy(pending_upcoming)
+        WEEKEND_TOURNAMENT_CACHE["history"] = copy.deepcopy(history)
+        WEEKEND_TOURNAMENT_CACHE["by_id"] = {k: copy.deepcopy(v) for k, v in by_id.items()}
+        WEEKEND_TOURNAMENT_CACHE["match_tags"] = copy.deepcopy(match_tags)
+
+    return {
+        "current": bool(current),
+        "upcoming": bool(pending_upcoming),
+        "history": len(history),
+        "by_id": len(by_id),
+        "match_tags": len(match_tags),
+    }
+
+
+def _read_weekend_tournament_cache() -> dict:
+    with WEEKEND_TOURNAMENT_CACHE_LOCK:
+        return copy.deepcopy(WEEKEND_TOURNAMENT_CACHE)

@@ -195,6 +195,25 @@ class Tournament:
         if active_count < 22 or active_count > 24:
             print(f"[ALERT] Match {match_id}: active scoring player count is {active_count} (expected 22 to 24)")
 
+    def _ensure_match_loaded(self, match_id: str) -> Match | None:
+        match = self.matches.get(match_id)
+        if match:
+            return match
+
+        match_row = self.match_rows.get(match_id)
+        if not match_row:
+            return None
+
+        team1 = match_row.get("Team1") or match_row.get("team1") or ""
+        team2 = match_row.get("Team2") or match_row.get("team2") or ""
+        match_date = match_row.get("Date") or match_row.get("match_date") or ""
+        if not team1 or not team2:
+            return None
+
+        match = Match(match_id, team1, team2, self.registry, match_date)
+        self.matches[match_id] = match
+        return match
+
     def _set_persistent_match_status(self, match_id: str, status: str) -> bool:
         changed = data_service.update_match_status(int(match_id), status)
         if not changed:
@@ -306,6 +325,10 @@ class Tournament:
 
         if use_playing_xi:
             match_row = self.match_rows.get(match_id, {})
+            match = self._ensure_match_loaded(match_id)
+            if not match:
+                self._scheduler_log("XI", f"match {match_id} has no match row/object, skipping")
+                return
             if force_refresh_playing_xi:
                 playing_xi = refresh_playing_xi_cache(
                     int(match_id),
@@ -690,6 +713,21 @@ class Tournament:
         for match_id in lineup_match_ids:
             try:
                 match_row = self.match_rows.get(match_id, {})
+                status = self.get_match_status(match_row)
+                lineup_window_open = data_service.get_cached_match_playing_xi(
+                    int(match_id),
+                    match_row.get("Team1", ""),
+                    match_row.get("Team2", ""),
+                    match_row.get("Date", ""),
+                    match_row.get("Time", ""),
+                )
+                self._scheduler_log(
+                    "XI",
+                    f"match {match_id} status={status} team1={match_row.get('Team1', '')} "
+                    f"team2={match_row.get('Team2', '')} date={match_row.get('Date', '')} "
+                    f"time={match_row.get('Time', '')} cached_announced={bool(lineup_window_open and lineup_window_open.get('announced'))} "
+                    f"cached_final={data_service.is_cached_playing_xi_final(int(match_id), match_row.get('Team1', ''), match_row.get('Team2', ''), match_row.get('Date', ''), match_row.get('Time', ''))}"
+                )
                 if data_service.is_cached_playing_xi_final(
                     int(match_id),
                     match_row.get("Team1", ""),
@@ -769,19 +807,25 @@ class Tournament:
         for match_id in toss_match_ids:
             try:
                 match_row = self.match_rows.get(match_id, {})
+                match = self._ensure_match_loaded(match_id)
+                if not match:
+                    self._scheduler_log("TOSS", f"match {match_id} has no match row/object, skipping")
+                    continue
+                self._scheduler_log(
+                    "TOSS",
+                    f"match {match_id} status={self.get_match_status(match_row)} "
+                    f"team1={match_row.get('Team1', '')} team2={match_row.get('Team2', '')} "
+                    f"date={match_row.get('Date', '')} time={match_row.get('Time', '')}",
+                )
                 if is_cached_toss_announced(int(match_id)):
                     announced += 1
                     self._scheduler_log("TOSS", f"match {match_id} already announced, skipping")
                     continue
-                match_obj = self.matches.get(match_id)
-                if not match_obj:
-                    self._scheduler_log("TOSS", f"match {match_id} has no match object, skipping")
-                    continue
                 self._scheduler_log("TOSS", f"match {match_id} refreshing toss cache")
                 fetch_toss_info(
                     int(match_id),
-                    match_obj.team1,
-                    match_obj.team2,
+                    match.team1,
+                    match.team2,
                     match_row.get("Date"),
                     match_row.get("Time"),
                     match_row.get("TossTime") or match_row.get("toss_time"),

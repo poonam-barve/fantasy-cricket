@@ -354,6 +354,7 @@ async def submit_team(
     db.commit()
     data_service.save_user_backups(user["id"], body.match_id, normalized_backups)
     data_service.prune_user_backups(user["id"], body.match_id, player_ids)
+    data_service.refresh_match_contestant_cache(body.match_id)
 
     if body.predicted_points is not None:
         data_service.save_score_prediction(user["id"], body.match_id, body.predicted_points)
@@ -391,28 +392,5 @@ async def match_contestants_with_updates(
     match_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    db = get_db()
-    rows = db.execute(
-        """
-        SELECT
-            u.id AS user_id,
-            u.name,
-            MAX(COALESCE(ut.updated_at, '')) AS last_team_updated
-        FROM user_teams ut
-        JOIN users u ON u.id = ut.user_id
-        WHERE ut.match_id = ?
-          AND u.is_active = 1
-        GROUP BY u.id, u.name
-        ORDER BY last_team_updated DESC, u.name ASC
-        """,
-        (match_id,),
-    ).fetchall()
-
-    return [
-        {
-            "user_id": row["user_id"],
-            "name": row["name"],
-            "last_team_updated": row["last_team_updated"] or None,
-        }
-        for row in rows
-    ]
+    contestants = data_service.get_cached_match_contestants(match_id)
+    return contestants or []

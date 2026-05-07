@@ -28,6 +28,7 @@ from backend.firebase_setup import init_firebase
 from backend.services import data_service
 from backend.services.scraper import compute_toss_time
 from backend.services.venue_stats import prime_today_venue_cache
+from backend.services.weekend_tournament_service import prime_weekend_tournament_cache
 from backend.models.tournament import Tournament
 from backend.routes import auth, matches, players, teams, scores, leaderboard, admin, weekend_tournament
 
@@ -373,6 +374,14 @@ def _run_background_warmup():
             data_service.prime_static_cache()
             prediction_summary = data_service.prime_score_prediction_cache()
             print(f"[BOOT] Primed score prediction cache matches={len(prediction_summary)}")
+            contestant_summary = data_service.prime_contestant_cache()
+            print(f"[BOOT] Primed contestant cache matches={len(contestant_summary)}")
+            weekend_summary = prime_weekend_tournament_cache()
+            print(
+                "[BOOT] Primed weekend tournament cache "
+                f"current={weekend_summary['current']} upcoming={weekend_summary['upcoming']} "
+                f"history={weekend_summary['history']} by_id={weekend_summary['by_id']}"
+            )
 
             _, today_live_matches, live_match_ids = _load_todays_live_matches()
             prime_today_venue_cache(today_live_matches)

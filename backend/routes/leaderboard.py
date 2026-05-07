@@ -556,21 +556,23 @@ async def export_points_table(user: dict = Depends(get_current_user)):
     if Workbook is None:
         raise HTTPException(status_code=500, detail="Excel export dependency is not available")
 
-    db = get_db()
-    effective_match_points = _load_effective_match_points(db)
-    leaderboard_rows = _build_leaderboard(db, effective_match_points)
-    weekend_bonus_map = _get_weekend_bonus_map(db)
+    cached_snapshot = _get_cached_leaderboard_snapshot()
+    if not cached_snapshot:
+        raise HTTPException(status_code=503, detail="Points table cache not ready")
 
     users = [
         {
             "user_id": int(row["user_id"]),
             "name": row["name"],
             "leaderboard_points": round(float(row["points"]), 2),
+            "weekend_bonus": int(row.get("weekend_wins", 0)) * 200,
         }
-        for row in leaderboard_rows
+        for row in cached_snapshot.get("leaderboard", [])
     ]
 
     leaderboard_total_map = {entry["user_id"]: entry["leaderboard_points"] for entry in users}
+    weekend_bonus_map = {entry["user_id"]: entry["weekend_bonus"] for entry in users}
+    points_rows = cached_snapshot.get("points_table", [])
 
     workbook = Workbook()
     worksheet = workbook.active
@@ -578,9 +580,13 @@ async def export_points_table(user: dict = Depends(get_current_user)):
     headers = ["Match ID"] + [user_row["name"] for user_row in users]
     worksheet.append(headers)
 
-    for match_id in sorted(effective_match_points.keys()):
-        contestants = effective_match_points.get(match_id, [])
-        points_map = {int(contestant["user_id"]): round(float(contestant["points"]), 2) for contestant in contestants}
+    match_points_map: dict[int, dict[int, float]] = {}
+    for row in points_rows:
+        match_id = int(row["match_id"])
+        match_points_map.setdefault(match_id, {})[int(row["user_id"])] = round(float(row["points"]), 2)
+
+    for match_id in sorted(match_points_map.keys()):
+        points_map = match_points_map.get(match_id, {})
         row = [int(match_id)]
         for user_row in users:
             row.append(points_map.get(user_row["user_id"], 0))

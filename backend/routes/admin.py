@@ -81,6 +81,19 @@ def _refresh_admin_caches(
         except Exception as exc:
             print(f"[ADMIN] scores cache refresh failed: {exc}")
 
+    if tables & {"users", "user_teams"}:
+        try:
+            if match_id is not None and tables == {"user_teams"}:
+                data_service.refresh_match_contestant_cache(match_id)
+            else:
+                threading.Thread(
+                    target=data_service.prime_contestant_cache,
+                    daemon=True,
+                    name="admin-contestant-cache-refresh",
+                ).start()
+        except Exception as exc:
+            print(f"[ADMIN] contestant cache refresh failed: {exc}")
+
 
 def _queue_admin_refresh(
     *,
@@ -1013,7 +1026,7 @@ async def update_team(
 
     db.commit()
     data_service.prune_user_backups(body.user_id, body.match_id, [player.player_id for player in body.players])
-    _refresh_admin_caches(tables={"user_teams"})
+    _refresh_admin_caches(tables={"user_teams"}, match_id=body.match_id)
 
     return {
         "success": True,
@@ -1065,6 +1078,15 @@ async def clear_table(
 
     db.execute(CLEARABLE_TABLES[table_name])
     db.commit()
+    if table_name in {"players", "matches"}:
+        data_service.invalidate_match_contestant_cache()
+        threading.Thread(
+            target=data_service.prime_contestant_cache,
+            daemon=True,
+            name="admin-contestant-cache-prime",
+        ).start()
+    elif table_name in {"users", "user_teams"}:
+        data_service.invalidate_match_contestant_cache()
     _refresh_admin_caches(
         tables={table_name},
         refresh_schedule_map=(table_name == "matches"),
@@ -1101,5 +1123,5 @@ async def admin_submit_team(body: AdminSubmitTeamBody, user: dict = Depends(requ
         )
     db.commit()
     data_service.prune_user_backups(body.user_id, body.match_id, [player.player_id for player in body.players])
-    _refresh_admin_caches(tables={"user_teams"})
+    _refresh_admin_caches(tables={"user_teams"}, match_id=body.match_id)
     return {"success": True}

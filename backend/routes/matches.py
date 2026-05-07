@@ -134,7 +134,6 @@ def _is_match_completed(db, match_id: int) -> bool:
 
 
 def _attach_user_match_ranks(payload: list[dict], user_id: int) -> list[dict]:
-    db = get_db()
     relevant_match_ids = [
         int(match["id"])
         for match in payload
@@ -143,51 +142,19 @@ def _attach_user_match_ranks(payload: list[dict], user_id: int) -> list[dict]:
     if not relevant_match_ids:
         return payload
 
-    placeholders = ",".join("?" * len(relevant_match_ids))
-    score_rows = db.execute(
-        """
-        SELECT
-            ut.match_id,
-            ut.user_id,
-            u.name,
-            SUM(
-                COALESCE(pp.points, 0) *
-                CASE
-                    WHEN ut.is_captain = 1 THEN 2.0
-                    WHEN ut.is_vice_captain = 1 THEN 1.5
-                    ELSE 1.0
-                END
-            ) AS points
-        FROM user_teams ut
-        JOIN users u ON u.id = ut.user_id
-        LEFT JOIN player_points pp
-            ON pp.match_id = ut.match_id AND pp.player_id = ut.player_id
-        WHERE u.is_active = 1
-          AND ut.match_id IN (""" + placeholders + """)
-        GROUP BY ut.match_id, ut.user_id, u.name
-        """,
-        relevant_match_ids,
-    ).fetchall()
-
     match_rank_map: dict[int, dict[int, int]] = {}
     match_points: dict[int, list[dict]] = {}
-    for row in score_rows:
-        match_points.setdefault(int(row["match_id"]), []).append({
-            "user_id": int(row["user_id"]),
-            "name": row["name"],
-            "points": round(float(row["points"] or 0), 2),
-        })
-
-    # Prefer the live in-memory scores snapshot for live matches so the
-    # dashboard rank does not depend on DB writes from every scheduler tick.
     try:
-        from backend.routes.scores import get_cached_live_match_contestants
+        from backend.routes.scores import get_cached_live_match_contestants, get_cached_match_scores_payload
 
         for match in payload:
             if match.get("status") != "live":
                 continue
             match_id = int(match["id"])
-            cached_contestants = get_cached_live_match_contestants(match_id)
+            cached_payload = get_cached_match_scores_payload(match_id)
+            cached_contestants = cached_payload.get("contestants") if cached_payload else None
+            if not cached_contestants:
+                cached_contestants = get_cached_live_match_contestants(match_id)
             if cached_contestants:
                 match_points[match_id] = [
                     {
@@ -198,10 +165,13 @@ def _attach_user_match_ranks(payload: list[dict], user_id: int) -> list[dict]:
                     for contestant in cached_contestants
                     if contestant.get("user_id") is not None
                 ]
+            else:
+                print(f"[MATCHES] live rank cache miss match={match_id}")
     except Exception:
         pass
 
     for match_id, contestants in match_points.items():
+        db = get_db()
         try:
             if _is_match_completed(db, match_id):
                 bonuses = data_service.compute_prediction_bonuses(match_id)

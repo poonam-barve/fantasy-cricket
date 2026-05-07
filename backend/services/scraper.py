@@ -1844,6 +1844,12 @@ def _fetch_playing_xi_impl(
         cached = PLAYING_XI_CACHE.get(int(match_id))
     now_ts = time.time()
     allow_cache_read = not _is_before_match_start(match_date, match_time)
+    print(
+        f"[Playing XI] Match {match_id}: refresh requested "
+        f"date={match_date or '<unknown>'} time={match_time or '<unknown>'} "
+        f"toss={toss_time or '<unknown>'} force_refresh={force_refresh} "
+        f"allow_cache_read={allow_cache_read} cached={'yes' if cached else 'no'}"
+    )
     if not toss_time:
         try:
             match_row = data_service.get_match_by_id(int(match_id))
@@ -1853,6 +1859,11 @@ def _fetch_playing_xi_impl(
     if cached:
         payload = _copy_playing_xi_payload(cached["payload"])
         if cached.get("finalized"):
+            print(
+                f"[Playing XI] Match {match_id}: returning finalized cache "
+                f"url={payload.get('url') or '<unknown>'} players={len(payload.get('player_ids', []))} "
+                f"subs={len(payload.get('substitute_ids', []))}"
+            )
             try:
                 data_service.set_cached_match_playing_xi(
                     match_id, team1, team2, match_date or "", match_time or "", payload
@@ -1893,6 +1904,10 @@ def _fetch_playing_xi_impl(
 
     commentary_url = build_cricbuzz_commentary_url(cricbuzz_match_id)
     squads_url = build_cricbuzz_playing_xi_url(cricbuzz_match_id)
+    print(
+        f"[Playing XI] Match {match_id}: resolved cricbuzz_match_id={cricbuzz_match_id} "
+        f"squads_url={squads_url} commentary_url={commentary_url}"
+    )
 
     try:
         squads_html = None
@@ -2125,8 +2140,15 @@ def fetch_toss_info(
             }
         return _copy_toss_payload(payload)
 
-    cricbuzz_match_id = data_service.get_stored_cricbuzz_match_id(int(match_id)) or resolve_cricbuzz_match_id(int(match_id), team1, team2)
+    try:
+        cricbuzz_match_id = data_service.get_stored_cricbuzz_match_id(int(match_id))
+        if not cricbuzz_match_id:
+            cricbuzz_match_id = resolve_cricbuzz_match_id(int(match_id), team1, team2)
+    except Exception as exc:
+        print(f"[Toss] Match {match_id}: match id lookup failed: {exc}")
+        cricbuzz_match_id = None
     if not cricbuzz_match_id:
+        print(f"[Toss] Match {match_id}: no Cricbuzz match id found")
         payload = {"announced": False, "team": None, "decision": None, "text": "", "url": ""}
         with TOSS_INFO_CACHE_LOCK:
             TOSS_INFO_CACHE[int(match_id)] = {
@@ -2138,6 +2160,10 @@ def fetch_toss_info(
 
     commentary_url = build_cricbuzz_commentary_url(cricbuzz_match_id)
     scorecard_url = f"https://www.cricbuzz.com/live-cricket-scorecard/{cricbuzz_match_id}"
+    print(
+        f"[Toss] Match {match_id}: trying commentary_url={commentary_url} "
+        f"scorecard_url={scorecard_url}"
+    )
 
     for url in (commentary_url, scorecard_url):
         try:

@@ -113,6 +113,14 @@ def get_cached_live_match_contestants(match_id: int) -> list[dict] | None:
     return copy.deepcopy(contestants)
 
 
+def get_cached_match_scores_payload(match_id: int) -> dict | None:
+    snapshot = SCORES_RESPONSE_CACHE.read()
+    if not snapshot:
+        return None
+    payload = snapshot.get(int(match_id))
+    return copy.deepcopy(payload) if payload is not None else None
+
+
 def _get_scores_cache_version() -> int:
     return 0
 
