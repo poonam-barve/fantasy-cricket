@@ -270,9 +270,15 @@ def refresh_playing_xi_cache(
 ) -> dict:
     """Refresh and persist Playing XI data for scheduler/admin use."""
     if not _acquire_playing_xi_refresh(match_id):
+        print(f"[Playing XI] Match {match_id}: refresh already inflight, returning cached snapshot")
         return _get_cached_playing_xi_payload(match_id) or {"announced": False, "url": "", "player_ids": [], "substitute_ids": []}
 
     try:
+        print(
+            f"[Playing XI] Match {match_id}: refresh start "
+            f"date={match_date or '<unknown>'} time={match_time or '<unknown>'} "
+            f"toss={toss_time or '<unknown>'} force_refresh=True"
+        )
         return _fetch_playing_xi_impl(
             match_id,
             team1,
@@ -1858,6 +1864,14 @@ def _fetch_playing_xi_impl(
             toss_time = toss_time or None
     if cached:
         payload = _copy_playing_xi_payload(cached["payload"])
+        print(
+            f"[Playing XI] Match {match_id}: cached snapshot "
+            f"announced={bool(payload.get('announced'))} "
+            f"players={len(payload.get('player_ids', []))} "
+            f"subs={len(payload.get('substitute_ids', []))} "
+            f"finalized={bool(cached.get('finalized'))} "
+            f"url={payload.get('url') or '<unknown>'}"
+        )
         if cached.get("finalized"):
             print(
                 f"[Playing XI] Match {match_id}: returning finalized cache "
@@ -1881,6 +1895,11 @@ def _fetch_playing_xi_impl(
             )
 
     if not _should_attempt_playing_xi_fetch(match_date, match_time, toss_time):
+        print(
+            f"[Playing XI] Match {match_id}: fetch gate closed "
+            f"date={match_date or '<unknown>'} time={match_time or '<unknown>'} "
+            f"toss={toss_time or '<unknown>'}"
+        )
         payload = {"announced": False, "url": "", "player_ids": [], "substitute_ids": []}
         try:
             data_service.set_cached_match_playing_xi(
@@ -1890,6 +1909,7 @@ def _fetch_playing_xi_impl(
             pass
         return payload
 
+    print(f"[Playing XI] Match {match_id}: checking Cricbuzz match id")
     cricbuzz_match_id = data_service.get_stored_cricbuzz_match_id(int(match_id)) or resolve_cricbuzz_match_id(int(match_id), team1, team2)
     if not cricbuzz_match_id:
         print(f"[Playing XI] Match {match_id}: no Cricbuzz match id found after schedule lookup")
@@ -1913,15 +1933,24 @@ def _fetch_playing_xi_impl(
         squads_html = None
         print(f"[Playing XI] Match {match_id}: trying {squads_url}")
         res = _session_get(squads_url)
+        print(
+            f"[Playing XI] Match {match_id}: squads_url status={getattr(res, 'status_code', '<unknown>')} "
+            f"url={squads_url}"
+        )
         if res.status_code == 200:
             squads_html = res.text
         elif team1 and team2:
+            print(f"[Playing XI] Match {match_id}: re-resolving Cricbuzz match id after squads miss")
             refreshed_match_id = resolve_cricbuzz_match_id(int(match_id), team1, team2, force_refresh=True)
             if refreshed_match_id and refreshed_match_id != cricbuzz_match_id:
                 cricbuzz_match_id = refreshed_match_id
                 commentary_url = build_cricbuzz_commentary_url(cricbuzz_match_id)
                 squads_url = build_cricbuzz_playing_xi_url(cricbuzz_match_id)
                 res = _session_get(squads_url)
+                print(
+                    f"[Playing XI] Match {match_id}: retry squads_url status={getattr(res, 'status_code', '<unknown>')} "
+                    f"url={squads_url}"
+                )
                 if res.status_code == 200:
                     squads_html = res.text
 
@@ -1941,15 +1970,24 @@ def _fetch_playing_xi_impl(
         if not parsed_from_squads or not parsed_from_squads["finalized"]:
             print(f"[Playing XI] Match {match_id}: trying commentary {commentary_url}")
             commentary_res = _session_get(commentary_url)
+            print(
+                f"[Playing XI] Match {match_id}: commentary_url status={getattr(commentary_res, 'status_code', '<unknown>')} "
+                f"url={commentary_url}"
+            )
             if commentary_res.status_code == 200:
                 commentary_html = commentary_res.text
             elif team1 and team2:
+                print(f"[Playing XI] Match {match_id}: re-resolving Cricbuzz match id after commentary miss")
                 refreshed_match_id = resolve_cricbuzz_match_id(int(match_id), team1, team2, force_refresh=True)
                 if refreshed_match_id and refreshed_match_id != cricbuzz_match_id:
                     cricbuzz_match_id = refreshed_match_id
                     commentary_url = build_cricbuzz_commentary_url(cricbuzz_match_id)
                     squads_url = build_cricbuzz_playing_xi_url(cricbuzz_match_id)
                     commentary_res = _session_get(commentary_url)
+                    print(
+                        f"[Playing XI] Match {match_id}: retry commentary_url status={getattr(commentary_res, 'status_code', '<unknown>')} "
+                        f"url={commentary_url}"
+                    )
                     if commentary_res.status_code == 200:
                         commentary_html = commentary_res.text
 

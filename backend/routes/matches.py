@@ -4,11 +4,10 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends
 
 from backend.config import IST, get_current_datetime, get_current_date_key
-from backend.database import get_db
 from backend.middleware.auth import get_current_user
 from backend.services import data_service
 from backend.services.double_buffer_cache import DoubleBufferCache
-from backend.services.match_status import resolve_match_status, resolve_match_status_from_row
+from backend.services.match_status import resolve_match_status
 from backend.services.scraper import get_cached_toss_info
 from backend.services.venue_stats import (
     get_venue_stats,
@@ -122,79 +121,66 @@ def _get_matches_payload(cache_key: str) -> list[dict]:
     return payload
 
 
-def _is_match_completed(db, match_id: int) -> bool:
-    row = db.execute(
-        "SELECT match_date, match_time, status, toss_time FROM matches WHERE id = ?",
-        (match_id,),
-    ).fetchone()
-    if not row:
-        return False
-    status, _locked = resolve_match_status_from_row(row)
-    return status == "completed"
+def _load_match_contestants_for_dashboard(match_id: int) -> list[dict]:
+    try:
+        from backend.routes.scores import get_cached_match_scores_payload
+
+        cached_payload = get_cached_match_scores_payload(match_id)
+        cached_contestants = (cached_payload or {}).get("contestants") or []
+        if not cached_contestants:
+            return []
+
+        contestants: list[dict] = []
+        for contestant in cached_contestants:
+            contestant_user_id = contestant.get("user_id", contestant.get("id"))
+            if contestant_user_id in (None, ""):
+                continue
+            contestants.append(
+                {
+                    "user_id": int(contestant_user_id),
+                    "name": contestant.get("name", ""),
+                    "points": round(float(contestant.get("points", 0) or 0), 2),
+                }
+            )
+        return contestants
+    except Exception:
+        return []
+
+
+def _rank_match_contestants(contestants: list[dict]) -> dict[int, int]:
+    if not contestants:
+        return {}
+
+    sorted_contestants = sorted(contestants, key=lambda item: (-item["points"], item["name"]))
+    rank_lookup: dict[int, int] = {}
+    current_rank = 0
+    previous_points = None
+
+    for index, contestant in enumerate(sorted_contestants, start=1):
+        if previous_points is None or contestant["points"] != previous_points:
+            current_rank = index
+            previous_points = contestant["points"]
+        rank_lookup[contestant["user_id"]] = current_rank
+
+    return rank_lookup
 
 
 def _attach_user_match_ranks(payload: list[dict], user_id: int) -> list[dict]:
-    relevant_match_ids = [
-        int(match["id"])
-        for match in payload
-        if match.get("status") in {"live", "completed"}
-    ]
-    if not relevant_match_ids:
-        return payload
-
     match_rank_map: dict[int, dict[int, int]] = {}
-    match_points: dict[int, list[dict]] = {}
-    try:
-        from backend.routes.scores import get_cached_live_match_contestants, get_cached_match_scores_payload
 
-        for match in payload:
-            if match.get("status") != "live":
-                continue
-            match_id = int(match["id"])
-            cached_payload = get_cached_match_scores_payload(match_id)
-            cached_contestants = cached_payload.get("contestants") if cached_payload else None
-            if not cached_contestants:
-                cached_contestants = get_cached_live_match_contestants(match_id)
-            if cached_contestants:
-                match_points[match_id] = [
-                    {
-                        "user_id": int(contestant["user_id"]),
-                        "name": contestant["name"],
-                        "points": round(float(contestant.get("points", 0) or 0), 2),
-                    }
-                    for contestant in cached_contestants
-                    if contestant.get("user_id") is not None
-                ]
-            else:
+    for match in payload:
+        match_status = str(match.get("status") or "").strip().lower()
+        if match_status not in {"live", "completed"}:
+            continue
+
+        match_id = int(match["id"])
+        contestants = _load_match_contestants_for_dashboard(match_id)
+        if not contestants:
+            if match_status == "live":
                 print(f"[MATCHES] live rank cache miss match={match_id}")
-    except Exception:
-        pass
+            continue
 
-    for match_id, contestants in match_points.items():
-        db = get_db()
-        try:
-            if _is_match_completed(db, match_id):
-                bonuses = data_service.compute_prediction_bonuses(match_id)
-                for contestant in contestants:
-                    bonus_info = bonuses.get(contestant["user_id"])
-                    if bonus_info:
-                        contestant["points"] = round(contestant["points"] + bonus_info["bonus"], 2)
-        except Exception:
-            pass
-
-        sorted_contestants = sorted(
-            contestants,
-            key=lambda item: (-item["points"], item["name"]),
-        )
-        rank_lookup: dict[int, int] = {}
-        current_rank = 0
-        previous_points = None
-        for index, contestant in enumerate(sorted_contestants, start=1):
-            if previous_points is None or contestant["points"] != previous_points:
-                current_rank = index
-                previous_points = contestant["points"]
-            rank_lookup[contestant["user_id"]] = current_rank
-        match_rank_map[match_id] = rank_lookup
+        match_rank_map[match_id] = _rank_match_contestants(contestants)
 
     result = []
     for match in payload:

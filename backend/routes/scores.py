@@ -110,7 +110,13 @@ def get_cached_live_match_contestants(match_id: int) -> list[dict] | None:
     if not payload or payload.get("match_status") != "live":
         return None
     contestants = payload.get("contestants") or []
-    return copy.deepcopy(contestants)
+    normalized: list[dict] = []
+    for contestant in contestants:
+        contestant_copy = copy.deepcopy(contestant)
+        if contestant_copy.get("user_id") in (None, "") and contestant_copy.get("id") not in (None, ""):
+            contestant_copy["user_id"] = contestant_copy["id"]
+        normalized.append(contestant_copy)
+    return normalized
 
 
 def get_cached_match_scores_payload(match_id: int) -> dict | None:
