@@ -326,6 +326,7 @@ export default function WeekendTournamentPage() {
     'The last match before Saturday becomes the qualifier. Top 2^n users qualify, where n = number of weekend matches (e.g. 4 matches → 16 players, 3 → 8, 2 → 4).',
     'Players are randomly drawn into a knockout bracket. The bracket is fixed from the draw — adjacent winners always play each other.',
     'Each weekend match is one knockout round. Winners advance until the Final decides the Weekend Champion.',
+    'Weekend battle head-to-heads use raw match fantasy points only. Score prediction bonuses do not affect bracket results and are counted separately on the main leaderboard.',
     'If scores are tied, the higher overall leaderboard rank wins the head-to-head. The Weekend Champion gets +200 bonus points on the leaderboard!',
   ];
 
