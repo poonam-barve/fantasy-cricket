@@ -978,7 +978,7 @@ def apply_backups_for_match(match_id: int | str, playing_ids: list[int], substit
                 row for row in invalid_rows
                 if int(row["player_id"]) not in substitute_set
             ]
-            candidate_rows = preferred_invalid_rows if not replace_substitutes_with_backups else (preferred_invalid_rows or invalid_rows)
+            candidate_rows = invalid_rows if replace_substitutes_with_backups else preferred_invalid_rows
 
             chosen_invalid_row = None
             for invalid_row in candidate_rows:

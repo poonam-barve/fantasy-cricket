@@ -129,7 +129,7 @@ async def update_me(body: UpdateProfileBody, user: dict = Depends(get_current_us
     db = get_db()
     fields = {"name": cleaned_name}
     if body.replace_substitutes_with_backups is not None:
-        fields["replace_substitutes_with_backups"] = int(body.replace_substitutes_with_backups)
+        fields["replace_substitutes_with_backups"] = bool(body.replace_substitutes_with_backups)
     set_clause = ", ".join(f"{key} = ?" for key in fields)
     db.execute(
         f"UPDATE users SET {set_clause} WHERE id = ?",

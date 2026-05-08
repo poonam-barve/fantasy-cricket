@@ -11,6 +11,18 @@ export default function SettingsPage() {
   const [name, setName] = useState('');
   const [replaceSubstitutesWithBackups, setReplaceSubstitutesWithBackups] = useState(true);
   const [saving, setSaving] = useState(false);
+  const backupModes = [
+    {
+      key: true,
+      title: 'Unavailable + substitutes',
+      description: 'Default',
+    },
+    {
+      key: false,
+      title: 'Unavailable only',
+      description: 'Opt out',
+    },
+  ] as const;
 
   useEffect(() => {
     setName(profile?.name || '');
@@ -71,31 +83,62 @@ export default function SettingsPage() {
         <p className="mt-2 text-xs text-white/35">This name is shown across the app.</p>
 
         <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-white/85">Use backups for substitutes</p>
-              <p className="mt-1 text-xs text-white/40">
-                When enabled, backups can replace both unavailable players and substitutes at match start.
-                When disabled, backups only replace unavailable players.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setReplaceSubstitutesWithBackups((value) => !value)}
-              className={`relative inline-flex h-7 w-12 items-center rounded-full border transition-all ${
-                replaceSubstitutesWithBackups
-                  ? 'border-emerald-400/40 bg-emerald-500/30'
-                  : 'border-white/15 bg-white/10'
-              }`}
-              aria-pressed={replaceSubstitutesWithBackups}
-              aria-label="Toggle use backups for substitutes"
-            >
-              <span
-                className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
-                  replaceSubstitutesWithBackups ? 'translate-x-6' : 'translate-x-1'
-                }`}
-              />
-            </button>
+          <div className="mb-3">
+            <p className="text-sm font-medium text-white/85">Backup behavior at match start</p>
+            <p className="mt-1 text-xs text-white/40">
+              Choose how backups should be applied when the playing XI is finalized.
+            </p>
+          </div>
+
+          <div
+            role="radiogroup"
+            aria-label="Backup behavior at match start"
+            className="grid gap-2 rounded-2xl border border-white/10 bg-black/20 p-1.5 sm:grid-cols-2"
+          >
+            {backupModes.map((mode) => {
+              const selected = replaceSubstitutesWithBackups === mode.key;
+              return (
+                <button
+                  key={mode.title}
+                  type="button"
+                  onClick={() => setReplaceSubstitutesWithBackups(mode.key)}
+                  className={`rounded-xl border px-4 py-3 text-left transition-all ${
+                    selected
+                      ? 'border-emerald-400/40 bg-emerald-500/15 shadow-sm shadow-emerald-500/10'
+                      : 'border-transparent bg-transparent hover:border-white/10 hover:bg-white/5'
+                  }`}
+                  aria-pressed={selected}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className={`text-sm font-semibold ${selected ? 'text-emerald-200' : 'text-white/80'}`}>
+                        {mode.title}
+                      </p>
+                      <p className={`mt-1 text-[11px] uppercase tracking-[0.16em] ${selected ? 'text-emerald-200/70' : 'text-white/35'}`}>
+                        {mode.description}
+                      </p>
+                    </div>
+                    <span
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-all ${
+                        selected ? 'border-emerald-300/40 bg-emerald-400' : 'border-white/15 bg-white/5'
+                      }`}
+                      aria-hidden="true"
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full transition-all ${
+                          selected ? 'bg-black opacity-100' : 'bg-transparent opacity-0'
+                        }`}
+                      />
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 text-xs text-white/35">
+            Current setting:{' '}
+            {replaceSubstitutesWithBackups ? 'Backups can replace substitutes' : 'Backups only replace unavailable players'}
           </div>
         </div>
 
