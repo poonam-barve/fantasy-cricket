@@ -152,7 +152,12 @@ def _connect_postgres(dsn: str):
 
 def _should_reconnect_postgres(exc: Exception) -> bool:
     message = str(exc).lower()
-    return "connection already closed" in message or "closed the connection unexpectedly" in message
+    return (
+        "connection already closed" in message
+        or "closed the connection unexpectedly" in message
+        or "ssl connection has been closed unexpectedly" in message
+        or "server closed the connection unexpectedly" in message
+    )
 
 
 def _is_failed_transaction_postgres(exc: Exception) -> bool:
@@ -173,10 +178,40 @@ def _ensure_user_teams_updated_at_sqlite(conn):
         )
 
 
+def _ensure_users_backup_preference_sqlite(conn):
+    if not _sqlite_column_exists(conn, "users", "replace_substitutes_with_backups"):
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN replace_substitutes_with_backups INTEGER NOT NULL DEFAULT 1"
+        )
+    conn.execute(
+        """
+        UPDATE users
+        SET replace_substitutes_with_backups = 1
+        WHERE replace_substitutes_with_backups IS NULL OR replace_substitutes_with_backups = ''
+        """
+    )
+
+
 def _ensure_user_teams_updated_at_postgres(cursor):
     # Postgres tables are created with updated_at already present. Avoid ALTERs
     # during startup because they can deadlock with live request traffic.
     return
+
+
+def _ensure_users_backup_preference_postgres(cursor):
+    cursor.execute(
+        """
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS replace_substitutes_with_backups BOOLEAN NOT NULL DEFAULT TRUE
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE users
+        SET replace_substitutes_with_backups = TRUE
+        WHERE replace_substitutes_with_backups IS NULL
+        """
+    )
 
 
 def _ensure_players_type_postgres(cursor):
@@ -476,6 +511,7 @@ def init_db():
                 mobile TEXT,
                 role TEXT NOT NULL DEFAULT 'user',
                 is_active INTEGER NOT NULL DEFAULT 1,
+                replace_substitutes_with_backups BOOLEAN NOT NULL DEFAULT TRUE,
                 created_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """)
@@ -491,6 +527,7 @@ def init_db():
         """)
         _ensure_autoincrement_postgres(cursor, "players")
         _ensure_players_type_postgres(cursor)
+        _ensure_users_backup_preference_postgres(cursor)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS matches (
                 id INTEGER PRIMARY KEY,
@@ -617,6 +654,7 @@ def init_db():
                 mobile TEXT,
                 role TEXT NOT NULL DEFAULT 'user',
                 is_active INTEGER NOT NULL DEFAULT 1,
+                replace_substitutes_with_backups INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
             CREATE TABLE IF NOT EXISTS players (
@@ -738,6 +776,7 @@ def init_db():
             );
         """)
         _ensure_user_teams_updated_at_sqlite(conn)
+        _ensure_users_backup_preference_sqlite(conn)
         _ensure_matches_venue_sqlite(conn)
         _ensure_matches_metadata_sqlite(conn)
         _ensure_user_teams_audit_sqlite(conn)

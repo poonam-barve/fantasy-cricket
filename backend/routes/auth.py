@@ -18,6 +18,7 @@ class RegisterBody(BaseModel):
 
 class UpdateProfileBody(BaseModel):
     name: str
+    replace_substitutes_with_backups: bool | None = None
 
 
 @router.post("/register")
@@ -126,7 +127,14 @@ async def update_me(body: UpdateProfileBody, user: dict = Depends(get_current_us
         raise HTTPException(status_code=400, detail="Name must be 50 characters or fewer")
 
     db = get_db()
-    db.execute("UPDATE users SET name = ? WHERE id = ?", (cleaned_name, user["id"]))
+    fields = {"name": cleaned_name}
+    if body.replace_substitutes_with_backups is not None:
+        fields["replace_substitutes_with_backups"] = int(body.replace_substitutes_with_backups)
+    set_clause = ", ".join(f"{key} = ?" for key in fields)
+    db.execute(
+        f"UPDATE users SET {set_clause} WHERE id = ?",
+        [*fields.values(), user["id"]],
+    )
     db.commit()
     data_service.invalidate_cache("users")
     updated = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()

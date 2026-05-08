@@ -351,6 +351,19 @@ def get_cached_data(sheet_name: str) -> list[dict]:
     return payload
 
 
+def _get_cached_match_field(match_id: int, field_name: str):
+    rows = get_cached_data("matches")
+    if not rows:
+        return None
+    for row in rows:
+        if int(row.get("MatchID", 0) or 0) != int(match_id):
+            continue
+        value = row.get(field_name)
+        if value not in (None, ""):
+            return value
+    return None
+
+
 def _cached_players() -> list[dict]:
     db = get_db()
     rows = db.execute("SELECT id, name, team, role, type, aliases FROM players").fetchall()
@@ -379,6 +392,25 @@ def _cached_users() -> list[dict]:
             "Name": r["name"],
             "Password": "",          # Firebase handles auth – dummy value
             "Allowed": "true" if r["is_active"] else "false",
+        }
+        for r in rows
+    ]
+
+
+def _cached_users() -> list[dict]:
+    """Legacy-compatible user dicts (Mobile, Name, Password, Allowed)."""
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, firebase_uid, email, name, mobile, role, is_active, replace_substitutes_with_backups FROM users"
+    ).fetchall()
+    return [
+        {
+            "UserID": r["id"],
+            "Mobile": r["mobile"] or "",
+            "Name": r["name"],
+            "Password": "",          # Firebase handles auth - dummy value
+            "Allowed": "true" if r["is_active"] else "false",
+            "ReplaceSubstitutesWithBackups": bool(r["replace_substitutes_with_backups"]),
         }
         for r in rows
     ]
@@ -428,6 +460,20 @@ def get_user_by_id(user_id: int) -> dict | None:
     db = get_db()
     row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     return _row_to_dict(row) if row else None
+
+
+def get_user_backup_preference(user_id: int) -> bool:
+    try:
+        users = get_cached_data("users")
+        for user in users:
+            if int(user.get("UserID", 0) or 0) != int(user_id):
+                continue
+            value = user.get("ReplaceSubstitutesWithBackups")
+            if value is not None:
+                return bool(value)
+    except Exception:
+        pass
+    return True
 
 
 def create_user(
@@ -532,14 +578,16 @@ def get_match_by_id(match_id: int) -> dict | None:
 
 
 def get_stored_cricbuzz_match_id(match_id: int) -> int | None:
-    db = get_db()
-    row = db.execute(
-        "SELECT cricbuzz_match_id FROM matches WHERE id = ?",
-        (int(match_id),),
-    ).fetchone()
-    if not row:
-        return None
-    value = row["cricbuzz_match_id"]
+    value = _get_cached_match_field(int(match_id), "CricbuzzMatchID")
+    if value in (None, ""):
+        db = get_db()
+        row = db.execute(
+            "SELECT cricbuzz_match_id FROM matches WHERE id = ?",
+            (int(match_id),),
+        ).fetchone()
+        if not row:
+            return None
+        value = row["cricbuzz_match_id"]
     if value in (None, ""):
         return None
     try:
@@ -549,14 +597,16 @@ def get_stored_cricbuzz_match_id(match_id: int) -> int | None:
 
 
 def get_stored_espn_match_id(match_id: int) -> int | None:
-    db = get_db()
-    row = db.execute(
-        "SELECT espn_match_id FROM matches WHERE id = ?",
-        (int(match_id),),
-    ).fetchone()
-    if not row:
-        return None
-    value = row["espn_match_id"]
+    value = _get_cached_match_field(int(match_id), "ESPNMatchID")
+    if value in (None, ""):
+        db = get_db()
+        row = db.execute(
+            "SELECT espn_match_id FROM matches WHERE id = ?",
+            (int(match_id),),
+        ).fetchone()
+        if not row:
+            return None
+        value = row["espn_match_id"]
     if value in (None, ""):
         return None
     try:
@@ -907,6 +957,7 @@ def apply_backups_for_match(match_id: int | str, playing_ids: list[int], substit
     for user_id, user_team_rows in team_rows_by_user.items():
         selected_ids = {int(row["player_id"]) for row in user_team_rows}
         role_counts = role_counts_for_team(user_team_rows)
+        replace_substitutes_with_backups = get_user_backup_preference(user_id)
 
         for backup_row in backups_by_user.get(user_id, []):
             if backup_row["replaced_player_id"] is not None:
@@ -927,7 +978,7 @@ def apply_backups_for_match(match_id: int | str, playing_ids: list[int], substit
                 row for row in invalid_rows
                 if int(row["player_id"]) not in substitute_set
             ]
-            candidate_rows = preferred_invalid_rows or invalid_rows
+            candidate_rows = preferred_invalid_rows if not replace_substitutes_with_backups else (preferred_invalid_rows or invalid_rows)
 
             chosen_invalid_row = None
             for invalid_row in candidate_rows:

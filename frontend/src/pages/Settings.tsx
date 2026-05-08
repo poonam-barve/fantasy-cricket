@@ -9,11 +9,13 @@ export default function SettingsPage() {
   const { profile, refreshProfile } = useAuth();
   const { toast } = useToast();
   const [name, setName] = useState('');
+  const [replaceSubstitutesWithBackups, setReplaceSubstitutesWithBackups] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setName(profile?.name || '');
-  }, [profile?.name]);
+    setReplaceSubstitutesWithBackups(profile?.replace_substitutes_with_backups ?? true);
+  }, [profile?.name, profile?.replace_substitutes_with_backups]);
 
   const handleSave = async (e: FormEvent) => {
     e.preventDefault();
@@ -25,9 +27,12 @@ export default function SettingsPage() {
 
     setSaving(true);
     try {
-      await client.patch('/api/auth/me', { name: cleanedName });
+      await client.patch('/api/auth/me', {
+        name: cleanedName,
+        replace_substitutes_with_backups: replaceSubstitutesWithBackups,
+      });
       await refreshProfile();
-      toast('Name updated!', 'success');
+      toast('Settings updated!', 'success');
       navigate('/dashboard');
     } catch (err: any) {
       toast(err?.response?.data?.detail || 'Failed to update name.', 'error');
@@ -46,7 +51,7 @@ export default function SettingsPage() {
         </Link>
         <div>
           <h1 className="text-lg font-bold text-white">Settings</h1>
-          <p className="text-xs text-white/45">Update the name shown in the app.</p>
+          <p className="text-xs text-white/45">Update your display name and backup preference.</p>
         </div>
       </div>
 
@@ -64,6 +69,35 @@ export default function SettingsPage() {
           placeholder="Your name"
         />
         <p className="mt-2 text-xs text-white/35">This name is shown across the app.</p>
+
+        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-white/85">Use backups for substitutes</p>
+              <p className="mt-1 text-xs text-white/40">
+                When enabled, backups can replace both unavailable players and substitutes at match start.
+                When disabled, backups only replace unavailable players.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReplaceSubstitutesWithBackups((value) => !value)}
+              className={`relative inline-flex h-7 w-12 items-center rounded-full border transition-all ${
+                replaceSubstitutesWithBackups
+                  ? 'border-emerald-400/40 bg-emerald-500/30'
+                  : 'border-white/15 bg-white/10'
+              }`}
+              aria-pressed={replaceSubstitutesWithBackups}
+              aria-label="Toggle use backups for substitutes"
+            >
+              <span
+                className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                  replaceSubstitutesWithBackups ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
 
         <div className="mt-6 flex items-center justify-end gap-3">
           <button

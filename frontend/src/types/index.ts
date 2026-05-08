@@ -6,6 +6,7 @@ export type User = {
   mobile?: string;
   role: 'user' | 'admin';
   is_active: boolean;
+  replace_substitutes_with_backups?: boolean;
 };
 
 export type VenueStats = {
