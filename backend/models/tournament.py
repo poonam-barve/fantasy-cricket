@@ -241,8 +241,8 @@ class Tournament:
         self.compute_points_for_match(match_id)
 
         try:
-            self.persist_player_points_to_local()
-            self.persist_to_local()
+            self.persist_player_points_to_local(match_ids=[match_id])
+            self.persist_to_local(match_ids=[match_id])
         except Exception as exc:
             self._scheduler_log("SCORE", f"persist after completion failed for match {match_id}: {exc}")
             traceback.print_exc()
@@ -465,14 +465,17 @@ class Tournament:
                 continue
             contestant.calculate_points_for_match(match, self.player_roles)
 
-    def persist_to_local(self):
+    def persist_to_local(self, match_ids=None):
         now_str = get_current_datetime().strftime("%Y-%m-%d %H:%M:%S")
+        allowed_match_ids = {str(match_id) for match_id in match_ids} if match_ids is not None else None
         data_service.delete_inactive_contestant_points()
         rows = []
         for contestant in self.contestants.values():
             if not contestant.is_active:
                 continue
             for match_id, pts in contestant.points.items():
+                if allowed_match_ids is not None and str(match_id) not in allowed_match_ids:
+                    continue
                 rows.append({
                     "UserID": contestant.user_id,
                     "User": contestant.name,
@@ -484,10 +487,13 @@ class Tournament:
         if rows:
             data_service.save_contestant_points(rows)
 
-    def persist_player_points_to_local(self):
+    def persist_player_points_to_local(self, match_ids=None):
         now_str = get_current_datetime().strftime("%Y-%m-%d %H:%M:%S")
+        allowed_match_ids = {str(match_id) for match_id in match_ids} if match_ids is not None else None
         rows = []
         for match_id, pp in self.player_points.items():
+            if allowed_match_ids is not None and str(match_id) not in allowed_match_ids:
+                continue
             match = self.matches.get(match_id)
             if not match:
                 continue

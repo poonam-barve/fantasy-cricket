@@ -56,6 +56,7 @@ export default function DashboardPage() {
       const loadedMyTeams = new Set<number>(teamsRes.data);
       setMatches(loadedMatches);
       setMyTeams(loadedMyTeams);
+      setLoading(false);
 
       const futureMatchesWithTeams = loadedMatches.filter((match) =>
         ['future', 'lineups'].includes(match.status) && loadedMyTeams.has(match.id)
@@ -64,13 +65,15 @@ export default function DashboardPage() {
       if (futureMatchesWithTeams.length > 0) {
         const ids = futureMatchesWithTeams.map((match) => match.id).join(',');
         console.time('dashboard:/api/teams/my-lineup-statuses');
-        const lineupRes = await client.get(`/api/teams/my-lineup-statuses?match_ids=${ids}`);
+        console.time('dashboard:/api/teams/my-backup-counts');
+        const [lineupRes, backupRes] = await Promise.all([
+          client.get(`/api/teams/my-lineup-statuses?match_ids=${ids}`),
+          client.get(`/api/teams/my-backup-counts?match_ids=${ids}`),
+        ]);
         console.timeEnd('dashboard:/api/teams/my-lineup-statuses');
+        console.timeEnd('dashboard:/api/teams/my-backup-counts');
         setTeamLineupInfo(lineupRes.data || {});
 
-        console.time('dashboard:/api/teams/my-backup-counts');
-        const backupRes = await client.get(`/api/teams/my-backup-counts?match_ids=${ids}`);
-        console.timeEnd('dashboard:/api/teams/my-backup-counts');
         const counts: Record<number, number> = {};
         Object.entries(backupRes.data || {}).forEach(([matchId, count]) => {
           counts[Number(matchId)] = Number(count || 0);
@@ -85,6 +88,7 @@ export default function DashboardPage() {
     } catch {
       setTeamLineupInfo({});
       setBackupCounts({});
+      setLoading(false);
     } finally {
       setLoading(false);
     }

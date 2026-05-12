@@ -94,6 +94,17 @@ def _refresh_admin_caches(
         except Exception as exc:
             print(f"[ADMIN] contestant cache refresh failed: {exc}")
 
+    if tables & {"users", "user_teams", "team_backups"}:
+        data_service.invalidate_user_team_summary_cache()
+        try:
+            threading.Thread(
+                target=data_service.prime_user_team_summary_cache,
+                daemon=True,
+                name="admin-user-team-summary-cache-refresh",
+            ).start()
+        except Exception as exc:
+            print(f"[ADMIN] user team summary cache refresh failed: {exc}")
+
 
 def _queue_admin_refresh(
     *,
@@ -144,8 +155,8 @@ def _queue_tournament_match_refresh(
                         )
                         tournament_ref.compute_player_points_for_match(match_id_str)
                         tournament_ref.compute_points_for_match(match_id_str)
-                        tournament_ref.persist_player_points_to_local()
-                        tournament_ref.persist_to_local()
+                        tournament_ref.persist_player_points_to_local(match_ids=[match_id_str])
+                        tournament_ref.persist_to_local(match_ids=[match_id_str])
                         tournament_ref.warm_today_last_completed_team_xi_previews()
                     elif explicit_status in {"future", "live", "nr"}:
                         tournament_ref.player_points.pop(match_id_str, None)
@@ -245,8 +256,8 @@ def _recompute_match_fresh(match_id: int, *, persist_live: bool = False) -> dict
         tournament_ref.compute_points_for_match(match_id_str)
 
         data_service.clear_points_for_match(int(match_id))
-        tournament_ref.persist_player_points_to_local()
-        tournament_ref.persist_to_local()
+        tournament_ref.persist_player_points_to_local(match_ids=[match_id_str])
+        tournament_ref.persist_to_local(match_ids=[match_id_str])
 
         player_points = tournament_ref.player_points.get(match_id_str, {})
         player_count = len(player_points)
@@ -1119,6 +1130,7 @@ async def update_team(
 
     db.commit()
     data_service.prune_user_backups(body.user_id, body.match_id, [player.player_id for player in body.players])
+    data_service.refresh_user_team_summary_cache(body.user_id, body.match_id)
     _refresh_admin_caches(tables={"user_teams"}, match_id=body.match_id)
 
     return {
@@ -1216,5 +1228,6 @@ async def admin_submit_team(body: AdminSubmitTeamBody, user: dict = Depends(requ
         )
     db.commit()
     data_service.prune_user_backups(body.user_id, body.match_id, [player.player_id for player in body.players])
+    data_service.refresh_user_team_summary_cache(body.user_id, body.match_id)
     _refresh_admin_caches(tables={"user_teams"}, match_id=body.match_id)
     return {"success": True}

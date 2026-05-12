@@ -255,7 +255,7 @@ def prime_today_venue_cache(match_rows: list[dict]) -> dict[int, dict | None]:
     for match in match_rows:
         if match.get("match_date") != today_key:
             continue
-        if match.get("status") != "future":
+        if match.get("status") not in {"future", "lineups"}:
             continue
         by_match_id[int(match["id"])] = get_venue_stats(
             match.get("team1", ""),
@@ -270,7 +270,7 @@ def prime_today_venue_cache(match_rows: list[dict]) -> dict[int, dict | None]:
 
 def get_today_cached_venue_stats(match_id: int, match_date: str, status: str) -> dict | None:
     today_key = get_current_date_key()
-    if match_date != today_key or status != "future":
+    if match_date != today_key or status not in {"future", "lineups"}:
         return None
 
     if TODAY_VENUE_CACHE["date"] != today_key:

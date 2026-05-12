@@ -8,7 +8,6 @@ from backend.middleware.auth import get_current_user
 from backend.database import get_db
 from backend.config import IST, ROLES, get_current_datetime
 from backend.services import data_service
-from backend.services.scraper import refresh_playing_xi_cache
 router = APIRouter(prefix="/api/teams", tags=["teams"])
 
 
@@ -97,12 +96,12 @@ async def my_backups(
 async def my_team_matches(user: dict = Depends(get_current_user)):
     """Returns list of match IDs where user has picked a team."""
     started = time.perf_counter()
-    db = get_db()
-    rows = db.execute(
-        "SELECT DISTINCT match_id FROM user_teams WHERE user_id = ?",
-        (user["id"],),
-    ).fetchall()
-    result = [row["match_id"] for row in rows]
+    summaries = data_service.get_cached_user_team_summaries(user["id"])
+    result = sorted(
+        match_id
+        for match_id, summary in summaries.items()
+        if summary.get("selected_ids")
+    )
     elapsed_ms = (time.perf_counter() - started) * 1000
     if elapsed_ms >= 80:
         print(f"[API timing] GET /api/teams/my-matches total={elapsed_ms:.1f}ms user_id={user['id']}")
@@ -119,29 +118,12 @@ async def my_lineup_statuses(
     if not requested_ids:
         return {}
 
-    db = get_db()
-    placeholders = ",".join("?" * len(requested_ids))
-
-    match_rows = db.execute(
-        f"SELECT * FROM matches WHERE id IN ({placeholders})",
-        requested_ids,
-    ).fetchall()
-    match_lookup = {row["id"]: dict(row) for row in match_rows}
-    backup_counts = data_service.get_backup_counts_for_user(user["id"], requested_ids)
-
-    team_rows = db.execute(
-        f"""
-        SELECT match_id, player_id
-        FROM user_teams
-        WHERE user_id = ?
-          AND match_id IN ({placeholders})
-        """,
-        [user["id"], *requested_ids],
-    ).fetchall()
-
-    selected_by_match = {}
-    for row in team_rows:
-        selected_by_match.setdefault(int(row["match_id"]), set()).add(int(row["player_id"]))
+    match_lookup = {
+        int(row["MatchID"]): row
+        for row in data_service.get_cached_data("matches")
+        if int(row.get("MatchID", 0) or 0) in requested_ids
+    }
+    team_summaries = data_service.get_cached_user_team_summaries(user["id"], requested_ids)
 
     result = {}
     for match_id in requested_ids:
@@ -149,70 +131,30 @@ async def my_lineup_statuses(
         lineup_window_open = False
         if match:
             lineup_window_open = _is_lineup_window_open(
-                match["match_date"],
-                match["match_time"],
-                match.get("toss_time") or match.get("TossTime"),
+                match["Date"],
+                match["Time"],
+                match.get("TossTime"),
             )
-        selected_ids = selected_by_match.get(match_id, set())
+        team_summary = team_summaries.get(match_id) or {"selected_ids": [], "backup_count": 0}
+        selected_ids = set(team_summary.get("selected_ids") or [])
         if not match or not selected_ids:
             result[str(match_id)] = {
                 "announced": False,
                 "complete": False,
                 "unannouncedSelected": 0,
                 "substituteSelected": 0,
-                "backupCount": backup_counts.get(match_id, 0),
+                "backupCount": int(team_summary.get("backup_count") or 0),
                 "lineupWindowOpen": lineup_window_open,
             }
             continue
 
-        player_rows = db.execute(
-            """
-            SELECT id, name, team, role, aliases
-            FROM players
-            WHERE team IN (?, ?)
-            """,
-            (match["team1"], match["team2"]),
-        ).fetchall()
-        players = [dict(row) for row in player_rows]
         cached_playing_xi = data_service.get_cached_match_playing_xi(
             match_id,
-            match["team1"],
-            match["team2"],
-            match["match_date"],
-            match["match_time"],
+            match["Team1"],
+            match["Team2"],
+            match["Date"],
+            match["Time"],
         )
-        if lineup_window_open and (
-            not cached_playing_xi
-            or not cached_playing_xi.get("announced")
-            or not data_service.is_cached_playing_xi_final(
-                match_id,
-                match["team1"],
-                match["team2"],
-                match["match_date"],
-                match["match_time"],
-            )
-        ):
-            try:
-                player_rows = db.execute(
-                    """
-                    SELECT id, name, team, role, aliases
-                    FROM players
-                    WHERE team IN (?, ?)
-                    """,
-                    (match["team1"], match["team2"]),
-                ).fetchall()
-                cached_playing_xi = refresh_playing_xi_cache(
-                    match_id,
-                    match["team1"],
-                    match["team2"],
-                    [dict(row) for row in player_rows],
-                    match["match_date"],
-                    match["match_time"],
-                    match.get("toss_time") or match.get("TossTime"),
-                    force_refresh=True,
-                )
-            except Exception:
-                pass
         if cached_playing_xi and cached_playing_xi.get("announced"):
             playing_xi = cached_playing_xi
         else:
@@ -234,7 +176,7 @@ async def my_lineup_statuses(
             "complete": playing_ids_complete,
             "unannouncedSelected": unavailable_selected,
             "substituteSelected": substitute_selected,
-            "backupCount": backup_counts.get(match_id, 0),
+            "backupCount": int(team_summary.get("backup_count") or 0),
             "lineupWindowOpen": lineup_window_open,
         }
 
@@ -355,6 +297,7 @@ async def submit_team(
     data_service.save_user_backups(user["id"], body.match_id, normalized_backups)
     data_service.prune_user_backups(user["id"], body.match_id, player_ids)
     data_service.refresh_match_contestant_cache(body.match_id)
+    data_service.refresh_user_team_summary_cache(user["id"], body.match_id)
 
     if body.predicted_points is not None:
         data_service.save_score_prediction(user["id"], body.match_id, body.predicted_points)

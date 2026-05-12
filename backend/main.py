@@ -376,6 +376,8 @@ def _run_background_warmup():
             print(f"[BOOT] Primed score prediction cache matches={len(prediction_summary)}")
             contestant_summary = data_service.prime_contestant_cache()
             print(f"[BOOT] Primed contestant cache matches={len(contestant_summary)}")
+            user_team_summary = data_service.prime_user_team_summary_cache()
+            print(f"[BOOT] Primed user team summary cache users={len(user_team_summary)}")
             weekend_summary = prime_weekend_tournament_cache()
             print(
                 "[BOOT] Primed weekend tournament cache "

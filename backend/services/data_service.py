@@ -10,6 +10,7 @@ route modules continue to work without changes.
 from __future__ import annotations
 
 import copy
+import time
 from datetime import datetime
 
 from backend.database import get_db
@@ -37,12 +38,30 @@ PLAYING_XI_STATUS_LOCK = get_cache_lock("playing_xi_status")
 LAST_MATCH_XI_LOCK = get_cache_lock("last_match_xi")
 SCORE_PREDICTION_LOCK = get_cache_lock("score_prediction")
 TEAM_CONTESTANT_LOCK = get_cache_lock("team_contestants")
+USER_TEAM_SUMMARY_LOCK = get_cache_lock("user_team_summary")
 
 PLAYER_MATCH_PAYLOAD_CACHE: dict[int, dict] = {}
 PLAYING_XI_STATUS_CACHE: dict[tuple, dict] = {}
 LAST_MATCH_XI_CACHE: dict[tuple[int, str], dict] = {}
 SCORE_PREDICTION_CACHE: dict[int, dict[int, float]] = {}
 TEAM_CONTESTANT_CACHE: dict[int, list[dict]] = {}
+USER_TEAM_SUMMARY_CACHE: dict[int, dict[int, dict]] = {}
+USER_TEAM_SUMMARY_ALL_LOADED: set[int] = set()
+
+
+def _is_deadlock_error(exc: Exception) -> bool:
+    return "deadlock detected" in str(exc).lower()
+
+
+def _retry_deadlock(operation, *, attempts: int = 3) -> None:
+    for attempt in range(attempts):
+        try:
+            operation()
+            return
+        except Exception as exc:
+            if not _is_deadlock_error(exc) or attempt == attempts - 1:
+                raise
+            time.sleep(0.1 * (attempt + 1))
 
 
 def _row_to_dict(row) -> dict:
@@ -307,6 +326,141 @@ def prime_contestant_cache(match_ids: list[int] | None = None) -> dict[int, int]
             TEAM_CONTESTANT_CACHE[int(match_id)] = copy.deepcopy(grouped.get(int(match_id), []))
 
     return {match_id: len(TEAM_CONTESTANT_CACHE.get(match_id, [])) for match_id in all_match_ids}
+
+
+def _fetch_user_team_summaries(user_id: int, match_ids: list[int] | None = None) -> dict[int, dict]:
+    db = get_db()
+    params: list[int] = [int(user_id)]
+    match_filter = ""
+    normalized_ids: list[int] | None = None
+    if match_ids is not None:
+        normalized_ids = [int(match_id) for match_id in match_ids]
+        if not normalized_ids:
+            return {}
+        placeholders = ",".join("?" * len(normalized_ids))
+        match_filter = f" AND match_id IN ({placeholders})"
+        params.extend(normalized_ids)
+
+    summaries: dict[int, dict] = {}
+    if normalized_ids is not None:
+        summaries = {
+            int(match_id): {"selected_ids": [], "backup_count": 0}
+            for match_id in normalized_ids
+        }
+
+    team_rows = db.execute(
+        f"""
+        SELECT match_id, player_id
+        FROM user_teams
+        WHERE user_id = ?{match_filter}
+        ORDER BY match_id, player_id
+        """,
+        params,
+    ).fetchall()
+    for row in team_rows:
+        match_id = int(row["match_id"])
+        summaries.setdefault(match_id, {"selected_ids": [], "backup_count": 0})
+        summaries[match_id]["selected_ids"].append(int(row["player_id"]))
+
+    backup_rows = db.execute(
+        f"""
+        SELECT match_id, COUNT(*) AS backup_count
+        FROM team_backups
+        WHERE user_id = ?{match_filter} AND replaced_player_id IS NULL
+        GROUP BY match_id
+        """,
+        params,
+    ).fetchall()
+    for row in backup_rows:
+        match_id = int(row["match_id"])
+        summaries.setdefault(match_id, {"selected_ids": [], "backup_count": 0})
+        summaries[match_id]["backup_count"] = int(row["backup_count"])
+
+    return summaries
+
+
+def get_cached_user_team_summaries(user_id: int, match_ids: list[int | str] | None = None) -> dict[int, dict]:
+    normalized_ids = [int(match_id) for match_id in match_ids] if match_ids is not None else None
+    user_id = int(user_id)
+
+    with USER_TEAM_SUMMARY_LOCK:
+        cached_for_user = USER_TEAM_SUMMARY_CACHE.get(user_id)
+        if cached_for_user is not None and (normalized_ids is not None or user_id in USER_TEAM_SUMMARY_ALL_LOADED):
+            if normalized_ids is None:
+                return copy.deepcopy(cached_for_user)
+            missing_ids = [match_id for match_id in normalized_ids if match_id not in cached_for_user]
+            if not missing_ids:
+                return {
+                    match_id: copy.deepcopy(cached_for_user.get(match_id, {"selected_ids": [], "backup_count": 0}))
+                    for match_id in normalized_ids
+                }
+        else:
+            missing_ids = normalized_ids
+
+    fetched = _fetch_user_team_summaries(user_id, missing_ids)
+    with USER_TEAM_SUMMARY_LOCK:
+        cached_for_user = USER_TEAM_SUMMARY_CACHE.setdefault(user_id, {})
+        if normalized_ids is None:
+            cached_for_user.clear()
+            cached_for_user.update(copy.deepcopy(fetched))
+            USER_TEAM_SUMMARY_ALL_LOADED.add(user_id)
+            return copy.deepcopy(cached_for_user)
+        for match_id in missing_ids or []:
+            cached_for_user[match_id] = copy.deepcopy(fetched.get(match_id, {"selected_ids": [], "backup_count": 0}))
+        return {
+            match_id: copy.deepcopy(cached_for_user.get(match_id, {"selected_ids": [], "backup_count": 0}))
+            for match_id in normalized_ids
+        }
+
+
+def refresh_user_team_summary_cache(user_id: int, match_id: int | None = None) -> dict[int, dict]:
+    match_ids = [int(match_id)] if match_id is not None else None
+    fetched = _fetch_user_team_summaries(int(user_id), match_ids)
+    with USER_TEAM_SUMMARY_LOCK:
+        cached_for_user = USER_TEAM_SUMMARY_CACHE.setdefault(int(user_id), {})
+        if match_id is None:
+            cached_for_user.clear()
+            cached_for_user.update(copy.deepcopy(fetched))
+            USER_TEAM_SUMMARY_ALL_LOADED.add(int(user_id))
+        else:
+            cached_for_user[int(match_id)] = copy.deepcopy(
+                fetched.get(int(match_id), {"selected_ids": [], "backup_count": 0})
+            )
+            USER_TEAM_SUMMARY_ALL_LOADED.discard(int(user_id))
+        return copy.deepcopy(cached_for_user)
+
+
+def prime_user_team_summary_cache() -> dict[int, int]:
+    users = get_cached_data("users")
+    counts: dict[int, int] = {}
+    with USER_TEAM_SUMMARY_LOCK:
+        USER_TEAM_SUMMARY_CACHE.clear()
+        USER_TEAM_SUMMARY_ALL_LOADED.clear()
+
+    for user in users:
+        user_id = int(user.get("UserID", 0) or 0)
+        if not user_id:
+            continue
+        summaries = refresh_user_team_summary_cache(user_id)
+        counts[user_id] = len([summary for summary in summaries.values() if summary.get("selected_ids")])
+    return counts
+
+
+def invalidate_user_team_summary_cache(user_id: int | None = None, match_id: int | None = None) -> None:
+    with USER_TEAM_SUMMARY_LOCK:
+        if user_id is None:
+            USER_TEAM_SUMMARY_CACHE.clear()
+            USER_TEAM_SUMMARY_ALL_LOADED.clear()
+            return
+        cached_for_user = USER_TEAM_SUMMARY_CACHE.get(int(user_id))
+        if cached_for_user is None:
+            return
+        if match_id is None:
+            USER_TEAM_SUMMARY_CACHE.pop(int(user_id), None)
+            USER_TEAM_SUMMARY_ALL_LOADED.discard(int(user_id))
+        else:
+            cached_for_user.pop(int(match_id), None)
+            USER_TEAM_SUMMARY_ALL_LOADED.discard(int(user_id))
 
 
 def prime_static_cache():
@@ -771,6 +925,7 @@ def save_user_backups(user_id: int, match_id: int, backup_player_ids: list[int])
             (int(user_id), int(match_id), index, int(player_id)),
         )
     db.commit()
+    invalidate_user_team_summary_cache(int(user_id), int(match_id))
 
 
 def prune_user_backups(user_id: int, match_id: int, selected_player_ids: list[int]) -> None:
@@ -800,6 +955,7 @@ def prune_user_backups(user_id: int, match_id: int, selected_player_ids: list[in
             (order_index, row["id"]),
         )
     db.commit()
+    invalidate_user_team_summary_cache(int(user_id), int(match_id))
 
 
 def log_unknown_player(name: str, team: str, match_id: int, match_date: str, team1: str, team2: str) -> None:
@@ -831,19 +987,12 @@ def log_unknown_player(name: str, team: str, match_id: int, match_date: str, tea
 def get_backup_counts_for_user(user_id: int, match_ids: list[int | str]) -> dict[int, int]:
     if not match_ids:
         return {}
-    db = get_db()
     normalized_ids = [int(match_id) for match_id in match_ids]
-    placeholders = ",".join("?" * len(normalized_ids))
-    rows = db.execute(
-        f"""
-        SELECT match_id, COUNT(*) AS backup_count
-        FROM team_backups
-        WHERE user_id = ? AND match_id IN ({placeholders}) AND replaced_player_id IS NULL
-        GROUP BY match_id
-        """,
-        [int(user_id), *normalized_ids],
-    ).fetchall()
-    return {int(row["match_id"]): int(row["backup_count"]) for row in rows}
+    summaries = get_cached_user_team_summaries(int(user_id), normalized_ids)
+    return {
+        match_id: int((summaries.get(match_id) or {}).get("backup_count") or 0)
+        for match_id in normalized_ids
+    }
 
 
 def get_active_backup_replacements(match_id: int, user_id: int | None = None) -> dict[int, dict]:
@@ -954,6 +1103,7 @@ def apply_backups_for_match(match_id: int | str, playing_ids: list[int], substit
         return all(next_counts[role] >= 1 for role in required_roles)
 
     swap_count = 0
+    changed_user_ids: set[int] = set()
     for user_id, user_team_rows in team_rows_by_user.items():
         selected_ids = {int(row["player_id"]) for row in user_team_rows}
         role_counts = role_counts_for_team(user_team_rows)
@@ -1009,9 +1159,12 @@ def apply_backups_for_match(match_id: int | str, playing_ids: list[int], substit
             if new_role in role_counts:
                 role_counts[new_role] += 1
             swap_count += 1
+            changed_user_ids.add(int(user_id))
 
     if swap_count:
         db.commit()
+        for changed_user_id in changed_user_ids:
+            refresh_user_team_summary_cache(changed_user_id, mid)
     return swap_count
 
 
@@ -1054,6 +1207,7 @@ def save_team(mobile, name, match_id, selected_players, captain, vice_captain, p
     db.commit()
     prune_user_backups(user_id, mid, [int(pid) for pid in selected_players])
     refresh_match_contestant_cache(mid)
+    refresh_user_team_summary_cache(user_id, mid)
 
 
 # ---------------------------------------------------------------------------
@@ -1098,37 +1252,51 @@ def save_contestant_points(rows: list[dict]) -> None:
         User, Mobile, MatchID, Points, LastUpdated
     (produced by ``Tournament.persist_to_local``).
     """
-    db = get_db()
+    def _save():
+        db = get_db()
+        upsert_rows = {}
 
-    for row in rows:
-        user_id = row.get("UserID")
-        mobile = str(row.get("Mobile", ""))
-        match_id = int(row["MatchID"])
-        points = float(row["Points"])
-        last_updated = row.get("LastUpdated", get_current_datetime().strftime("%Y-%m-%d %H:%M:%S"))
+        for row in rows:
+            user_id = row.get("UserID")
+            mobile = str(row.get("Mobile", ""))
+            match_id = int(row["MatchID"])
+            points = float(row["Points"])
+            last_updated = row.get("LastUpdated", get_current_datetime().strftime("%Y-%m-%d %H:%M:%S"))
 
-        user = None
-        if user_id is not None:
-            user = db.execute("SELECT id FROM users WHERE id = ?", (int(user_id),)).fetchone()
-        if not user and mobile:
-            user = db.execute(
-                "SELECT id FROM users WHERE mobile = ?", (mobile,)
-            ).fetchone()
-        if not user:
-            continue
+            user = None
+            if user_id is not None:
+                user = db.execute("SELECT id FROM users WHERE id = ?", (int(user_id),)).fetchone()
+            if not user and mobile:
+                user = db.execute(
+                    "SELECT id FROM users WHERE mobile = ?", (mobile,)
+                ).fetchone()
+            if not user:
+                continue
 
-        db.execute(
-            """
-            INSERT INTO contestant_points (user_id, match_id, points, last_updated)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(user_id, match_id) DO UPDATE SET
-                points = excluded.points,
-                last_updated = excluded.last_updated
-            """,
-            (user["id"], match_id, points, last_updated),
-        )
+            resolved_user_id = int(user["id"])
+            upsert_rows[(resolved_user_id, match_id)] = (
+                resolved_user_id,
+                match_id,
+                points,
+                last_updated,
+            )
 
-    db.commit()
+        for user_id, match_id in sorted(upsert_rows):
+            _, _, points, last_updated = upsert_rows[(user_id, match_id)]
+            db.execute(
+                """
+                INSERT INTO contestant_points (user_id, match_id, points, last_updated)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id, match_id) DO UPDATE SET
+                    points = excluded.points,
+                    last_updated = excluded.last_updated
+                """,
+                (user_id, match_id, points, last_updated),
+            )
+
+        db.commit()
+
+    _retry_deadlock(_save)
 
 
 def get_computed_match_ids() -> set[str]:
@@ -1226,33 +1394,48 @@ def save_player_points(rows: list[dict]) -> None:
         MatchID, PlayerID, PlayerName, Team, Role, Points, LastUpdated
     (produced by ``Tournament.persist_player_points_to_local``).
     """
-    db = get_db()
+    def _save():
+        db = get_db()
+        upsert_rows = {}
 
-    for row in rows:
-        match_id = int(row["MatchID"])
-        player_id = int(row["PlayerID"])
-        player_name = row.get("PlayerName", "")
-        team = row.get("Team", "")
-        role = row.get("Role", "")
-        points = float(row["Points"])
-        last_updated = row.get("LastUpdated", get_current_datetime().strftime("%Y-%m-%d %H:%M:%S"))
+        for row in rows:
+            match_id = int(row["MatchID"])
+            player_id = int(row["PlayerID"])
+            player_name = row.get("PlayerName", "")
+            team = row.get("Team", "")
+            role = row.get("Role", "")
+            points = float(row["Points"])
+            last_updated = row.get("LastUpdated", get_current_datetime().strftime("%Y-%m-%d %H:%M:%S"))
+            upsert_rows[(match_id, player_id)] = (
+                match_id,
+                player_id,
+                player_name,
+                team,
+                role,
+                points,
+                last_updated,
+            )
 
-        db.execute(
-            """
-            INSERT INTO player_points
-                (match_id, player_id, player_name, team, role, points, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(match_id, player_id) DO UPDATE SET
-                player_name = excluded.player_name,
-                team = excluded.team,
-                role = excluded.role,
-                points = excluded.points,
-                last_updated = excluded.last_updated
-            """,
-            (match_id, player_id, player_name, team, role, points, last_updated),
-        )
+        for match_id, player_id in sorted(upsert_rows):
+            _, _, player_name, team, role, points, last_updated = upsert_rows[(match_id, player_id)]
+            db.execute(
+                """
+                INSERT INTO player_points
+                    (match_id, player_id, player_name, team, role, points, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(match_id, player_id) DO UPDATE SET
+                    player_name = excluded.player_name,
+                    team = excluded.team,
+                    role = excluded.role,
+                    points = excluded.points,
+                    last_updated = excluded.last_updated
+                """,
+                (match_id, player_id, player_name, team, role, points, last_updated),
+            )
 
-    db.commit()
+        db.commit()
+
+    _retry_deadlock(_save)
 
 
 # ---------------------------------------------------------------------------
