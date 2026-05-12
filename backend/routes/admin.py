@@ -159,6 +159,123 @@ def _queue_tournament_match_refresh(
     threading.Thread(target=_run, daemon=True, name=f"admin-match-refresh-{match_id}").start()
 
 
+def _refresh_score_outputs_after_recompute(match_ids: list[int] | None = None) -> dict:
+    if match_ids:
+        for mid in match_ids:
+            data_service.invalidate_match_player_payloads(int(mid))
+            data_service.invalidate_match_contestant_cache(int(mid))
+            data_service.refresh_match_contestant_cache(int(mid))
+    else:
+        data_service.invalidate_match_player_payloads()
+        data_service.invalidate_match_contestant_cache()
+        data_service.prime_contestant_cache()
+
+    try:
+        from backend.routes.scores import invalidate_scores_response_cache, refresh_scores_response_cache_once
+
+        invalidate_scores_response_cache()
+        scores_summary = refresh_scores_response_cache_once()
+    except Exception as exc:
+        print(f"[ADMIN] scores cache refresh after recompute failed: {exc}")
+        scores_summary = {"error": str(exc)}
+
+    try:
+        from backend.routes.leaderboard import invalidate_leaderboard_cache, refresh_leaderboard_cache_once
+
+        invalidate_leaderboard_cache()
+        leaderboard_summary = refresh_leaderboard_cache_once()
+    except Exception as exc:
+        print(f"[ADMIN] leaderboard cache refresh after recompute failed: {exc}")
+        leaderboard_summary = {"error": str(exc)}
+
+    try:
+        from backend.services.weekend_tournament_service import invalidate_weekend_tournament_cache, prime_weekend_tournament_cache
+
+        invalidate_weekend_tournament_cache()
+        weekend_summary = prime_weekend_tournament_cache()
+    except Exception as exc:
+        print(f"[ADMIN] weekend tournament cache refresh after recompute failed: {exc}")
+        weekend_summary = {"error": str(exc)}
+
+    return {
+        "scores_cache": scores_summary,
+        "leaderboard_cache": leaderboard_summary,
+        "weekend_cache": weekend_summary,
+    }
+
+
+def _recompute_match_fresh(match_id: int, *, persist_live: bool = False) -> dict:
+    if tournament_ref is None:
+        raise HTTPException(status_code=500, detail="Tournament not initialized")
+
+    db = get_db()
+    match_row = db.execute("SELECT * FROM matches WHERE id = ?", (int(match_id),)).fetchone()
+    if not match_row:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    match_id_str = str(match_id)
+    current_status = tournament_ref.get_match_status(match_row)
+    if current_status == "future":
+        raise HTTPException(status_code=400, detail="Future matches cannot be recalculated")
+
+    _refresh_tournament_static_state(refresh_schedule_map=True)
+    tournament_ref.ensure_match_teams_loaded([match_id_str], force=True)
+
+    finalized_from_scorecard = tournament_ref.update_match_data(
+        match_id_str,
+        use_playing_xi=True,
+        include_scorecards=True,
+        force_refresh_playing_xi=True,
+        force_refresh_scorecard=True,
+        apply_backups=True,
+        reset_scorecard_players=True,
+    )
+
+    updated_match_row = tournament_ref.match_rows.get(match_id_str, match_row)
+    refreshed_status = tournament_ref.get_match_status(updated_match_row)
+    should_persist_points = refreshed_status == "completed" or (persist_live and refreshed_status == "live")
+
+    player_count = 0
+    contestant_count = 0
+    player_points_total = 0.0
+    contestant_points_total = 0.0
+
+    if should_persist_points:
+        tournament_ref.compute_player_points_for_match(match_id_str)
+        tournament_ref.compute_points_for_match(match_id_str)
+
+        data_service.clear_points_for_match(int(match_id))
+        tournament_ref.persist_player_points_to_local()
+        tournament_ref.persist_to_local()
+
+        player_points = tournament_ref.player_points.get(match_id_str, {})
+        player_count = len(player_points)
+        player_points_total = round(sum(float(points) for points in player_points.values()), 2)
+        for contestant_key in tournament_ref.match_participants.get(match_id_str, set()):
+            contestant = tournament_ref.contestants.get(contestant_key)
+            if contestant and match_id_str in contestant.points:
+                contestant_count += 1
+                contestant_points_total += float(contestant.points.get(match_id_str) or 0)
+        contestant_points_total = round(contestant_points_total, 2)
+
+    try:
+        tournament_ref.warm_today_last_completed_team_xi_previews()
+    except Exception as exc:
+        print(f"[ADMIN] warm XI previews after recompute failed for match {match_id}: {exc}")
+
+    return {
+        "match_id": int(match_id),
+        "status": refreshed_status,
+        "current_status": current_status,
+        "finalized_from_scorecard": bool(finalized_from_scorecard),
+        "persisted": bool(should_persist_points),
+        "player_count": player_count,
+        "contestant_count": contestant_count,
+        "player_points_total": player_points_total,
+        "contestant_points_total": contestant_points_total,
+    }
+
+
 # --- User Management ---
 
 class UpdateUserBody(BaseModel):
@@ -534,88 +651,64 @@ async def recalculate_match(
     if tournament_ref is None:
         raise HTTPException(status_code=500, detail="Tournament not initialized")
 
-    db = get_db()
-    match_row = db.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
-    if not match_row:
-        raise HTTPException(status_code=404, detail="Match not found")
+    with ADMIN_REFRESH_LOCK:
+        with acquire_cache_locks(
+            "scraper_playing_xi",
+            "scores_match_data",
+            "scores_response",
+            "leaderboard_response",
+        ):
+            result = _recompute_match_fresh(int(match_id), persist_live=True)
 
-    current_status = tournament_ref.get_match_status(match_row)
-    if current_status == "future":
-        raise HTTPException(status_code=400, detail="Future matches cannot be recalculated")
-
-    match_id_str = str(match_id)
-
-    refreshed_status = current_status
-
-    def _run_recalculate():
-        nonlocal refreshed_status
-        # Mirror scheduler's locking and cache acquisition so recompute runs
-        # the same code paths as live scoring.
-        with ADMIN_REFRESH_LOCK:
-            try:
-                _refresh_tournament_static_state()
-                tournament_ref.ensure_match_teams_loaded([match_id_str], force=True)
-
-                # Acquire the same scraper/score caches the scheduler uses
-                with acquire_cache_locks(
-                    "scraper_playing_xi",
-                    "scores_match_data",
-                    "scores_response",
-                    "leaderboard_response",
-                ):
-                    # Use the same update_match_data call as the live scheduler.
-                    tournament_ref.update_match_data(
-                        match_id_str,
-                        use_playing_xi=True,
-                        include_scorecards=True,
-                        force_refresh_playing_xi=True,
-                        apply_backups=True,
-                    )
-                    updated_match_row = tournament_ref.match_rows.get(match_id_str, {})
-                    refreshed_status = tournament_ref.get_match_status(updated_match_row)
-
-                    if refreshed_status == "completed":
-                        tournament_ref.compute_player_points_for_match(match_id_str)
-                        tournament_ref.compute_points_for_match(match_id_str)
-
-                        # Guard: if recomputed total is lower than stored total,
-                        # dot ball data was likely lost from the scorecard — abort persist.
-                        stored_total = 0
-                        stored_rows = db.execute(
-                            "SELECT SUM(points) FROM player_points WHERE match_id = ? AND points <> 0",
-                            (int(match_id_str),),
-                        ).fetchone()
-                        if stored_rows and stored_rows[0]:
-                            stored_total = float(stored_rows[0])
-
-                        new_total = 0
-                        new_pp = tournament_ref.player_points.get(int(match_id_str), {})
-                        if new_pp:
-                            new_total = sum(float(v) for v in new_pp.values())
-
-                        if stored_total > 0 and new_total < stored_total:
-                            print(
-                                f"[ADMIN] Recompute BLOCKED for match {match_id_str}: "
-                                f"new total ({new_total:.1f}) < stored total ({stored_total:.1f}). "
-                                f"Likely dot-ball data loss from scorecard."
-                            )
-                        else:
-                            tournament_ref.persist_player_points_to_local()
-                            tournament_ref.persist_to_local()
-
-                        data_service.invalidate_match_player_payloads()
-                        tournament_ref.warm_today_last_completed_team_xi_previews()
-
-                _refresh_admin_caches(tables={"matches"}, refresh_schedule_map=True, match_id=match_id)
-            except Exception as exc:
-                print(f"[ADMIN] background recalculate failed for match {match_id}: {exc}")
-
-    threading.Thread(target=_run_recalculate, daemon=True, name=f"admin-recalculate-{match_id}").start()
+    cache_summary = _refresh_score_outputs_after_recompute([int(match_id)])
 
     return {
         "success": True,
         "message": f"Recalculated scores for match {match_id}",
-        "status": refreshed_status,
+        **result,
+        **cache_summary,
+    }
+
+
+@router.post("/recalculate-all")
+async def recalculate_all_completed(user: dict = Depends(require_admin)):
+    if tournament_ref is None:
+        raise HTTPException(status_code=500, detail="Tournament not initialized")
+
+    db = get_db()
+    match_rows = db.execute("SELECT * FROM matches ORDER BY id").fetchall()
+    completed_match_ids = [
+        int(row["id"])
+        for row in match_rows
+        if tournament_ref.get_match_status(row) == "completed"
+    ]
+
+    results = []
+    errors = []
+
+    with ADMIN_REFRESH_LOCK:
+        with acquire_cache_locks(
+            "scraper_playing_xi",
+            "scores_match_data",
+            "scores_response",
+            "leaderboard_response",
+        ):
+            for completed_match_id in completed_match_ids:
+                try:
+                    results.append(_recompute_match_fresh(completed_match_id))
+                except Exception as exc:
+                    errors.append({"match_id": completed_match_id, "error": str(exc)})
+                    print(f"[ADMIN] recompute-all failed for match {completed_match_id}: {exc}")
+
+    cache_summary = _refresh_score_outputs_after_recompute(completed_match_ids)
+
+    return {
+        "success": len(errors) == 0,
+        "requested": len(completed_match_ids),
+        "processed": len(results),
+        "errors": errors,
+        "matches": results,
+        **cache_summary,
     }
 
 
