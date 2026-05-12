@@ -386,6 +386,68 @@ class Match:
         else:
             print(f"[Match {self.match_id}] ESPN dot-ball parse source=<unknown>")
 
+        valid_teams = {self.team1, self.team2}
+
+        def _quiet_player_id(player_name, team):
+            cleaned_name = clean_name(player_name)
+            if cleaned_name.lower() in {"", "not out", "batting"}:
+                return None
+
+            normalized_name = self.registry.normalize(cleaned_name)
+            if (team, normalized_name) in self.registry.lookup:
+                return self.registry.lookup[(team, normalized_name)]
+
+            candidates = self.registry.get_player_candidates(cleaned_name, team)
+            if len(candidates) == 1:
+                return next(iter(candidates))
+            return None
+
+        def _resolve_player_team(player_name, preferred_team=None):
+            teams = []
+            if preferred_team:
+                teams.append(preferred_team)
+            teams.extend(team for team in (self.team1, self.team2) if team not in teams)
+
+            for team in teams:
+                pid = _quiet_player_id(player_name, team)
+                if pid:
+                    return pid, team
+            return None, preferred_team
+
+        def _find_innings_headers():
+            headers = []
+            seen = set()
+            for idx, line in enumerate(lines):
+                match_obj = re.fullmatch(r"(.+?)\s+[Ii]nnings", line)
+                if not match_obj:
+                    continue
+                raw_team = match_obj.group(1).strip()
+                if re.fullmatch(r"\d+(?:st|nd|rd|th)", raw_team.lower()):
+                    continue
+                team = clean_team_name(raw_team)
+                if team not in valid_teams or team in seen:
+                    continue
+                seen.add(team)
+                headers.append((idx, team))
+                if len(headers) == 2:
+                    break
+            return headers
+
+        innings_headers = _find_innings_headers()
+
+        def _bowling_team_for_section(section_start):
+            batting_team = None
+            for header_idx, header_team in innings_headers:
+                if header_idx > section_start:
+                    break
+                batting_team = header_team
+
+            if batting_team == self.team1:
+                return self.team2
+            if batting_team == self.team2:
+                return self.team1
+            return None
+
         def _apply_bowling_row(player_name, bowling_team, overs, maidens, runs, wickets, economy, dot_balls=None, player_id=None):
             pid = player_id or self.get_player_id(player_name, bowling_team)
             if not pid:
@@ -404,13 +466,9 @@ class Match:
             player.economy = economy
             if dot_balls is not None and player.dot_balls <= 0:
                 player.dot_balls = dot_balls
-                print(
-                    f"[Match {self.match_id}] ESPN dot balls parsed: "
-                    f"{player.name} ({bowling_team}) = {dot_balls}"
-                )
             return True
 
-        def _parse_compact_bowling_row(line, bowling_team):
+        def _parse_compact_bowling_row(line, bowling_team=None):
             normalized = " ".join(str(line).strip().split())
             compact_match = re.match(
                 r"^(?P<name>.+?)\s+(?P<overs>\d+(?:\.\d+)?)\s+(?P<maidens>\d+)\s+(?P<runs>\d+)\s+(?P<wickets>\d+)\s+(?P<economy>\d+(?:\.\d+)?)\s+(?P<dot_balls>\d+)\s+(?P<fours>\d+)\s+(?P<sixes>\d+)\s+(?P<wd>\d+)\s+(?P<nb>\d+)\s*$",
@@ -443,7 +501,10 @@ class Match:
             if dot_balls < 0 or dot_balls > 24:
                 return False
 
-            return _apply_bowling_row(name, bowling_team, overs, maidens, runs, wickets, economy, dot_balls=dot_balls)
+            pid, resolved_team = _resolve_player_team(name, bowling_team)
+            if not pid or not resolved_team:
+                return False
+            return _apply_bowling_row(name, resolved_team, overs, maidens, runs, wickets, economy, dot_balls=dot_balls, player_id=pid)
 
         def _parse_pipe_bowling_row(line, bowling_team, has_dot_balls_column):
             if "|" not in line:
@@ -491,9 +552,12 @@ class Match:
             if dot_balls is not None and (dot_balls < 0 or dot_balls > 24):
                 return False
 
-            return _apply_bowling_row(name, bowling_team, overs, maidens, runs, wickets, economy, dot_balls=dot_balls)
+            pid, resolved_team = _resolve_player_team(name, bowling_team)
+            if not pid or not resolved_team:
+                return False
+            return _apply_bowling_row(name, resolved_team, overs, maidens, runs, wickets, economy, dot_balls=dot_balls, player_id=pid)
 
-        def parse_dot_ball_section(start_idx, end_idx):
+        def parse_dot_ball_section(start_idx, end_idx, bowling_team=None):
             parsed_any = False
             for idx in range(start_idx, end_idx):
                 line = lines[idx]
@@ -526,25 +590,20 @@ class Match:
                 if not name or name.upper() in {"BOWLING", "O", "M", "R", "W", "ECON", "0S", "4S", "6S", "WD", "NB"}:
                     continue
 
-                pid = self.get_player_id(name, self.team1)
-                if not pid:
-                    pid = self.get_player_id(name, self.team2)
-                if not pid:
+                pid, resolved_team = _resolve_player_team(name, bowling_team)
+                if not pid or not resolved_team:
                     continue
 
                 player = self.get_or_create_player(pid)
                 if not player:
                     continue
+                player.team = player.team or resolved_team
                 try:
                     dot_balls_group = match_obj.groupdict().get("dot_balls")
                     if dot_balls_group is not None:
                         dot_balls = int(dot_balls_group)
                         if dot_balls > 0:
                             player.dot_balls = dot_balls
-                            print(
-                                f"[Match {self.match_id}] ESPN dot balls parsed: "
-                                f"{player.name} ({player.team or 'unknown'}) = {dot_balls}"
-                            )
                             parsed_any = True
                 except Exception:
                     continue
@@ -571,17 +630,18 @@ class Match:
                 or " 0s " in f" {str(line).strip().lower()} "
                 for line in header_window
             )
+            bowling_team = _bowling_team_for_section(idx)
 
             section_parsed = False
             for row_idx in range(idx + 1, section_end):
-                if _parse_pipe_bowling_row(lines[row_idx], self.team1, has_dot_balls_column):
+                if _parse_pipe_bowling_row(lines[row_idx], bowling_team, has_dot_balls_column):
                     section_parsed = True
                     continue
-                if _parse_pipe_bowling_row(lines[row_idx], self.team2, has_dot_balls_column):
+                if _parse_compact_bowling_row(lines[row_idx], bowling_team):
                     section_parsed = True
                     continue
 
-            direct_parsed = parse_dot_ball_section(idx, section_end) or section_parsed or direct_parsed
+            direct_parsed = parse_dot_ball_section(idx, section_end, bowling_team) or section_parsed or direct_parsed
 
         temp_match = Match(self.match_id, self.team1, self.team2, self.registry, self.match_date)
         temp_parsed = temp_match.parse_espn_scorecard(soup)
