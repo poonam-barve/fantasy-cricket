@@ -127,6 +127,10 @@ def get_cached_match_scores_payload(match_id: int) -> dict | None:
     return copy.deepcopy(payload) if payload is not None else None
 
 
+def get_cached_scores_snapshot() -> dict:
+    return SCORES_RESPONSE_CACHE.read() or {}
+
+
 def _get_scores_cache_version() -> int:
     return 0
 

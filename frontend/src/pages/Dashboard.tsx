@@ -25,7 +25,6 @@ export default function DashboardPage() {
   const [showContestantsForMatch, setShowContestantsForMatch] = useState<Match | null>(null);
   const [matchContestants, setMatchContestants] = useState<MatchContestant[]>([]);
   const [contestantsLoading, setContestantsLoading] = useState(false);
-  const [contestantsCounts, setContestantsCounts] = useState<Record<number, number>>({});
   const [pendingUsers, setPendingUsers] = useState<any[]>([]);
   const [pendingLoading, setPendingLoading] = useState(false);
   const [modalTab, setModalTab] = useState<'playing' | 'missing'>('playing');
@@ -217,34 +216,15 @@ export default function DashboardPage() {
 
     pendingMatchIds.forEach((matchId) => prefetchedMatchIdsRef.current.add(matchId));
 
-    void (async () => {
-      await Promise.allSettled(
+    const timeoutId = setTimeout(() => {
+      void Promise.allSettled(
         pendingMatchIds.map((matchId) =>
           client.get(`/api/players?match_id=${matchId}`).catch(() => null)
         )
       );
-    })();
+    }, 1500);
 
-    // fetch contestants counts for today's matches (to show counts on card)
-    const todayIds = matches
-      .filter((match) => (match.match_date === todayIST || match.status === 'live') && !['completed', 'nr'].includes(match.status))
-      .map((m) => m.id);
-    if (todayIds.length > 0) {
-      void (async () => {
-        try {
-          const results = await Promise.allSettled(todayIds.map((id) => client.get(`/api/teams/contestants?match_id=${id}`)));
-          const next: Record<number, number> = { ...contestantsCounts };
-          results.forEach((r, i) => {
-            if (r.status === 'fulfilled' && Array.isArray((r.value || {}).data)) {
-              next[todayIds[i]] = (r.value.data || []).length;
-            }
-          });
-          setContestantsCounts(next);
-        } catch {
-          // ignore
-        }
-      })();
-    }
+    return () => clearTimeout(timeoutId);
   }, [authLoading, matches, profile, todayIST]);
 
   // Split matches into tabs

@@ -121,41 +121,32 @@ def _get_matches_payload(cache_key: str) -> list[dict]:
     return payload
 
 
-def _load_match_contestants_for_dashboard(match_id: int) -> list[dict]:
-    try:
-        from backend.routes.scores import get_cached_match_scores_payload
+def _rank_match_contestants(contestants: list[dict]) -> dict[int, int]:
+    rank_lookup: dict[int, int] = {}
+    needs_ranking: list[dict] = []
 
-        cached_payload = get_cached_match_scores_payload(match_id)
-        cached_contestants = (cached_payload or {}).get("contestants") or []
-        if not cached_contestants:
-            return []
-
-        contestants: list[dict] = []
-        for contestant in cached_contestants:
-            contestant_user_id = contestant.get("user_id", contestant.get("id"))
-            if contestant_user_id in (None, ""):
-                continue
-            contestants.append(
+    for contestant in contestants:
+        contestant_user_id = contestant.get("user_id", contestant.get("id"))
+        if contestant_user_id in (None, ""):
+            continue
+        rank = contestant.get("rank")
+        if rank not in (None, ""):
+            rank_lookup[int(contestant_user_id)] = int(rank)
+        else:
+            needs_ranking.append(
                 {
                     "user_id": int(contestant_user_id),
                     "name": contestant.get("name", ""),
                     "points": round(float(contestant.get("points", 0) or 0), 2),
                 }
             )
-        return contestants
-    except Exception:
-        return []
 
+    if not needs_ranking:
+        return rank_lookup
 
-def _rank_match_contestants(contestants: list[dict]) -> dict[int, int]:
-    if not contestants:
-        return {}
-
-    sorted_contestants = sorted(contestants, key=lambda item: (-item["points"], item["name"]))
-    rank_lookup: dict[int, int] = {}
+    sorted_contestants = sorted(needs_ranking, key=lambda item: (-item["points"], item["name"]))
     current_rank = 0
     previous_points = None
-
     for index, contestant in enumerate(sorted_contestants, start=1):
         if previous_points is None or contestant["points"] != previous_points:
             current_rank = index
@@ -167,6 +158,12 @@ def _rank_match_contestants(contestants: list[dict]) -> dict[int, int]:
 
 def _attach_user_match_ranks(payload: list[dict], user_id: int) -> list[dict]:
     match_rank_map: dict[int, dict[int, int]] = {}
+    try:
+        from backend.routes.scores import get_cached_scores_snapshot
+
+        scores_snapshot = get_cached_scores_snapshot()
+    except Exception:
+        scores_snapshot = {}
 
     for match in payload:
         match_status = str(match.get("status") or "").strip().lower()
@@ -174,7 +171,8 @@ def _attach_user_match_ranks(payload: list[dict], user_id: int) -> list[dict]:
             continue
 
         match_id = int(match["id"])
-        contestants = _load_match_contestants_for_dashboard(match_id)
+        scores_payload = scores_snapshot.get(match_id) or {}
+        contestants = scores_payload.get("contestants") or []
         if not contestants:
             if match_status == "live":
                 print(f"[MATCHES] live rank cache miss match={match_id}")
