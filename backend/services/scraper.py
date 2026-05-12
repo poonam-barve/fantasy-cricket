@@ -2,6 +2,7 @@ import json
 import re
 import time
 import threading
+import html as html_lib
 from datetime import datetime, timedelta
 import requests
 from difflib import SequenceMatcher
@@ -298,7 +299,9 @@ def fetch_scorecard_html(match_id, team1: str | None = None, team2: str | None =
     if team1 and team2:
         espn_match_id = data_service.get_stored_espn_match_id(int(match_id))
         if not espn_match_id or force_refresh:
-            espn_match_id = resolve_espn_match_id(int(match_id), team1, team2, force_refresh=force_refresh)
+            resolved_match_id = resolve_espn_match_id(int(match_id), team1, team2, force_refresh=force_refresh)
+            if resolved_match_id:
+                espn_match_id = resolved_match_id
 
     if not espn_match_id:
         try:
@@ -331,8 +334,6 @@ def fetch_scorecard_html(match_id, team1: str | None = None, team2: str | None =
                 successful += 1
                 weak_fallback_html = res.text
                 LAST_ESPN_SCORECARD_URL[int(match_id)] = url
-            elif weak_fallback_html is None:
-                weak_fallback_html = res.text
 
         if strong_fallback_html:
             return strong_fallback_html
@@ -346,12 +347,21 @@ def fetch_scorecard_html(match_id, team1: str | None = None, team2: str | None =
     if fetched_html:
         return fetched_html
 
+    # Dot balls are ESPN-only in this app. If ESPN's rendered scorecard page is
+    # blocked or stripped, use ESPN's summary API for the same scorecard data.
+    summary_html = fetch_espn_summary_scorecard_html(int(match_id), int(espn_match_id), team1, team2)
+    if summary_html:
+        return summary_html
+
     if team1 and team2 and not force_refresh:
         refreshed_match_id = resolve_espn_match_id(int(match_id), team1, team2, force_refresh=True)
         if refreshed_match_id and refreshed_match_id != espn_match_id:
             fetched_html = _try_fetch(int(refreshed_match_id))
             if fetched_html:
                 return fetched_html
+            summary_html = fetch_espn_summary_scorecard_html(int(match_id), int(refreshed_match_id), team1, team2)
+            if summary_html:
+                return summary_html
 
     return None
 
@@ -443,14 +453,190 @@ def build_espn_scorecard_url_variants(espn_match_id: int) -> list[str]:
     return ordered_variants
 
 
+def build_espn_summary_api_url(espn_match_id: int) -> str:
+    return (
+        f"https://site.web.api.espn.com/apis/site/v2/sports/cricket/{ESPN_SERIES_ID}/summary"
+        f"?contentorigin=espn&event={int(espn_match_id)}&lang=en&region=in"
+    )
+
+
+def _espn_summary_stat(stats: dict, name: str, default=None):
+    value = stats.get(name, default)
+    if value is None:
+        return default
+    return value
+
+
+def _espn_summary_int(stats: dict, name: str, default: int = 0) -> int:
+    try:
+        return int(float(_espn_summary_stat(stats, name, default) or default))
+    except Exception:
+        return default
+
+
+def _espn_summary_float_text(stats: dict, name: str, default: str = "0") -> str:
+    value = _espn_summary_stat(stats, name, default)
+    text = str(value if value is not None else default).strip()
+    if text.endswith(".0"):
+        text = text[:-2]
+    return text or default
+
+
+def _espn_summary_linescore_stats(linescore: dict) -> dict:
+    stats = {}
+    statistics = linescore.get("statistics") or {}
+    for category in statistics.get("categories") or []:
+        for stat in category.get("stats") or []:
+            name = stat.get("name")
+            if not name:
+                continue
+            stats[name] = stat.get("displayValue", stat.get("value"))
+    return stats
+
+
+def _build_scorecard_html_from_espn_summary(data: dict, team1: str | None, team2: str | None) -> str | None:
+    innings: dict[int, dict] = {}
+    valid_teams = {team for team in (team1, team2) if team}
+
+    for roster in data.get("rosters") or []:
+        team = ((roster.get("team") or {}).get("abbreviation") or "").strip()
+        if valid_teams and team not in valid_teams:
+            continue
+
+        for player in roster.get("roster") or []:
+            athlete = player.get("athlete") or {}
+            player_name = (
+                athlete.get("battingName")
+                or athlete.get("displayName")
+                or athlete.get("name")
+                or ""
+            )
+            player_name = " ".join(str(player_name).split()).strip()
+            if not player_name:
+                continue
+
+            for period in player.get("linescores") or []:
+                for linescore in period.get("linescores") or []:
+                    stats = _espn_summary_linescore_stats(linescore)
+                    innings_number = _espn_summary_int(stats, "inningsNumber", 0)
+                    if innings_number <= 0:
+                        continue
+
+                    innings_data = innings.setdefault(
+                        innings_number,
+                        {"batting_team": None, "bowling_team": None, "bowlers": []},
+                    )
+
+                    if _espn_summary_int(stats, "batted", 0) > 0 or _espn_summary_int(stats, "ballsFaced", 0) > 0:
+                        innings_data["batting_team"] = innings_data["batting_team"] or team
+
+                    innings_bowled = _espn_summary_int(stats, "inningsBowled", 0)
+                    overs = _espn_summary_float_text(stats, "overs", "0")
+                    if innings_bowled <= 0 and overs in {"0", "0.0", "-"}:
+                        continue
+
+                    dot_balls = _espn_summary_int(stats, "dots", 0)
+                    if dot_balls < 0 or dot_balls > 24:
+                        continue
+
+                    innings_data["bowling_team"] = team
+                    innings_data["bowlers"].append({
+                        "order": _espn_summary_int(linescore, "order", len(innings_data["bowlers"]) + 1),
+                        "name": player_name,
+                        "overs": overs,
+                        "maidens": _espn_summary_int(stats, "maidens", 0),
+                        "runs": _espn_summary_int(stats, "conceded", 0),
+                        "wickets": _espn_summary_int(stats, "wickets", 0),
+                        "economy": _espn_summary_float_text(stats, "economyRate", "0"),
+                        "dots": dot_balls,
+                        "fours": _espn_summary_int(stats, "foursConceded", 0),
+                        "sixes": _espn_summary_int(stats, "sixesConceded", 0),
+                        "wides": _espn_summary_int(stats, "wides", 0),
+                        "noballs": _espn_summary_int(stats, "noballs", 0),
+                    })
+
+    if not innings:
+        return None
+
+    for innings_data in innings.values():
+        if not innings_data.get("batting_team") and team1 and team2 and innings_data.get("bowling_team"):
+            innings_data["batting_team"] = team2 if innings_data["bowling_team"] == team1 else team1
+
+    lines = [
+        "<html><body>",
+        f"<div>{html_lib.escape(str(team1 or ''))} vs {html_lib.escape(str(team2 or ''))}</div>",
+        "<div>Scorecard</div>",
+    ]
+
+    parsed_bowler_count = 0
+    for innings_number in sorted(innings):
+        innings_data = innings[innings_number]
+        batting_team = innings_data.get("batting_team")
+        bowlers = sorted(innings_data.get("bowlers") or [], key=lambda row: row.get("order", 999))
+        if not batting_team or not bowlers:
+            continue
+
+        lines.extend([
+            f"<div>{html_lib.escape(str(batting_team))} Innings</div>",
+            "<div>BATSMEN</div>",
+            "<div>Extras</div>",
+            "<div>0</div>",
+            "<div>TOTAL</div>",
+            "<div>0</div>",
+            "<div>Bowling O M R W Econ 0s 4s 6s WD NB</div>",
+        ])
+        for bowler in bowlers:
+            parsed_bowler_count += 1
+            row = (
+                f"{bowler['name']} {bowler['overs']} {bowler['maidens']} {bowler['runs']} "
+                f"{bowler['wickets']} {bowler['economy']} {bowler['dots']} {bowler['fours']} "
+                f"{bowler['sixes']} {bowler['wides']} {bowler['noballs']}"
+            )
+            lines.append(f"<div>{html_lib.escape(row)}</div>")
+
+    if parsed_bowler_count == 0:
+        return None
+
+    lines.append("</body></html>")
+    return "\n".join(lines)
+
+
+def fetch_espn_summary_scorecard_html(
+    match_id: int,
+    espn_match_id: int,
+    team1: str | None = None,
+    team2: str | None = None,
+) -> str | None:
+    url = build_espn_summary_api_url(int(espn_match_id))
+    try:
+        res = _session_get(url)
+        if not (200 <= res.status_code < 300):
+            return None
+        data = res.json()
+    except Exception as exc:
+        print(f"[ESPN Summary] Match {match_id}: failed to fetch {url}: {exc}")
+        return None
+
+    html_text = _build_scorecard_html_from_espn_summary(data, team1, team2)
+    if not html_text:
+        return None
+
+    LAST_ESPN_SCORECARD_URL[int(match_id)] = url
+    return html_text
+
+
 def _espn_scorecard_html_quality(html_text: str | None, team1: str | None = None, team2: str | None = None) -> int:
     if not html_text:
         return 0
 
+    html_lower = str(html_text).lower()
     text = " ".join(BeautifulSoup(html_text, "html.parser").stripped_strings)
     normalized = " ".join(text.lower().split())
     if not normalized:
         return 0
+
+    if "scorecard-page" in html_lower:
+        return 1
 
     if not any(marker in normalized for marker in ("batsmen", "bowling", "extras", "total", "scorecard")):
         return 0

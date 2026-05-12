@@ -77,6 +77,14 @@ def _get_tournament_num_rounds(tournament) -> int:
     return len(_get_weekend_match_ids(tournament))
 
 
+def _pending_tournament_sort_key(tournament) -> tuple[str, str, int]:
+    """Chronological key for selecting the nearest pending tournament."""
+    keys = tournament.keys() if hasattr(tournament, "keys") else tournament
+    qualifier_date = tournament["qualifier_date"] if "qualifier_date" in keys else ""
+    qualifier_time = tournament["qualifier_time"] if "qualifier_time" in keys else ""
+    return (qualifier_date or "9999-12-31", qualifier_time or "23:59", int(tournament["id"]))
+
+
 # ──────────────────────────────────────────────
 # Detection
 # ──────────────────────────────────────────────
@@ -658,11 +666,17 @@ def prime_weekend_tournament_cache() -> dict:
     match_tags: dict[int, dict] = {}
 
     tournament_rows = db.execute(
-        "SELECT * FROM weekend_tournaments ORDER BY id DESC"
+        """
+        SELECT wt.*, m.match_date AS qualifier_date, m.match_time AS qualifier_time
+        FROM weekend_tournaments wt
+        LEFT JOIN matches m ON m.id = wt.qualifying_match_id
+        ORDER BY wt.id DESC
+        """
     ).fetchall()
 
     active_or_qualifying = None
     pending_upcoming = None
+    pending_upcoming_key = None
     completed_latest = None
 
     for tournament in tournament_rows:
@@ -672,8 +686,12 @@ def prime_weekend_tournament_cache() -> dict:
         status = str(tournament["status"] or "").strip().lower()
         if status in {"active", "qualifying"} and active_or_qualifying is None:
             active_or_qualifying = response
-        elif status == "pending" and pending_upcoming is None:
+        elif status == "pending" and (
+            pending_upcoming_key is None
+            or _pending_tournament_sort_key(tournament) < pending_upcoming_key
+        ):
             pending_upcoming = response
+            pending_upcoming_key = _pending_tournament_sort_key(tournament)
         elif status == "completed" and completed_latest is None:
             completed_latest = response
 
