@@ -228,7 +228,15 @@ def _persist_scores_snapshot_to_db(snapshot: dict[int, dict], match_ids: set[int
                 data_service.save_contestant_points(contestant_rows)
 
 
-def _build_match_scores_payload(match_id: int, match_row, registry, players_data, db) -> dict | None:
+def _build_match_scores_payload(
+    match_id: int,
+    match_row,
+    registry,
+    players_data,
+    db,
+    *,
+    force_refresh_live_data: bool = False,
+) -> dict | None:
     match_status = _match_status_value(match_row)
     if match_status == "nr":
         return _empty_match_scores_payload("nr")
@@ -239,25 +247,31 @@ def _build_match_scores_payload(match_id: int, match_row, registry, players_data
 
     match_obj = None
     html_content = None
-    try:
-        from backend.main import tournament
+    if not force_refresh_live_data:
+        try:
+            from backend.main import tournament
 
-        cached_match = tournament.matches.get(str(match_id))
-        if cached_match and getattr(cached_match, "players", None):
-            match_obj = copy.deepcopy(cached_match)
-            html_content = "tournament-cache"
-    except Exception:
-        match_obj = None
-        html_content = None
+            cached_match = tournament.matches.get(str(match_id))
+            if cached_match and getattr(cached_match, "players", None):
+                match_obj = copy.deepcopy(cached_match)
+                html_content = "tournament-cache"
+        except Exception:
+            match_obj = None
+            html_content = None
 
     if not match_obj:
-        match_obj, html_content, _ = _hydrate_match_for_scores(
+        hydrated = _hydrate_match_for_scores(
             match_id,
             match_row,
             registry,
             players_data,
             include_playing_xi=_is_live_window(match_row),
+            force_refresh=force_refresh_live_data,
+            require_scorecard_sources=force_refresh_live_data,
         )
+        if hydrated is None:
+            return None
+        match_obj, html_content, _ = hydrated
 
     if not match_obj or not getattr(match_obj, "players", None):
         return None
@@ -550,7 +564,14 @@ def refresh_scores_response_cache_once(match_statuses: set[str] | None = None) -
                         continue
                     if status == "live":
                         eligible += 1
-                        payload = _build_match_scores_payload(match_id, match_row, registry, players_data, db)
+                        payload = _build_match_scores_payload(
+                            match_id,
+                            match_row,
+                            registry,
+                            players_data,
+                            db,
+                            force_refresh_live_data=True,
+                        )
                         if payload is not None:
                             snapshot[match_id] = payload
                             updated_match_ids.add(match_id)
@@ -978,7 +999,15 @@ def _count_dot_ball_players(match_obj) -> tuple[int, int]:
     return dot_ball_players, dot_ball_total
 
 
-def _build_live_match_payload(match_id: int, match_row, registry, players_data, include_playing_xi=False, force_refresh_scorecard: bool = False):
+def _build_live_match_payload(
+    match_id: int,
+    match_row,
+    registry,
+    players_data,
+    include_playing_xi=False,
+    force_refresh_scorecard: bool = False,
+    require_scorecard_sources: bool = False,
+):
     cache_key = (match_id, include_playing_xi)
 
     team1 = clean_team_name(_row_value(match_row, "team1", "Team1", default=""))
@@ -1030,9 +1059,19 @@ def _build_live_match_payload(match_id: int, match_row, registry, players_data, 
             f"dot_ball_players={dot_ball_players} dot_balls_total={dot_ball_total}"
         )
 
+    if require_scorecard_sources and (not html_content or not espn_html):
+        print(
+            f"[scores-cache] match={match_id} keeping previous live snapshot; "
+            f"cricbuzz={'yes' if html_content else 'no'} espn={'yes' if espn_html else 'no'}"
+        )
+        with MATCH_DATA_CACHE_LOCK:
+            MATCH_DATA_REFRESH_INFLIGHT.discard(cache_key)
+        return None
+
     payload = {
         "match_obj": match_obj,
         "html_content": html_content,
+        "espn_html": bool(espn_html),
         "playing_xi": playing_xi,
         "fetched_at": time.time(),
         "match_status": _match_status_value(match_row),
@@ -1060,6 +1099,7 @@ def _refresh_live_match_payload_async(match_id: int, match_row, registry, player
                 players_data,
                 include_playing_xi=include_playing_xi,
                 force_refresh_scorecard=force_refresh_scorecard,
+                require_scorecard_sources=False,
             )
         except Exception as exc:
             print(f"[scores-cache] async refresh failed for match {match_id}: {exc}")
@@ -1069,10 +1109,32 @@ def _refresh_live_match_payload_async(match_id: int, match_row, registry, player
     threading.Thread(target=_run, daemon=True).start()
 
 
-def _hydrate_match_from_live_data(match_id: int, match_row, registry, players_data, include_playing_xi=False):
+def _hydrate_match_from_live_data(
+    match_id: int,
+    match_row,
+    registry,
+    players_data,
+    include_playing_xi=False,
+    force_refresh: bool = False,
+    require_scorecard_sources: bool = False,
+):
     cache_key = (match_id, include_playing_xi)
     now_ts = time.time()
     current_status = _match_status_value(match_row)
+
+    if force_refresh:
+        payload = _build_live_match_payload(
+            match_id,
+            match_row,
+            registry,
+            players_data,
+            include_playing_xi=include_playing_xi,
+            force_refresh_scorecard=True,
+            require_scorecard_sources=require_scorecard_sources,
+        )
+        if payload is None:
+            return None
+        return payload["match_obj"], payload["html_content"], payload["playing_xi"]
 
     with MATCH_DATA_CACHE_LOCK:
         cached = MATCH_DATA_CACHE.get(cache_key)
@@ -1098,7 +1160,10 @@ def _hydrate_match_from_live_data(match_id: int, match_row, registry, players_da
                 players_data,
                 include_playing_xi=include_playing_xi,
                 force_refresh_scorecard=True,
+                require_scorecard_sources=False,
             )
+            if payload is None:
+                return cached["match_obj"], cached["html_content"], cached["playing_xi"]
             return payload["match_obj"], payload["html_content"], payload["playing_xi"]
 
         # Stale-while-refresh: keep serving previous snapshot while refresh runs in background.
@@ -1119,7 +1184,10 @@ def _hydrate_match_from_live_data(match_id: int, match_row, registry, players_da
         players_data,
         include_playing_xi=include_playing_xi,
         force_refresh_scorecard=True,
+        require_scorecard_sources=False,
     )
+    if payload is None:
+        return None
     dot_ball_players, dot_ball_total = _count_dot_ball_players(payload["match_obj"])
     print(
         f"[scores-cache] initial live hydrate match={match_id} "
@@ -1129,7 +1197,15 @@ def _hydrate_match_from_live_data(match_id: int, match_row, registry, players_da
     return payload["match_obj"], payload["html_content"], payload["playing_xi"]
 
 
-def _hydrate_match_for_scores(match_id: int, match_row, registry, players_data, include_playing_xi=False):
+def _hydrate_match_for_scores(
+    match_id: int,
+    match_row,
+    registry,
+    players_data,
+    include_playing_xi=False,
+    force_refresh: bool = False,
+    require_scorecard_sources: bool = False,
+):
     if _is_completed_match(match_row):
         cached_match = _get_completed_match_from_tournament(match_id)
         if cached_match:
@@ -1141,6 +1217,8 @@ def _hydrate_match_for_scores(match_id: int, match_row, registry, players_data, 
         registry,
         players_data,
         include_playing_xi=include_playing_xi,
+        force_refresh=force_refresh,
+        require_scorecard_sources=require_scorecard_sources,
     )
 
 
