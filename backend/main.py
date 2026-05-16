@@ -282,7 +282,10 @@ def _load_todays_live_matches():
     today_live_matches = [
         match
         for match in prepared_matches
-        if match.get("Date") == today_key and match.get("status") in {"lineups", "live"}
+        if (
+            (match.get("Date") == today_key and match.get("status") not in {"completed", "nr"})
+            or match.get("status") in {"lineups", "live"}
+        )
     ]
     live_match_ids = [int(match["MatchID"]) for match in today_live_matches]
     return prepared_matches, today_live_matches, live_match_ids
@@ -363,6 +366,11 @@ def _run_background_warmup():
             data_service.prime_static_cache()
             prediction_summary = data_service.prime_score_prediction_cache()
             print(f"[BOOT] Primed score prediction cache matches={len(prediction_summary)}")
+            completed_rank_summary = matches.refresh_completed_match_rank_cache_once()
+            print(
+                "[BOOT] Primed completed match rank cache "
+                f"matches={completed_rank_summary['matches']} ranked={completed_rank_summary['ranked']}"
+            )
             contestant_summary = data_service.prime_contestant_cache()
             print(f"[BOOT] Primed contestant cache matches={len(contestant_summary)}")
             user_team_summary = data_service.prime_user_team_summary_cache()

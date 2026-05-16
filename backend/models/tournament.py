@@ -778,9 +778,9 @@ class Tournament:
         for match_row in matches_data:
             match_id = str(match_row["MatchID"])
             status = self.get_match_status(match_row)
-            if status not in {"lineups", "live"}:
-                continue
             if (match_row.get("Date") or match_row.get("match_date")) != today_key:
+                continue
+            if status in {"completed", "nr"}:
                 continue
 
             for team in (match_row.get("Team1", ""), match_row.get("Team2", "")):

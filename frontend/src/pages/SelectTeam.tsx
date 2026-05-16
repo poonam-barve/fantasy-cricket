@@ -196,6 +196,7 @@ export default function SelectTeamPage() {
   const lineupWindowOpen = Boolean(playingXi.lineupWindowOpen);
   const showAvailabilityDetails = lineupWindowOpen;
   const isTodayMatch = Boolean(playingXi.isTodayMatch);
+  const hasActualPlayingXi = Boolean(playingXi.announced && (playingXi.playingCount || 0) >= 22);
 
   const refreshAvailabilityData = async () => {
     try {
@@ -1315,7 +1316,7 @@ export default function SelectTeamPage() {
               <div className="mt-4 space-y-2">
                 <div className="grid grid-cols-2 gap-3">
                   {teamsInMatch.map((team) => {
-                    const hasPreview = isTodayMatch && !playingXi.announced && Boolean(lastMatchXi[team]?.player_ids?.length);
+                    const hasPreview = isTodayMatch && !hasActualPlayingXi && Boolean(lastMatchXi[team]?.player_ids?.length);
                     return (
                       <div
                         key={team}
@@ -1327,7 +1328,7 @@ export default function SelectTeamPage() {
                             <div className="text-[11px] text-white/45">{selectedByTeam[team] || 0} selected</div>
                           </div>
                         </div>
-                        {showAvailabilityDetails && playingXi.announced ? (
+                        {showAvailabilityDetails && hasActualPlayingXi ? (
                           [
                             { key: 'available', label: 'Playing XI', accent: 'text-blue-300' },
                             { key: 'substitute', label: 'Substitutes', accent: 'text-sky-300' },

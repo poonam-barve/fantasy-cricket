@@ -160,7 +160,15 @@ def _load_last_completed_team_xi(
     if cached_playing_xi and cached_playing_xi.get("announced"):
         playing_xi = cached_playing_xi
     else:
-        playing_xi = {"announced": False, "url": "", "player_ids": [], "substitute_ids": []}
+        playing_xi = refresh_playing_xi_cache(
+            last_match_id,
+            last_team1,
+            last_team2,
+            last_players,
+            last_match_date,
+            last_match_time,
+            last_toss_time,
+        )
 
     if not playing_xi or not playing_xi.get("announced"):
         return None
@@ -368,7 +376,6 @@ async def list_players(
                     match_date,
                     match_time,
                     toss_time,
-                    force_refresh=True,
                 )
             except Exception:
                 pass
@@ -387,7 +394,7 @@ async def list_players(
         playing_xi_known = len(playing_ids) == 22
         substitutes_known = len(substitute_ids) == 10
         lineup_preview: dict[str, dict] = {}
-        if is_today_match and not playing_xi_data["announced"]:
+        if is_today_match and not playing_xi_known:
             for team in (team1, team2):
                 preview = _load_last_completed_team_xi(db, match_id, team)
                 if preview:

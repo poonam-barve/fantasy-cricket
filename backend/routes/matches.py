@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from backend.config import IST, get_current_datetime, get_current_date_key
 from backend.middleware.auth import get_current_user
 from backend.services import data_service
+from backend.services.cache_locks import get_cache_lock
 from backend.services.double_buffer_cache import DoubleBufferCache
 from backend.services.match_status import resolve_match_status
 from backend.services.scraper import get_cached_toss_info
@@ -20,6 +21,8 @@ MATCHES_RESPONSE_CACHE = {
     "matches": DoubleBufferCache(lock_name="matches_response"),
     "dashboard": DoubleBufferCache(lock_name="matches_response"),
 }
+COMPLETED_MATCH_RANK_CACHE: dict[int, dict[int, int]] = {}
+COMPLETED_MATCH_RANK_CACHE_LOCK = get_cache_lock("completed_match_rank_cache")
 
 
 def compute_match_status(match_date: str, match_time: str):
@@ -60,6 +63,65 @@ def refresh_matches_response_cache_once() -> dict:
     return {
         "matches": len(payload),
         "dashboard": len(payload),
+    }
+
+
+def refresh_completed_match_rank_cache_once() -> dict:
+    rows = data_service.get_cached_data("matches")
+    completed_match_ids = [
+        int(row["MatchID"])
+        for row in rows
+        if compute_runtime_match_status(
+            row["Date"],
+            row["Time"],
+            row.get("Status"),
+        )[0] == "completed"
+    ]
+
+    rank_cache: dict[int, dict[int, int]] = {}
+    if completed_match_ids:
+        db = data_service.get_db()
+        placeholders = ",".join("?" * len(completed_match_ids))
+        point_rows = db.execute(
+            f"""
+            SELECT
+                cp.match_id,
+                cp.user_id,
+                u.name,
+                cp.points
+            FROM contestant_points cp
+            JOIN users u ON u.id = cp.user_id
+            WHERE cp.match_id IN ({placeholders})
+            """,
+            completed_match_ids,
+        ).fetchall()
+
+        contestants_by_match: dict[int, list[dict]] = {}
+        for row in point_rows:
+            match_id = int(row["match_id"])
+            contestants_by_match.setdefault(match_id, []).append({
+                "user_id": int(row["user_id"]),
+                "name": row["name"],
+                "points": round(float(row["points"] or 0), 2),
+            })
+
+        for match_id, contestants in contestants_by_match.items():
+            try:
+                bonuses = data_service.compute_prediction_bonuses(match_id)
+            except Exception:
+                bonuses = {}
+            for contestant in contestants:
+                bonus = bonuses.get(int(contestant["user_id"]), {}).get("bonus", 0)
+                contestant["points"] = round(float(contestant["points"]) + float(bonus or 0), 2)
+            rank_cache[match_id] = _rank_match_contestants(contestants)
+
+    with COMPLETED_MATCH_RANK_CACHE_LOCK:
+        COMPLETED_MATCH_RANK_CACHE.clear()
+        COMPLETED_MATCH_RANK_CACHE.update(rank_cache)
+
+    return {
+        "matches": len(completed_match_ids),
+        "ranked": len(rank_cache),
     }
 
 
@@ -158,6 +220,9 @@ def _rank_match_contestants(contestants: list[dict]) -> dict[int, int]:
 
 def _attach_user_match_ranks(payload: list[dict], user_id: int) -> list[dict]:
     match_rank_map: dict[int, dict[int, int]] = {}
+    with COMPLETED_MATCH_RANK_CACHE_LOCK:
+        match_rank_map.update({match_id: dict(ranks) for match_id, ranks in COMPLETED_MATCH_RANK_CACHE.items()})
+
     try:
         from backend.routes.scores import get_cached_scores_snapshot
 
