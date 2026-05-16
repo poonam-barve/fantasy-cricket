@@ -476,6 +476,7 @@ export default function SelectTeamPage() {
     return remainingSlots >= missingRolesAfterSelection;
   };
   const squadFull = selectedCount >= 11;
+  const unavailableSelectionClass = 'cursor-not-allowed bg-white/[0.01] opacity-35 grayscale saturate-0';
 
   const renderTeamBadge = (team: string, compact = false) => {
     const theme = getTeamTheme(team);
@@ -667,9 +668,9 @@ export default function SelectTeamPage() {
           isSelected
             ? 'player-selected-highlight border border-sky-300/60'
             : squadFull
-            ? 'cursor-not-allowed bg-white/[0.03] opacity-45'
+            ? unavailableSelectionClass
             : !selectionAllowed
-            ? 'cursor-not-allowed bg-white/[0.03] text-white/55'
+            ? unavailableSelectionClass
             : 'bg-white/[0.04] hover:bg-white/[0.08]'
         }`}
       >
@@ -972,9 +973,9 @@ export default function SelectTeamPage() {
                           isSelected
                             ? 'player-selected-highlight border border-sky-300/60'
                             : squadFull
-                            ? 'cursor-not-allowed bg-white/[0.01] opacity-45'
+                            ? unavailableSelectionClass
                             : !selectionAllowed
-                            ? 'cursor-not-allowed bg-white/[0.01] text-white/55'
+                            ? unavailableSelectionClass
                             : 'bg-white/[0.02] hover:bg-white/[0.05]'
                         }`}
                       >
@@ -1130,9 +1131,9 @@ export default function SelectTeamPage() {
                           isSelected
                             ? 'player-selected-highlight border border-sky-300/60'
                             : squadFull
-                            ? 'cursor-not-allowed bg-white/[0.01] opacity-45'
+                            ? unavailableSelectionClass
                             : !selectionAllowed
-                            ? 'cursor-not-allowed bg-white/[0.01] text-white/55'
+                            ? unavailableSelectionClass
                             : 'bg-white/[0.02] hover:bg-white/[0.05]'
                         }`}
                           >
@@ -1423,9 +1424,9 @@ export default function SelectTeamPage() {
                         isSelected
                           ? 'player-selected-highlight border border-sky-300/60'
                           : squadFull
-                          ? 'bg-white/[0.01] cursor-not-allowed'
+                          ? unavailableSelectionClass
                           : !selectionAllowed
-                          ? 'bg-white/[0.01] text-white/55 cursor-not-allowed'
+                          ? unavailableSelectionClass
                           : 'bg-white/[0.02] hover:bg-white/[0.05]'
                       }`}
                         onClick={() => {
@@ -1442,7 +1443,7 @@ export default function SelectTeamPage() {
                           }}
                         />
 
-                      <div className={`min-w-0 flex-1 ${squadFull && !isSelected ? 'opacity-45' : ''}`}>
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           {renderTeamBadge(player.team)}
                           <p className="min-w-0 truncate text-sm font-medium text-white">{player.name}</p>
