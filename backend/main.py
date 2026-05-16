@@ -29,8 +29,9 @@ from backend.services import data_service
 from backend.services.scraper import compute_toss_time
 from backend.services.venue_stats import prime_today_venue_cache
 from backend.services.weekend_tournament_service import prime_weekend_tournament_cache
+from backend.services import super_team_service
 from backend.models.tournament import Tournament
-from backend.routes import auth, matches, players, teams, scores, leaderboard, admin, weekend_tournament
+from backend.routes import auth, matches, players, teams, scores, leaderboard, admin, weekend_tournament, super_team
 
 app = FastAPI(title="Fantasy Cricket API")
 
@@ -55,6 +56,8 @@ app.include_router(scores.router)
 app.include_router(leaderboard.router)
 app.include_router(admin.router)
 app.include_router(weekend_tournament.router)
+app.include_router(super_team.router)
+app.include_router(super_team.admin_router)
 
 
 @app.get("/api/runtime/current-time")
@@ -373,6 +376,11 @@ def _run_background_warmup():
             )
             contestant_summary = data_service.prime_contestant_cache()
             print(f"[BOOT] Primed contestant cache matches={len(contestant_summary)}")
+            super_team_summary = super_team_service.prime_super_team_cache()
+            print(
+                "[BOOT] Primed super team cache "
+                f"teams={super_team_summary['teams']} standings={super_team_summary['standings']}"
+            )
             user_team_summary = data_service.prime_user_team_summary_cache()
             print(f"[BOOT] Primed user team summary cache users={len(user_team_summary)}")
             weekend_summary = prime_weekend_tournament_cache()

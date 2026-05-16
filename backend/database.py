@@ -401,6 +401,19 @@ def _ensure_unknown_players_postgres(cursor):
     """)
 
 
+def _ensure_super_teams_postgres(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS super_teams (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            player_id INTEGER NOT NULL REFERENCES players(id),
+            updated_at TEXT NOT NULL,
+            updated_by INTEGER REFERENCES users(id),
+            UNIQUE(user_id, player_id)
+        )
+    """)
+
+
 def _ensure_team_backups_sqlite(conn):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS team_backups (
@@ -425,6 +438,19 @@ def _ensure_unknown_players_sqlite(conn):
             team1 TEXT NOT NULL,
             team2 TEXT NOT NULL,
             UNIQUE(name, team, match_id, match_date, team1, team2)
+        )
+    """)
+
+
+def _ensure_super_teams_sqlite(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS super_teams (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            player_id INTEGER NOT NULL REFERENCES players(id),
+            updated_at TEXT NOT NULL,
+            updated_by INTEGER REFERENCES users(id),
+            UNIQUE(user_id, player_id)
         )
     """)
 
@@ -460,6 +486,8 @@ def _ensure_indexes_sqlite(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_team_backups_user_match ON team_backups(user_id, match_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_team_backups_match ON team_backups(match_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_score_predictions_match ON score_predictions(match_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_super_teams_user ON super_teams(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_super_teams_player ON super_teams(player_id)")
 
 
 def _ensure_matches_metadata_postgres(cursor):
@@ -583,6 +611,7 @@ def init_db():
         """)
         _ensure_team_backups_postgres(cursor)
         _ensure_unknown_players_postgres(cursor)
+        _ensure_super_teams_postgres(cursor)
 
         # Weekend tournament tables
         cursor.execute("""
@@ -640,6 +669,8 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_team_backups_user_match ON team_backups(user_id, match_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_team_backups_match ON team_backups(match_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_score_predictions_match ON score_predictions(match_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_super_teams_user ON super_teams(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_super_teams_player ON super_teams(player_id)")
 
         conn.commit()
         conn.close()
@@ -774,6 +805,14 @@ def init_db():
                 created_at TEXT NOT NULL,
                 UNIQUE(user_id, match_id)
             );
+            CREATE TABLE IF NOT EXISTS super_teams (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                player_id INTEGER NOT NULL REFERENCES players(id),
+                updated_at TEXT NOT NULL,
+                updated_by INTEGER REFERENCES users(id),
+                UNIQUE(user_id, player_id)
+            );
         """)
         _ensure_user_teams_updated_at_sqlite(conn)
         _ensure_users_backup_preference_sqlite(conn)
@@ -782,6 +821,7 @@ def init_db():
         _ensure_user_teams_audit_sqlite(conn)
         _ensure_team_backups_sqlite(conn)
         _ensure_unknown_players_sqlite(conn)
+        _ensure_super_teams_sqlite(conn)
         _ensure_players_type_sqlite(conn)
         _ensure_weekend_tournaments_flexible_sqlite(conn)
         _ensure_indexes_sqlite(conn)

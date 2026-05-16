@@ -17,6 +17,7 @@ from backend.config import IST, get_current_datetime
 from backend.middleware.auth import get_current_user
 from backend.database import get_db
 from backend.services import data_service
+from backend.services import super_team_service
 from backend.services.match_status import resolve_match_status_from_row
 from backend.services.double_buffer_cache import DoubleBufferCache
 
@@ -416,6 +417,15 @@ def _build_leaderboard(db, effective_match_points: dict[int, list[dict]] | None 
     except Exception:
         pass
 
+    super_team_bonus_map: dict[int, int] = {}
+    try:
+        super_team_service.refresh_super_team_standings_cache()
+        super_team_bonus_map = super_team_service.bonus_map()
+        for uid, bonus in super_team_bonus_map.items():
+            totals_by_user[uid] += bonus
+    except Exception:
+        super_team_bonus_map = {}
+
     users = db.execute(
         """
         SELECT u.id, u.name
@@ -453,6 +463,7 @@ def _build_leaderboard(db, effective_match_points: dict[int, list[dict]] | None 
             "silver": user_medals["silver"],
             "bronze": user_medals["bronze"],
             "weekend_wins": weekend_wins.get(uid, 0),
+            "super_team_bonus": super_team_bonus_map.get(uid, 0),
             "balance": round(balances.get(uid, 0), 2),
         })
 
@@ -566,12 +577,14 @@ async def export_points_table(user: dict = Depends(get_current_user)):
             "name": row["name"],
             "leaderboard_points": round(float(row["points"]), 2),
             "weekend_bonus": int(row.get("weekend_wins", 0)) * 200,
+            "super_team_bonus": int(row.get("super_team_bonus", 0) or 0),
         }
         for row in cached_snapshot.get("leaderboard", [])
     ]
 
     leaderboard_total_map = {entry["user_id"]: entry["leaderboard_points"] for entry in users}
     weekend_bonus_map = {entry["user_id"]: entry["weekend_bonus"] for entry in users}
+    super_team_bonus_map = {entry["user_id"]: entry["super_team_bonus"] for entry in users}
     points_rows = cached_snapshot.get("points_table", [])
 
     workbook = Workbook()
@@ -596,6 +609,12 @@ async def export_points_table(user: dict = Depends(get_current_user)):
     for user_row in users:
         weekend_bonus_row.append(weekend_bonus_map.get(user_row["user_id"], 0))
     worksheet.append(weekend_bonus_row)
+
+    if any(super_team_bonus_map.values()):
+        super_team_bonus_row = ["Super Team Winner Bonus"]
+        for user_row in users:
+            super_team_bonus_row.append(super_team_bonus_map.get(user_row["user_id"], 0))
+        worksheet.append(super_team_bonus_row)
 
     total_row = ["Total"]
     for user_row in users:

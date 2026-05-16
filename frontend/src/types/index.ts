@@ -145,6 +145,7 @@ export type LeaderboardEntry = {
   silver: number;
   bronze: number;
   weekend_wins: number;
+  super_team_bonus?: number;
   balance: number;
 };
 

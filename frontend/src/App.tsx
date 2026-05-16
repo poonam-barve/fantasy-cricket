@@ -16,6 +16,7 @@ const PointsTable = lazy(() => import('./pages/PointsTable'));
 const Rules = lazy(() => import('./pages/Rules'));
 const Settings = lazy(() => import('./pages/Settings'));
 const WeekendTournament = lazy(() => import('./pages/WeekendTournament'));
+const SuperTeam = lazy(() => import('./pages/SuperTeam'));
 
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
@@ -25,6 +26,7 @@ const ManageUsers = lazy(() => import('./pages/admin/ManageUsers'));
 const ScoreControl = lazy(() => import('./pages/admin/ScoreControl'));
 const ManageTeams = lazy(() => import('./pages/admin/ManageTeams'));
 const MissedPlayers = lazy(() => import('./pages/admin/MissedPlayers'));
+const AdminSuperTeam = lazy(() => import('./pages/admin/AdminSuperTeam'));
 
 function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -60,6 +62,7 @@ export default function App() {
             <Route path="/leaderboard" element={<ProtectedRoute><AppLayout><Leaderboard /></AppLayout></ProtectedRoute>} />
             <Route path="/points-table" element={<ProtectedRoute><AppLayout><PointsTable /></AppLayout></ProtectedRoute>} />
             <Route path="/weekend" element={<ProtectedRoute><AppLayout><WeekendTournament /></AppLayout></ProtectedRoute>} />
+            <Route path="/super-team" element={<ProtectedRoute><AppLayout><SuperTeam /></AppLayout></ProtectedRoute>} />
             <Route path="/rules" element={<ProtectedRoute><AppLayout><Rules /></AppLayout></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><AppLayout><Settings /></AppLayout></ProtectedRoute>} />
 
@@ -72,6 +75,7 @@ export default function App() {
               <Route path="users" element={<ManageUsers />} />
               <Route path="scores" element={<ScoreControl />} />
               <Route path="missed-players" element={<MissedPlayers />} />
+              <Route path="super-team" element={<AdminSuperTeam />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

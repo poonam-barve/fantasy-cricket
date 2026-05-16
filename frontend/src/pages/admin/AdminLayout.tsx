@@ -67,6 +67,15 @@ const navItems = [
       </svg>
     ),
   },
+  {
+    to: '/admin/super-team',
+    label: 'Super Team',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5zm14 4l1.5 3 3 1.5-3 1.5-1.5 3-1.5-3-3-1.5 3-1.5L19 7z" />
+      </svg>
+    ),
+  },
 ];
 
 export default function AdminLayout() {

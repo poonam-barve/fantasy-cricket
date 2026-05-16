@@ -16,6 +16,7 @@ type LiveTeamLineupInfo = {
   lineupWindowOpen?: boolean;
 };
 type MatchContestant = { user_id: number; name: string; last_team_updated: string | null };
+type SuperTeamStatus = { context: { visible: boolean; enabled: boolean; locked: boolean; message: string }; has_team: boolean };
 
 export default function DashboardPage() {
   const [matches, setMatches] = useState<Match[]>([]);
@@ -28,6 +29,7 @@ export default function DashboardPage() {
   const [pendingUsers, setPendingUsers] = useState<any[]>([]);
   const [pendingLoading, setPendingLoading] = useState(false);
   const [modalTab, setModalTab] = useState<'playing' | 'missing'>('playing');
+  const [superTeamStatus, setSuperTeamStatus] = useState<SuperTeamStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<MatchTab>('today');
   const { profile, loading: authLoading } = useAuth();
@@ -45,9 +47,10 @@ export default function DashboardPage() {
     try {
       const dashboardStart = performance.now();
       console.time('dashboard:/api/dashboard/matches + /api/teams/my-matches');
-      const [matchRes, teamsRes] = await Promise.all([
+      const [matchRes, teamsRes, superRes] = await Promise.all([
         client.get('/api/dashboard/matches'),
         client.get('/api/teams/my-matches'),
+        client.get('/api/super-team/status').catch(() => ({ data: null })),
       ]);
       console.timeEnd('dashboard:/api/dashboard/matches + /api/teams/my-matches');
 
@@ -55,6 +58,7 @@ export default function DashboardPage() {
       const loadedMyTeams = new Set<number>(teamsRes.data);
       setMatches(loadedMatches);
       setMyTeams(loadedMyTeams);
+      setSuperTeamStatus(superRes.data);
       setLoading(false);
 
       const futureMatchesWithTeams = loadedMatches.filter((match) =>
@@ -385,7 +389,7 @@ export default function DashboardPage() {
           <p className="text-white/40 text-sm mt-1">Hippies Mahasangram</p>
 
           {/* Quick Actions */}
-          <div className="grid grid-cols-4 gap-2 sm:gap-3 mt-6">
+          <div className={`grid gap-2 sm:gap-3 mt-6 ${superTeamStatus?.context?.visible ? 'grid-cols-5' : 'grid-cols-4'}`}>
           <Link to="/leaderboard"
             className="flex flex-col items-center gap-2 p-3 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 rounded-2xl transition-all group">
             <div className="w-9 h-9 bg-amber-500/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -422,6 +426,25 @@ export default function DashboardPage() {
             </div>
             <span className="w-full text-center text-purple-300 text-xs font-medium leading-tight">Weekend Battle</span>
           </Link>
+          {superTeamStatus?.context?.visible && (
+            <Link to="/super-team"
+              className={`flex flex-col items-center gap-2 p-3 border rounded-2xl transition-all group ${
+                superTeamStatus.context.enabled
+                  ? 'bg-cyan-500/10 hover:bg-cyan-500/15 border-cyan-500/20'
+                  : 'bg-white/5 border-white/10 opacity-70'
+              }`}>
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform ${
+                superTeamStatus.context.enabled ? 'bg-cyan-500/20' : 'bg-white/10'
+              }`}>
+                <svg className={`w-4 h-4 ${superTeamStatus.context.enabled ? 'text-cyan-300' : 'text-white/40'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5zm14 4l1.5 3 3 1.5-3 1.5-1.5 3-1.5-3-3-1.5 3-1.5L19 7z" />
+                </svg>
+              </div>
+              <span className={`w-full text-center text-xs font-medium leading-tight ${superTeamStatus.context.enabled ? 'text-cyan-300' : 'text-white/45'}`}>
+                Super Team
+              </span>
+            </Link>
+          )}
           </div>
         </div>
       </div>

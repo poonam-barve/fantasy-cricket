@@ -1439,6 +1439,14 @@ def save_player_points(rows: list[dict]) -> None:
             )
 
         db.commit()
+        if any(int(match_id) in {71, 72, 73, 74} for match_id, _player_id in upsert_rows):
+            try:
+                from backend.services import super_team_service
+
+                super_team_service.invalidate_player_pool_cache()
+                super_team_service.refresh_super_team_standings_cache()
+            except Exception:
+                pass
 
     _retry_deadlock(_save)
 
