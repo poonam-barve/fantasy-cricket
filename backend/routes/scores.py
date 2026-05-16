@@ -170,6 +170,68 @@ def _store_scores_response_cache(snapshot: dict[int, dict]) -> None:
     _log_scores_cache(f"response cache swapped matches={len(snapshot)}")
 
 
+def _publish_match_score_payload(match_id: int, payload: dict) -> None:
+    snapshot = SCORES_RESPONSE_CACHE.read() or {}
+    snapshot[int(match_id)] = payload
+    _store_scores_response_cache(snapshot)
+
+
+def _numeric_stat(value) -> float:
+    try:
+        return float(value or 0)
+    except Exception:
+        return 0.0
+
+
+def _live_payload_has_stat_regression(match_id: int, previous_payload: dict | None, next_payload: dict | None) -> bool:
+    if not previous_payload or not next_payload:
+        return False
+    if previous_payload.get("match_status") != "live" or next_payload.get("match_status") != "live":
+        return False
+
+    previous_players = {
+        int(player["player_id"]): player
+        for player in previous_payload.get("players", [])
+        if player.get("player_id") not in (None, "")
+    }
+    if not previous_players:
+        return False
+
+    monotonic_stats = (
+        "runs",
+        "balls",
+        "fours",
+        "sixes",
+        "overs",
+        "maidens",
+        "runs_conceded",
+        "wickets",
+        "dot_balls",
+        "catches",
+        "runout_direct",
+        "stumpings",
+        "runout_indirect",
+    )
+
+    for player in next_payload.get("players", []):
+        player_id = player.get("player_id")
+        if player_id in (None, ""):
+            continue
+        previous_player = previous_players.get(int(player_id))
+        if not previous_player:
+            continue
+        for stat in monotonic_stats:
+            previous_value = _numeric_stat(previous_player.get(stat))
+            next_value = _numeric_stat(player.get(stat))
+            if next_value < previous_value:
+                _log_scores_cache(
+                    f"match {match_id} rejected regressing live payload: "
+                    f"player={player_id} stat={stat} previous={previous_value:g} next={next_value:g}"
+                )
+                return True
+    return False
+
+
 def _persist_scores_snapshot_to_db(snapshot: dict[int, dict], match_ids: set[int] | None = None) -> None:
     now_str = get_current_datetime().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -550,6 +612,8 @@ def refresh_scores_response_cache_once(match_statuses: set[str] | None = None) -
                         existing_payload = snapshot.get(match_id)
                         if existing_payload and existing_payload.get("match_status") == "nr":
                             continue
+                        if existing_payload is None:
+                            continue
                         # Always rebuild when transitioning from live to completed
                         # so prediction bonuses are computed against final stored
                         # points, not transient live-calculated points.
@@ -564,6 +628,7 @@ def refresh_scores_response_cache_once(match_statuses: set[str] | None = None) -
                         continue
                     if status == "live":
                         eligible += 1
+                        existing_payload = snapshot.get(match_id)
                         payload = _build_match_scores_payload(
                             match_id,
                             match_row,
@@ -573,9 +638,12 @@ def refresh_scores_response_cache_once(match_statuses: set[str] | None = None) -
                             force_refresh_live_data=True,
                         )
                         if payload is not None:
-                            snapshot[match_id] = payload
-                            updated_match_ids.add(match_id)
-                            refreshed += 1
+                            if _live_payload_has_stat_regression(match_id, existing_payload, payload):
+                                _log_scores_cache(f"match {match_id} live -> keeping previous non-regressing snapshot")
+                            else:
+                                snapshot[match_id] = payload
+                                updated_match_ids.add(match_id)
+                                refreshed += 1
                         else:
                             _log_scores_cache(f"match {match_id} live -> payload unavailable")
                 except Exception as exc:
@@ -1244,6 +1312,13 @@ async def match_scores(
 
     cached_payload = _ensure_score_payload_cached(match_id, match_row)
     if cached_payload is None:
+        if match_status == "completed":
+            payload = _build_completed_match_scores_payload(match_id, match_row, registry, players_data, db)
+            if payload is not None:
+                payload["_completed_final"] = True
+                _publish_match_score_payload(match_id, payload)
+                return payload
+
         _log_scores_cache(
             f"cache miss match={match_id} status={match_status or 'unknown'} live={SCORES_RESPONSE_CACHE.has_live()}"
         )

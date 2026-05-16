@@ -1851,6 +1851,8 @@ export default function SelectTeamPage() {
               <label className="block text-xs font-medium text-white/50 mb-2">Your Prediction</label>
               <input
                 type="number"
+                step="0.5"
+                min="0"
                 value={predictedPoints}
                 onChange={(e) => setPredictedPoints(e.target.value)}
                 placeholder={existingPrediction != null ? `Current: ${existingPrediction}` : 'e.g. 350'}
@@ -1887,8 +1889,12 @@ export default function SelectTeamPage() {
                     toast('Enter a valid prediction (0 or higher).', 'error');
                     return;
                   }
-                  const rounded = Math.round(val * 100) / 100;
-                  doUpdatePredictionOnly(rounded);
+                  if (Math.abs(val * 2 - Math.round(val * 2)) > 0.000001) {
+                    toast('Prediction must be a whole number or end in .5.', 'error');
+                    return;
+                  }
+                  const normalized = Math.round(val * 2) / 2;
+                  doUpdatePredictionOnly(normalized);
                   if (!editingPredictionOnly) {
                     // First-save flow: team already saved, after prediction -> show preview
                     setShowPreview(true);

@@ -1114,7 +1114,12 @@ def apply_backups_for_match(match_id: int | str, playing_ids: list[int], substit
                 continue
 
             new_player_id = int(backup_row["backup_player_id"])
-            if new_player_id not in playing_set or new_player_id in selected_ids:
+            replacement_eligible_set = (
+                playing_set
+                if replace_substitutes_with_backups
+                else playing_set | substitute_set
+            )
+            if new_player_id not in replacement_eligible_set or new_player_id in selected_ids:
                 continue
 
             invalid_rows = [

@@ -32,6 +32,22 @@ def get_now_str():
     return get_now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _validate_predicted_points(predicted_points: float) -> float:
+    try:
+        normalized = float(predicted_points)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Prediction must be a number")
+
+    if normalized < 0:
+        raise HTTPException(status_code=400, detail="Prediction must be 0 or higher")
+
+    doubled = normalized * 2
+    if abs(doubled - round(doubled)) > 1e-9:
+        raise HTTPException(status_code=400, detail="Prediction must be a whole number or end in .5")
+
+    return round(normalized, 1)
+
+
 def is_match_locked(match_date: str, match_time: str) -> bool:
     try:
         match_datetime = datetime.strptime(
@@ -300,7 +316,8 @@ async def submit_team(
     data_service.refresh_user_team_summary_cache(user["id"], body.match_id)
 
     if body.predicted_points is not None:
-        data_service.save_score_prediction(user["id"], body.match_id, body.predicted_points)
+        predicted_points = _validate_predicted_points(body.predicted_points)
+        data_service.save_score_prediction(user["id"], body.match_id, predicted_points)
 
     return {"success": True}
 
@@ -326,8 +343,9 @@ async def update_prediction(
     if is_match_locked(match["match_date"], match["match_time"]):
         raise HTTPException(status_code=400, detail="Match is locked, prediction cannot be changed")
 
-    data_service.save_score_prediction(user["id"], body.match_id, body.predicted_points)
-    return {"success": True, "predicted_points": body.predicted_points}
+    predicted_points = _validate_predicted_points(body.predicted_points)
+    data_service.save_score_prediction(user["id"], body.match_id, predicted_points)
+    return {"success": True, "predicted_points": predicted_points}
 
 
 @router.get("/contestants")

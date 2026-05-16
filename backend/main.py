@@ -310,17 +310,6 @@ def _run_deferred_match_warmup():
             print(f"[BOOT] Venue backfill failed: {exc}")
 
         try:
-            print("[BOOT] Deferred completed-match score warmup starting")
-            summary = scores.refresh_scores_response_cache_once(match_statuses={"completed", "nr"})
-            print(
-                "[BOOT] Deferred completed-match score warmup complete "
-                f"matches={summary['matches']} eligible={summary['eligible']} "
-                f"refreshed={summary['refreshed']} errors={summary['errors']}"
-            )
-        except Exception as exc:
-            print(f"[BOOT] Deferred completed-match score warmup failed: {exc}")
-
-        try:
             print("[BOOT] Deferred leaderboard warmup starting")
             summary = leaderboard.refresh_leaderboard_cache_once()
             print(
