@@ -13,6 +13,10 @@ from backend.services.match_status import resolve_match_status_from_row
 SUPER_MATCH_IDS = [71, 72, 73, 74]
 QUALIFIER_MATCH_IDS = [71, 72]
 SUPER_TEAM_BONUS = 400
+SUPER_TEAM_SIZE = 12
+SUPER_TEAM_PLAYERS_PER_TEAM = 3
+SUPER_TEAM_MIN_BOWLERS = 3
+SUPER_TEAM_ROLES = ["Wicketkeeper", "Batter", "AllRounder", "Bowler"]
 
 SUPER_TEAM_CACHE_LOCK = threading.Lock()
 SUPER_TEAM_CACHE: dict[int, dict] = {}
@@ -72,10 +76,9 @@ def _is_locked(match71: dict | None) -> bool:
 
 def get_context() -> dict:
     matches = _match_lookup()
-    match70 = matches.get(70)
     match71 = matches.get(71)
     match72 = matches.get(72)
-    visible = _status_for_match(match70) == "completed"
+    visible = True
     qualifier_rows = [match71, match72]
     teams: list[str] = []
     for row in qualifier_rows:
@@ -98,10 +101,8 @@ def get_context() -> dict:
             if matches.get(mid)
         },
         "message": (
-            "Super Team opens after playoff teams are confirmed."
-            if visible and not enabled
-            else "Super Team is hidden until Match 70 is completed."
-            if not visible
+            "The playoff gates are shut for now. Once the final four are locked, Super Team turns into war mode."
+            if not enabled
             else ""
         ),
     }
@@ -291,10 +292,10 @@ def grouped_player_pool() -> dict[str, list[dict]]:
 
 
 def validate_selection(player_ids: list[int]) -> list[int]:
-    if len(player_ids) != 11:
-        raise HTTPException(status_code=400, detail="Exactly 11 players required")
+    if len(player_ids) != SUPER_TEAM_SIZE:
+        raise HTTPException(status_code=400, detail=f"Exactly {SUPER_TEAM_SIZE} players required")
     normalized = [int(pid) for pid in player_ids]
-    if len(set(normalized)) != 11:
+    if len(set(normalized)) != SUPER_TEAM_SIZE:
         raise HTTPException(status_code=400, detail="Duplicate players are not allowed")
     context = get_context()
     if not context["enabled"]:
@@ -306,13 +307,26 @@ def validate_selection(player_ids: list[int]) -> list[int]:
         raise HTTPException(status_code=400, detail="Some player IDs are invalid")
     if any(player["Team"] not in eligible_teams for player in selected if player):
         raise HTTPException(status_code=400, detail="Some players are not eligible for Super Team")
+    role_counts = {
+        role: sum(1 for player in selected if player and player["Role"] == role)
+        for role in SUPER_TEAM_ROLES
+    }
+    missing_roles = [role for role, count in role_counts.items() if count < 1]
+    if missing_roles:
+        raise HTTPException(status_code=400, detail="Select at least 1 player from each role")
     bowler_count = sum(1 for player in selected if player and player["Role"] == "Bowler")
-    if bowler_count < 3:
-        raise HTTPException(status_code=400, detail="At least 3 Bowlers required")
-    selected_teams = {player["Team"] for player in selected if player}
-    missing_teams = eligible_teams - selected_teams
-    if missing_teams:
-        raise HTTPException(status_code=400, detail="Select at least 1 player from each playoff team")
+    if bowler_count < SUPER_TEAM_MIN_BOWLERS:
+        raise HTTPException(status_code=400, detail=f"At least {SUPER_TEAM_MIN_BOWLERS} Bowlers required")
+    team_counts = {
+        team: sum(1 for player in selected if player and player["Team"] == team)
+        for team in eligible_teams
+    }
+    invalid_teams = [team for team, count in team_counts.items() if count != SUPER_TEAM_PLAYERS_PER_TEAM]
+    if invalid_teams:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Select exactly {SUPER_TEAM_PLAYERS_PER_TEAM} players from each playoff team",
+        )
     return normalized
 
 

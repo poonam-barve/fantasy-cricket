@@ -7,6 +7,9 @@ type Submission = { user_id: number; name: string; player_ids: number[]; updated
 type Standing = { user_id: number; name: string; points: number; rank: number };
 
 const roles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder', 'Bowler'];
+const SUPER_TEAM_SIZE = 12;
+const PLAYERS_PER_TEAM = 3;
+const MIN_BOWLERS = 3;
 
 function apiErrorDetail(error: unknown, fallback: string) {
   const response = (error as { response?: { data?: { detail?: unknown } } } | null)?.response;
@@ -62,18 +65,38 @@ export default function AdminSuperTeam() {
   const allPlayers = useMemo(() => roles.flatMap((role) => playersByRole[role] || []), [playersByRole]);
   const selectedPlayers = allPlayers.filter((player) => selected.has(player.id));
   const bowlerCount = selectedPlayers.filter((player) => player.role === 'Bowler').length;
+  const roleCounts = selectedPlayers.reduce<Record<Role, number>>((acc, player) => {
+    if (roles.includes(player.role as Role)) {
+      const role = player.role as Role;
+      acc[role] = (acc[role] || 0) + 1;
+    }
+    return acc;
+  }, {
+    Wicketkeeper: 0,
+    Batter: 0,
+    AllRounder: 0,
+    Bowler: 0,
+  });
   const teamCounts = selectedPlayers.reduce<Record<string, number>>((acc, player) => {
     acc[player.team] = (acc[player.team] || 0) + 1;
     return acc;
   }, {});
   const eligibleTeams = [...new Set(allPlayers.map((player) => player.team))];
-  const missingTeams = eligibleTeams.filter((team) => !teamCounts[team]);
+  const invalidTeams = eligibleTeams.filter((team) => (teamCounts[team] || 0) !== PLAYERS_PER_TEAM);
+  const missingRoles = roles.filter((role) => (roleCounts[role] || 0) < 1);
+  const validationMessage = (() => {
+    if (selected.size !== SUPER_TEAM_SIZE) return `Select exactly ${SUPER_TEAM_SIZE} players.`;
+    if (missingRoles.length > 0) return 'Select at least 1 player from each role.';
+    if (bowlerCount < MIN_BOWLERS) return `Select at least ${MIN_BOWLERS} Bowlers.`;
+    if (invalidTeams.length > 0) return `Select exactly ${PLAYERS_PER_TEAM} players from each playoff team.`;
+    return '';
+  })();
 
   const toggle = (playerId: number) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(playerId)) next.delete(playerId);
-      else if (next.size < 11) next.add(playerId);
+      else if (next.size < SUPER_TEAM_SIZE) next.add(playerId);
       return next;
     });
   };
@@ -81,6 +104,10 @@ export default function AdminSuperTeam() {
   const save = async () => {
     if (!selectedUserId) {
       setMessage('Select a user first.');
+      return;
+    }
+    if (validationMessage) {
+      setMessage(validationMessage);
       return;
     }
     setSaving(true);
@@ -119,7 +146,7 @@ export default function AdminSuperTeam() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Super Team</h1>
-          <p className="text-sm text-slate-400">Admin edits obey the same 11-player rules and can be saved after lock.</p>
+          <p className="text-sm text-slate-400">Admin edits obey the same 12-player rules and can be saved after lock.</p>
         </div>
         <button onClick={recalc} disabled={saving} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
           Recalculate
@@ -135,16 +162,16 @@ export default function AdminSuperTeam() {
               <option value="">Select user</option>
               {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
             </select>
-            <button onClick={save} disabled={saving || !selectedUserId} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+            <button onClick={save} disabled={saving || !selectedUserId || Boolean(validationMessage)} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
               Save Team
             </button>
           </div>
 
           <div className="mb-4 grid gap-2 sm:grid-cols-4">
-            <Metric label="Selected" value={`${selected.size}/11`} good={selected.size === 11} />
-            <Metric label="Bowlers" value={`${bowlerCount}/3`} good={bowlerCount >= 3} />
-            <Metric label="Missing Teams" value={`${missingTeams.length}`} good={missingTeams.length === 0} />
-            <Metric label="Submitted" value={`${teams.length}`} good />
+            <Metric label="Selected" value={`${selected.size}/${SUPER_TEAM_SIZE}`} good={selected.size === SUPER_TEAM_SIZE} />
+            <Metric label="Bowlers" value={`${bowlerCount}/${MIN_BOWLERS}`} good={bowlerCount >= MIN_BOWLERS} />
+            <Metric label="Team Splits" value={invalidTeams.length === 0 ? 'OK' : `${invalidTeams.length} off`} good={invalidTeams.length === 0} />
+            <Metric label="Role Splits" value={missingRoles.length === 0 ? 'OK' : `${missingRoles.length} missing`} good={missingRoles.length === 0} />
           </div>
 
           <div className="mb-4 flex gap-1 rounded-lg bg-slate-950 p-1">

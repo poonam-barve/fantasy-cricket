@@ -31,6 +31,9 @@ type SuperPlayerPoints = {
 type MyTeamPlayer = { player_id: number | string };
 
 const roles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder', 'Bowler'];
+const SUPER_TEAM_SIZE = 12;
+const PLAYERS_PER_TEAM = 3;
+const MIN_BOWLERS = 3;
 const formatPoints = (value: number | null | undefined) => {
   if (value == null || Number.isNaN(value)) return '-';
   const rounded = Math.round(value * 2) / 2;
@@ -94,9 +97,11 @@ export default function SuperTeamPage() {
   const [openHistoryPlayerId, setOpenHistoryPlayerId] = useState<number | null>(null);
   const superTeamRules = [
     'Super Team is a one-time playoff squad for Matches 71-74.',
-    'Pick 11 players from the four teams playing Match 71 and Match 72.',
+    'Pick 12 players from the four teams playing Match 71 and Match 72.',
+    'Select exactly 3 players from each playoff team.',
+    'Pick at least 1 Wicketkeeper, 1 Batter, 1 AllRounder, and 1 Bowler.',
+    'You must select at least 3 Bowlers overall.',
     'Your job is to predict who will progress: players can score again if their team reaches Match 73 or Match 74.',
-    'You must select at least 3 Bowlers and at least 1 player from each of the four teams.',
     'No captain, vice-captain, backups, substitutes, or Playing XI availability rules apply.',
     'Team selection locks at the scheduled start time of Match 71.',
     'After Match 74 is complete, the highest Super Team score gets +400 leaderboard bonus. Tied winners all get the bonus.',
@@ -163,11 +168,26 @@ export default function SuperTeamPage() {
   }, [selectedPlayers]);
 
   const bowlerCount = selectedPlayers.filter((player) => player.role === 'Bowler').length;
-  const missingTeams = (context?.teams || []).filter((team) => !teamCounts[team]);
+  const roleCounts = useMemo(() => {
+    const counts = roles.reduce<Record<Role, number>>((acc, role) => {
+      acc[role] = 0;
+      return acc;
+    }, {} as Record<Role, number>);
+    selectedPlayers.forEach((player) => {
+      if (roles.includes(player.role as Role)) {
+        const role = player.role as Role;
+        counts[role] = (counts[role] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [selectedPlayers]);
+  const missingRoles = roles.filter((role) => (roleCounts[role] || 0) < 1);
+  const invalidTeams = (context?.teams || []).filter((team) => (teamCounts[team] || 0) !== PLAYERS_PER_TEAM);
   const validationMessage = (() => {
-    if (selected.size !== 11) return `Select ${11 - selected.size} more players.`;
-    if (bowlerCount < 3) return 'Select at least 3 Bowlers.';
-    if (missingTeams.length > 0) return 'Select at least 1 player from each team.';
+    if (selected.size !== SUPER_TEAM_SIZE) return `Select ${SUPER_TEAM_SIZE - selected.size} more players.`;
+    if (missingRoles.length > 0) return 'Select at least 1 player from each role.';
+    if (bowlerCount < MIN_BOWLERS) return `Select at least ${MIN_BOWLERS} Bowlers.`;
+    if (invalidTeams.length > 0) return `Select exactly ${PLAYERS_PER_TEAM} players from each team.`;
     return '';
   })();
 
@@ -177,8 +197,8 @@ export default function SuperTeamPage() {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(playerId)) next.delete(playerId);
-      else if (next.size < 11) next.add(playerId);
-      else toast('You can select only 11 players.', 'error');
+      else if (next.size < SUPER_TEAM_SIZE) next.add(playerId);
+      else toast(`You can select only ${SUPER_TEAM_SIZE} players.`, 'error');
       return next;
     });
   };
@@ -295,7 +315,7 @@ export default function SuperTeamPage() {
 
       {!context.enabled && (
         <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-5 text-sm text-amber-200">
-          Opens once Match 71 and Match 72 teams are confirmed.
+          {context.message || 'The playoff battle starts once Match 71 and Match 72 teams are confirmed.'}
         </div>
       )}
 
@@ -420,16 +440,16 @@ export default function SuperTeamPage() {
           <div className="grid gap-2 rounded-2xl border border-white/10 bg-white/5 p-3 sm:grid-cols-4">
             <div className="rounded-xl bg-black/30 p-3 text-center">
               <p className="text-[11px] text-white/35">Selected</p>
-              <p className="text-lg font-bold text-white">{selected.size}/11</p>
+              <p className="text-lg font-bold text-white">{selected.size}/{SUPER_TEAM_SIZE}</p>
             </div>
             <div className="rounded-xl bg-black/30 p-3 text-center">
               <p className="text-[11px] text-white/35">Bowlers</p>
-              <p className={`text-lg font-bold ${bowlerCount >= 3 ? 'text-blue-300' : 'text-amber-300'}`}>{bowlerCount}/3</p>
+              <p className={`text-lg font-bold ${bowlerCount >= MIN_BOWLERS ? 'text-blue-300' : 'text-amber-300'}`}>{bowlerCount}/{MIN_BOWLERS}</p>
             </div>
             {(context.teams || []).map((team) => (
               <div key={team} className="rounded-xl bg-black/30 p-3 text-center">
                 <p className="truncate text-[11px] text-white/35">{team}</p>
-                <p className={`text-lg font-bold ${teamCounts[team] ? 'text-blue-300' : 'text-amber-300'}`}>{teamCounts[team] || 0}</p>
+                <p className={`text-lg font-bold ${teamCounts[team] === PLAYERS_PER_TEAM ? 'text-blue-300' : 'text-amber-300'}`}>{teamCounts[team] || 0}/{PLAYERS_PER_TEAM}</p>
               </div>
             ))}
           </div>
