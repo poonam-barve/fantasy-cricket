@@ -22,9 +22,12 @@ This document is the compact source of truth for fantasy subcontests beyond the 
 - Each user selects exactly `12` players.
 - Select exactly `3` players from each of the four playoff teams.
 - Pick at least `1` `Wicketkeeper`, `1` `Batter`, and `1` `AllRounder`.
-- Select at least `3` Bowlers overall.
-- No captain, vice-captain, backups, substitutes, or Playing XI availability rules apply.
+- Select at least `4` Bowlers overall. Bowlers can be from any playoff team.
+- Choose one Captain and one Vice-Captain from the selected players.
+- Captain points are multiplied by `1.5`.
+- Vice-Captain points are multiplied by `1.2`.
+- No backups, substitutes, or Playing XI availability rules apply.
 - Players earn their normal fantasy points in every playoff match they appear in.
 - The goal is to pick players whose teams progress, because they can score again in Match `73` or Match `74`.
-- After Match `74` is completed, the highest Super Team score gets `+400` leaderboard bonus points.
-- If multiple users tie for the highest Super Team score, all tied winners get the full `+400` bonus.
+- After Match `74` is completed, rank `1` gets `+400`, rank `2` gets `+200`, and rank `3` gets `+100` leaderboard bonus points.
+- If multiple users tie at a bonus rank, all tied users get that rank's bonus.

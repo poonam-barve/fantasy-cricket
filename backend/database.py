@@ -407,11 +407,15 @@ def _ensure_super_teams_postgres(cursor):
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL REFERENCES users(id),
             player_id INTEGER NOT NULL REFERENCES players(id),
+            is_captain INTEGER NOT NULL DEFAULT 0,
+            is_vice_captain INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT NOT NULL,
             updated_by INTEGER REFERENCES users(id),
             UNIQUE(user_id, player_id)
         )
     """)
+    cursor.execute("ALTER TABLE super_teams ADD COLUMN IF NOT EXISTS is_captain INTEGER NOT NULL DEFAULT 0")
+    cursor.execute("ALTER TABLE super_teams ADD COLUMN IF NOT EXISTS is_vice_captain INTEGER NOT NULL DEFAULT 0")
 
 
 def _ensure_team_backups_sqlite(conn):
@@ -448,11 +452,17 @@ def _ensure_super_teams_sqlite(conn):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL REFERENCES users(id),
             player_id INTEGER NOT NULL REFERENCES players(id),
+            is_captain INTEGER NOT NULL DEFAULT 0,
+            is_vice_captain INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT NOT NULL,
             updated_by INTEGER REFERENCES users(id),
             UNIQUE(user_id, player_id)
         )
     """)
+    if not _sqlite_column_exists(conn, "super_teams", "is_captain"):
+        conn.execute("ALTER TABLE super_teams ADD COLUMN is_captain INTEGER NOT NULL DEFAULT 0")
+    if not _sqlite_column_exists(conn, "super_teams", "is_vice_captain"):
+        conn.execute("ALTER TABLE super_teams ADD COLUMN is_vice_captain INTEGER NOT NULL DEFAULT 0")
 
 
 def _ensure_matches_metadata_sqlite(conn):
@@ -809,6 +819,8 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL REFERENCES users(id),
                 player_id INTEGER NOT NULL REFERENCES players(id),
+                is_captain INTEGER NOT NULL DEFAULT 0,
+                is_vice_captain INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL,
                 updated_by INTEGER REFERENCES users(id),
                 UNIQUE(user_id, player_id)

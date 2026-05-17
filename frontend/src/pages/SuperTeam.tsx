@@ -17,7 +17,7 @@ type SuperContext = {
 type Contestant = { user_id: number; name: string; last_team_updated: string | null };
 type MissingUser = { id: number; name: string };
 type Standing = { user_id: number; name: string; points: number; rank: number; match_points: Record<string, number> };
-type SuperBreakdownPlayer = { player_id: number; name: string; team: string; role: Role; points: number };
+type SuperBreakdownPlayer = { player_id: number; name: string; team: string; role: Role; base_points?: number; multiplier?: number; tag?: string; points: number };
 type SuperBreakdownMatch = { match_id: number; points: number; players: SuperBreakdownPlayer[] };
 type SuperUserBreakdown = Standing & { matches: SuperBreakdownMatch[] };
 type SuperPlayerPoints = {
@@ -28,13 +28,13 @@ type SuperPlayerPoints = {
   points: number;
   match_points: Record<string, number>;
 };
-type MyTeamPlayer = { player_id: number | string };
+type MyTeamPlayer = { player_id: number | string; is_captain?: boolean; is_vice_captain?: boolean };
 
 const roles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder', 'Bowler'];
 const requiredRoles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder'];
 const SUPER_TEAM_SIZE = 12;
 const PLAYERS_PER_TEAM = 3;
-const MIN_BOWLERS = 3;
+const MIN_BOWLERS = 4;
 const formatPoints = (value: number | null | undefined) => {
   if (value == null || Number.isNaN(value)) return '-';
   const rounded = Math.round(value * 2) / 2;
@@ -80,6 +80,8 @@ export default function SuperTeamPage() {
     Bowler: [],
   });
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [captain, setCaptain] = useState<number | null>(null);
+  const [viceCaptain, setViceCaptain] = useState<number | null>(null);
   const [standings, setStandings] = useState<Standing[]>([]);
   const [userBreakdowns, setUserBreakdowns] = useState<SuperUserBreakdown[]>([]);
   const [playerPointRows, setPlayerPointRows] = useState<SuperPlayerPoints[]>([]);
@@ -97,15 +99,14 @@ export default function SuperTeamPage() {
   const [playerSearch, setPlayerSearch] = useState('');
   const [openHistoryPlayerId, setOpenHistoryPlayerId] = useState<number | null>(null);
   const superTeamRules = [
-    'Super Team is a one-time playoff squad for Matches 71-74.',
-    'Pick 12 players from the four teams playing Match 71 and Match 72.',
-    'Select exactly 3 players from each playoff team.',
-    'Pick at least 1 Wicketkeeper, 1 Batter, 1 AllRounder.',
-    'You must select at least 3 Bowlers overall.',
-    'Your job is to predict who will progress: players can score again if their team reaches Match 73 or Match 74.',
-    'No captain, vice-captain, backups, substitutes, or Playing XI availability rules apply.',
-    'Team selection locks at the scheduled start time of Match 71.',
-    'After Match 74 is complete, the highest Super Team score gets +400 leaderboard bonus. Tied winners all get the bonus.',
+    'Super Team is a one-time playoff squad.',
+    'Pick 12 players from the four playoff teams',
+    'Select exactly 3 players from each playoff team. At least 1 Wicketkeeper, 1 Batter, 1 AllRounder.',
+    'You must select at least 4 Bowlers overall. Bowlers can be from any playoff team.',
+    'Captain scores 1.5x points. Vice-Captain scores 1.2x points.',
+    'No backups, substitutes, or Playing XI availability rules apply.',
+    'Team selection locks at the scheduled start of Playoffs',
+    'After Final, rank 1 gets +400, rank 2 gets +200, and rank 3 gets +100 leaderboard bonus.',
   ];
 
   const load = useCallback(async () => {
@@ -121,6 +122,10 @@ export default function SuperTeamPage() {
       const myTeamPlayers = (res.data.my_team?.players || []) as MyTeamPlayer[];
       const ids = myTeamPlayers.map((player) => Number(player.player_id));
       setSelected(new Set(ids));
+      const captainPlayer = myTeamPlayers.find((player) => player.is_captain);
+      const viceCaptainPlayer = myTeamPlayers.find((player) => player.is_vice_captain);
+      setCaptain(captainPlayer ? Number(captainPlayer.player_id) : res.data.my_team?.captain ? Number(res.data.my_team.captain) : null);
+      setViceCaptain(viceCaptainPlayer ? Number(viceCaptainPlayer.player_id) : res.data.my_team?.vice_captain ? Number(res.data.my_team.vice_captain) : null);
     } catch {
       toast('Failed to load Super Team.', 'error');
     } finally {
@@ -189,6 +194,9 @@ export default function SuperTeamPage() {
     if (missingRoles.length > 0) return 'Select at least 1 Wicketkeeper, 1 Batter, and 1 AllRounder.';
     if (bowlerCount < MIN_BOWLERS) return `Select at least ${MIN_BOWLERS} Bowlers.`;
     if (invalidTeams.length > 0) return `Select exactly ${PLAYERS_PER_TEAM} players from each team.`;
+    if (!captain || !selected.has(captain)) return 'Select a Captain.';
+    if (!viceCaptain || !selected.has(viceCaptain)) return 'Select a Vice-Captain.';
+    if (captain === viceCaptain) return 'Captain and Vice-Captain must be different.';
     return '';
   })();
 
@@ -197,7 +205,11 @@ export default function SuperTeamPage() {
     setOpenHistoryPlayerId(null);
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(playerId)) next.delete(playerId);
+      if (next.has(playerId)) {
+        next.delete(playerId);
+        if (captain === playerId) setCaptain(null);
+        if (viceCaptain === playerId) setViceCaptain(null);
+      }
       else if (next.size < SUPER_TEAM_SIZE) next.add(playerId);
       else toast(`You can select only ${SUPER_TEAM_SIZE} players.`, 'error');
       return next;
@@ -211,7 +223,7 @@ export default function SuperTeamPage() {
     }
     setSaving(true);
     try {
-      await client.post('/api/super-team', { players: [...selected] });
+      await client.post('/api/super-team', { players: [...selected], captain, vice_captain: viceCaptain });
       toast('Super Team saved.');
       await load();
     } catch (err: unknown) {
@@ -384,7 +396,9 @@ export default function SuperTeamPage() {
               <div key={`${selectedMatchBreakdown?.match_id}-${player.player_id}`} className="flex items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-white">{player.name}</p>
-                  <p className="text-xs text-white/35">{player.team} | {player.role}</p>
+                  <p className="text-xs text-white/35">
+                    {player.team} | {player.role}{player.tag ? ` | ${player.tag} x${player.multiplier}` : ''}
+                  </p>
                 </div>
                 <p className={`text-sm font-bold ${player.points ? 'text-blue-300' : 'text-white/30'}`}>{formatPoints(player.points)}</p>
               </div>
@@ -447,6 +461,12 @@ export default function SuperTeamPage() {
               <p className="text-[11px] text-white/35">Bowlers</p>
               <p className={`text-lg font-bold ${bowlerCount >= MIN_BOWLERS ? 'text-blue-300' : 'text-amber-300'}`}>{bowlerCount}/{MIN_BOWLERS}</p>
             </div>
+            <div className="rounded-xl bg-black/30 p-3 text-center">
+              <p className="text-[11px] text-white/35">C / VC</p>
+              <p className={`text-lg font-bold ${captain && viceCaptain && captain !== viceCaptain ? 'text-blue-300' : 'text-amber-300'}`}>
+                {(captain ? 1 : 0) + (viceCaptain ? 1 : 0)}/2
+              </p>
+            </div>
             {(context.teams || []).map((team) => (
               <div key={team} className="rounded-xl bg-black/30 p-3 text-center">
                 <p className="truncate text-[11px] text-white/35">{team}</p>
@@ -502,6 +522,8 @@ export default function SuperTeamPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             {(showPlayerSearch && normalizedPlayerSearch ? playerSearchResults : visibleRolePlayers).map((player) => {
               const isSelected = selected.has(player.id);
+              const isCaptain = captain === player.id;
+              const isViceCaptain = viceCaptain === player.id;
               return (
                 <div
                   key={player.id}
@@ -519,9 +541,37 @@ export default function SuperTeamPage() {
                       <p className="truncate text-sm font-semibold text-white">{player.name}</p>
                       <p className="text-xs text-white/40">{player.team} | {player.role}</p>
                     </div>
-                    <span className={`rounded-lg px-2 py-1 text-xs font-bold ${isSelected ? 'bg-blue-400 text-black' : 'bg-white/10 text-white/40'}`}>
-                      {isSelected ? 'Selected' : '+'}
-                    </span>
+                    <div className="flex flex-shrink-0 items-center gap-1">
+                      {isSelected && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setCaptain((current) => (current === player.id ? null : player.id));
+                              if (viceCaptain === player.id) setViceCaptain(null);
+                            }}
+                            className={`rounded-lg px-2 py-1 text-xs font-bold ${isCaptain ? 'bg-amber-400 text-black' : 'bg-white/10 text-white/50'}`}
+                          >
+                            C
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setViceCaptain((current) => (current === player.id ? null : player.id));
+                              if (captain === player.id) setCaptain(null);
+                            }}
+                            className={`rounded-lg px-2 py-1 text-xs font-bold ${isViceCaptain ? 'bg-cyan-400 text-black' : 'bg-white/10 text-white/50'}`}
+                          >
+                            VC
+                          </button>
+                        </>
+                      )}
+                      <span className={`rounded-lg px-2 py-1 text-xs font-bold ${isSelected ? 'bg-blue-400 text-black' : 'bg-white/10 text-white/40'}`}>
+                        {isSelected ? 'Selected' : '+'}
+                      </span>
+                    </div>
                   </div>
                   <p className="mt-3 text-xs text-white/55">{statText(player)}</p>
                 </div>

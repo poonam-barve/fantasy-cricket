@@ -12,10 +12,12 @@ from backend.services.match_status import resolve_match_status_from_row
 
 SUPER_MATCH_IDS = [71, 72, 73, 74]
 QUALIFIER_MATCH_IDS = [71, 72]
-SUPER_TEAM_BONUS = 400
+SUPER_TEAM_BONUSES_BY_RANK = {1: 400, 2: 200, 3: 100}
 SUPER_TEAM_SIZE = 12
 SUPER_TEAM_PLAYERS_PER_TEAM = 3
-SUPER_TEAM_MIN_BOWLERS = 3
+SUPER_TEAM_MIN_BOWLERS = 4
+SUPER_TEAM_CAPTAIN_MULTIPLIER = 1.5
+SUPER_TEAM_VICE_CAPTAIN_MULTIPLIER = 1.2
 SUPER_TEAM_REQUIRED_ROLES = ["Wicketkeeper", "Batter", "AllRounder"]
 
 SUPER_TEAM_CACHE_LOCK = threading.Lock()
@@ -112,7 +114,14 @@ def _fetch_submissions_from_db() -> dict[int, dict]:
     db = get_db()
     rows = db.execute(
         """
-        SELECT st.user_id, u.name AS user_name, st.player_id, st.updated_at, st.updated_by
+        SELECT
+            st.user_id,
+            u.name AS user_name,
+            st.player_id,
+            st.is_captain,
+            st.is_vice_captain,
+            st.updated_at,
+            st.updated_by
         FROM super_teams st
         JOIN users u ON u.id = st.user_id
         WHERE u.is_active = 1
@@ -128,11 +137,18 @@ def _fetch_submissions_from_db() -> dict[int, dict]:
                 "user_id": uid,
                 "name": row["user_name"],
                 "player_ids": [],
+                "captain": None,
+                "vice_captain": None,
                 "updated_at": row["updated_at"],
                 "updated_by": row["updated_by"],
             },
         )
-        entry["player_ids"].append(int(row["player_id"]))
+        player_id = int(row["player_id"])
+        entry["player_ids"].append(player_id)
+        if row["is_captain"]:
+            entry["captain"] = player_id
+        if row["is_vice_captain"]:
+            entry["vice_captain"] = player_id
         if row["updated_at"]:
             entry["updated_at"] = row["updated_at"]
     return grouped
@@ -330,12 +346,42 @@ def validate_selection(player_ids: list[int]) -> list[int]:
     return normalized
 
 
-def save_team(user_id: int, player_ids: list[int], updated_by: int | None = None, ignore_lock: bool = False) -> dict:
+def validate_leaders(player_ids: list[int], captain: int, vice_captain: int) -> tuple[int, int]:
+    normalized_set = {int(pid) for pid in player_ids}
+    captain_id = int(captain)
+    vice_captain_id = int(vice_captain)
+    if captain_id == vice_captain_id:
+        raise HTTPException(status_code=400, detail="Captain and vice-captain must be different")
+    if captain_id not in normalized_set:
+        raise HTTPException(status_code=400, detail="Captain must be one of the selected players")
+    if vice_captain_id not in normalized_set:
+        raise HTTPException(status_code=400, detail="Vice-captain must be one of the selected players")
+    return captain_id, vice_captain_id
+
+
+def _super_team_multiplier(player_id: int, captain: int | None, vice_captain: int | None) -> float:
+    if captain is not None and int(player_id) == int(captain):
+        return SUPER_TEAM_CAPTAIN_MULTIPLIER
+    if vice_captain is not None and int(player_id) == int(vice_captain):
+        return SUPER_TEAM_VICE_CAPTAIN_MULTIPLIER
+    return 1.0
+
+
+def _super_team_tag(player_id: int, captain: int | None, vice_captain: int | None) -> str:
+    if captain is not None and int(player_id) == int(captain):
+        return "C"
+    if vice_captain is not None and int(player_id) == int(vice_captain):
+        return "VC"
+    return ""
+
+
+def save_team(user_id: int, player_ids: list[int], captain: int, vice_captain: int, updated_by: int | None = None, ignore_lock: bool = False) -> dict:
     global SUPER_TEAM_CACHE_LOADED
     context = get_context()
     if context["locked"] and not ignore_lock:
         raise HTTPException(status_code=400, detail="Super Team is locked")
     normalized = validate_selection(player_ids)
+    captain_id, vice_captain_id = validate_leaders(normalized, captain, vice_captain)
     db = get_db()
     user_row = db.execute("SELECT name FROM users WHERE id = ? AND is_active = 1", (int(user_id),)).fetchone()
     if not user_row:
@@ -345,16 +391,25 @@ def save_team(user_id: int, player_ids: list[int], updated_by: int | None = None
     for pid in normalized:
         db.execute(
             """
-            INSERT INTO super_teams (user_id, player_id, updated_at, updated_by)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO super_teams (user_id, player_id, is_captain, is_vice_captain, updated_at, updated_by)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (int(user_id), int(pid), updated_at, updated_by),
+            (
+                int(user_id),
+                int(pid),
+                1 if int(pid) == captain_id else 0,
+                1 if int(pid) == vice_captain_id else 0,
+                updated_at,
+                updated_by,
+            ),
         )
     db.commit()
     entry = {
         "user_id": int(user_id),
         "name": user_row["name"],
         "player_ids": normalized,
+        "captain": captain_id,
+        "vice_captain": vice_captain_id,
         "updated_at": updated_at,
         "updated_by": updated_by,
     }
@@ -378,9 +433,13 @@ def my_team(user_id: int) -> dict:
                 "player_name": players.get(pid, {}).get("Name", ""),
                 "team": players.get(pid, {}).get("Team", ""),
                 "role": players.get(pid, {}).get("Role", ""),
+                "is_captain": pid == entry.get("captain"),
+                "is_vice_captain": pid == entry.get("vice_captain"),
             }
             for pid in entry["player_ids"]
         ],
+        "captain": entry.get("captain"),
+        "vice_captain": entry.get("vice_captain"),
         "updated_at": entry.get("updated_at"),
     }
 
@@ -451,10 +510,15 @@ def refresh_super_team_standings_cache() -> dict:
         match_points: dict[int, float] = defaultdict(float)
         match_players: dict[int, list[dict]] = {match_id: [] for match_id in SUPER_MATCH_IDS}
         total = 0.0
+        captain = entry.get("captain")
+        vice_captain = entry.get("vice_captain")
         for pid in entry["player_ids"]:
             player = players.get(int(pid), {})
+            multiplier = _super_team_multiplier(int(pid), captain, vice_captain)
+            tag = _super_team_tag(int(pid), captain, vice_captain)
             for match_id in SUPER_MATCH_IDS:
-                pts = float(point_lookup.get((match_id, int(pid)), 0))
+                base_pts = float(point_lookup.get((match_id, int(pid)), 0))
+                pts = base_pts * multiplier
                 match_points[match_id] += pts
                 total += pts
                 match_players[match_id].append({
@@ -462,6 +526,9 @@ def refresh_super_team_standings_cache() -> dict:
                     "name": player.get("Name", ""),
                     "team": player.get("Team", ""),
                     "role": player.get("Role", ""),
+                    "base_points": round(base_pts, 2),
+                    "multiplier": multiplier,
+                    "tag": tag,
                     "points": round(pts, 2),
                 })
         total = round(total, 2)
@@ -525,11 +592,11 @@ def refresh_super_team_standings_cache() -> dict:
     player_points.sort(key=lambda item: (-float(item["points"]), item["team"], item["name"]))
 
     context = get_context()
-    bonus_winners = [
-        int(row["user_id"])
+    bonus_by_user = {
+        int(row["user_id"]): int(SUPER_TEAM_BONUSES_BY_RANK[int(row["rank"])])
         for row in rows
-        if context["bonus_visible"] and max_points is not None and row["points"] == max_points
-    ]
+        if context["bonus_visible"] and int(row["rank"]) in SUPER_TEAM_BONUSES_BY_RANK
+    }
     with SUPER_TEAM_CACHE_LOCK:
         SUPER_STANDINGS_CACHE.clear()
         SUPER_STANDINGS_CACHE.extend(copy.deepcopy(rows))
@@ -541,9 +608,9 @@ def refresh_super_team_standings_cache() -> dict:
         SUPER_STANDINGS_META.clear()
         SUPER_STANDINGS_META.update({
             "bonus_visible": context["bonus_visible"],
-            "bonus_winners": bonus_winners,
+            "bonus_by_user": bonus_by_user,
         })
-    return {"standings": len(rows), "bonus_winners": len(bonus_winners)}
+    return {"standings": len(rows), "bonus_users": len(bonus_by_user)}
 
 
 def standings() -> list[dict]:
@@ -564,7 +631,7 @@ def bonus_map() -> dict[int, int]:
         if not SUPER_STANDINGS_CACHE:
             pass
         else:
-            return {int(uid): SUPER_TEAM_BONUS for uid in SUPER_STANDINGS_META.get("bonus_winners", [])}
+            return {int(uid): int(bonus) for uid, bonus in SUPER_STANDINGS_META.get("bonus_by_user", {}).items()}
     refresh_super_team_standings_cache()
     with SUPER_TEAM_CACHE_LOCK:
-        return {int(uid): SUPER_TEAM_BONUS for uid in SUPER_STANDINGS_META.get("bonus_winners", [])}
+        return {int(uid): int(bonus) for uid, bonus in SUPER_STANDINGS_META.get("bonus_by_user", {}).items()}

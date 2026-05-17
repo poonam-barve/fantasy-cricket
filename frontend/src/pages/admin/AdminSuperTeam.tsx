@@ -3,14 +3,14 @@ import client from '../../api/client';
 import type { Player, User } from '../../types';
 
 type Role = 'Wicketkeeper' | 'Batter' | 'AllRounder' | 'Bowler';
-type Submission = { user_id: number; name: string; player_ids: number[]; updated_at?: string | null };
+type Submission = { user_id: number; name: string; player_ids: number[]; captain?: number | null; vice_captain?: number | null; updated_at?: string | null };
 type Standing = { user_id: number; name: string; points: number; rank: number };
 
 const roles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder', 'Bowler'];
 const requiredRoles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder'];
 const SUPER_TEAM_SIZE = 12;
 const PLAYERS_PER_TEAM = 3;
-const MIN_BOWLERS = 3;
+const MIN_BOWLERS = 4;
 
 function apiErrorDetail(error: unknown, fallback: string) {
   const response = (error as { response?: { data?: { detail?: unknown } } } | null)?.response;
@@ -29,6 +29,8 @@ export default function AdminSuperTeam() {
   const [standings, setStandings] = useState<Standing[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<number | ''>('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [captain, setCaptain] = useState<number | null>(null);
+  const [viceCaptain, setViceCaptain] = useState<number | null>(null);
   const [activeRole, setActiveRole] = useState<Role>('Wicketkeeper');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
@@ -57,10 +59,14 @@ export default function AdminSuperTeam() {
   useEffect(() => {
     if (!selectedUserId) {
       setSelected(new Set());
+      setCaptain(null);
+      setViceCaptain(null);
       return;
     }
     const existing = teams.find((team) => team.user_id === Number(selectedUserId));
     setSelected(new Set(existing?.player_ids || []));
+    setCaptain(existing?.captain ? Number(existing.captain) : null);
+    setViceCaptain(existing?.vice_captain ? Number(existing.vice_captain) : null);
   }, [selectedUserId, teams]);
 
   const allPlayers = useMemo(() => roles.flatMap((role) => playersByRole[role] || []), [playersByRole]);
@@ -90,13 +96,20 @@ export default function AdminSuperTeam() {
     if (missingRoles.length > 0) return 'Select at least 1 Wicketkeeper, 1 Batter, and 1 AllRounder.';
     if (bowlerCount < MIN_BOWLERS) return `Select at least ${MIN_BOWLERS} Bowlers.`;
     if (invalidTeams.length > 0) return `Select exactly ${PLAYERS_PER_TEAM} players from each playoff team.`;
+    if (!captain || !selected.has(captain)) return 'Select a Captain.';
+    if (!viceCaptain || !selected.has(viceCaptain)) return 'Select a Vice-Captain.';
+    if (captain === viceCaptain) return 'Captain and Vice-Captain must be different.';
     return '';
   })();
 
   const toggle = (playerId: number) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(playerId)) next.delete(playerId);
+      if (next.has(playerId)) {
+        next.delete(playerId);
+        if (captain === playerId) setCaptain(null);
+        if (viceCaptain === playerId) setViceCaptain(null);
+      }
       else if (next.size < SUPER_TEAM_SIZE) next.add(playerId);
       return next;
     });
@@ -117,6 +130,8 @@ export default function AdminSuperTeam() {
       await client.put('/api/admin/super-team', {
         user_id: selectedUserId,
         players: [...selected],
+        captain,
+        vice_captain: viceCaptain,
       });
       setMessage('Super Team updated.');
       await load();
@@ -173,6 +188,7 @@ export default function AdminSuperTeam() {
             <Metric label="Bowlers" value={`${bowlerCount}/${MIN_BOWLERS}`} good={bowlerCount >= MIN_BOWLERS} />
             <Metric label="Team Splits" value={invalidTeams.length === 0 ? 'OK' : `${invalidTeams.length} off`} good={invalidTeams.length === 0} />
             <Metric label="Role Splits" value={missingRoles.length === 0 ? 'OK' : `${missingRoles.length} missing`} good={missingRoles.length === 0} />
+            <Metric label="C / VC" value={`${(captain ? 1 : 0) + (viceCaptain ? 1 : 0)}/2`} good={Boolean(captain && viceCaptain && captain !== viceCaptain)} />
           </div>
 
           <div className="mb-4 flex gap-1 rounded-lg bg-slate-950 p-1">
@@ -186,6 +202,8 @@ export default function AdminSuperTeam() {
           <div className="grid gap-2 sm:grid-cols-2">
             {(playersByRole[activeRole] || []).map((player) => {
               const picked = selected.has(player.id);
+              const isCaptain = captain === player.id;
+              const isViceCaptain = viceCaptain === player.id;
               return (
                 <button key={player.id} onClick={() => toggle(player.id)} className={`rounded-lg border p-3 text-left ${picked ? 'border-emerald-400 bg-emerald-500/10' : 'border-slate-800 bg-slate-950 hover:bg-slate-800'}`}>
                   <div className="flex items-start justify-between gap-3">
@@ -193,7 +211,33 @@ export default function AdminSuperTeam() {
                       <p className="truncate text-sm font-semibold">{player.name}</p>
                       <p className="text-xs text-slate-400">{player.team} | {player.role}</p>
                     </div>
-                    <span className="text-xs font-bold">{picked ? 'Picked' : '+'}</span>
+                    <div className="flex flex-shrink-0 items-center gap-1">
+                      {picked && (
+                        <>
+                          <span
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setCaptain((current) => (current === player.id ? null : player.id));
+                              if (viceCaptain === player.id) setViceCaptain(null);
+                            }}
+                            className={`rounded px-2 py-1 text-xs font-bold ${isCaptain ? 'bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-400'}`}
+                          >
+                            C
+                          </span>
+                          <span
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setViceCaptain((current) => (current === player.id ? null : player.id));
+                              if (captain === player.id) setCaptain(null);
+                            }}
+                            className={`rounded px-2 py-1 text-xs font-bold ${isViceCaptain ? 'bg-cyan-400 text-slate-950' : 'bg-slate-800 text-slate-400'}`}
+                          >
+                            VC
+                          </span>
+                        </>
+                      )}
+                      <span className="text-xs font-bold">{picked ? 'Picked' : '+'}</span>
+                    </div>
                   </div>
                   <p className="mt-2 text-xs text-slate-500">{player.total_points || 0} pts | {player.avg_points || 0} avg</p>
                 </button>
@@ -222,7 +266,7 @@ export default function AdminSuperTeam() {
               {teams.map((team) => (
                 <button key={team.user_id} onClick={() => setSelectedUserId(team.user_id)} className="block w-full px-4 py-3 text-left text-sm hover:bg-slate-800">
                   <p className="font-medium">{team.name}</p>
-                  <p className="text-xs text-slate-500">{team.player_ids.length} players | {team.updated_at || '-'}</p>
+                  <p className="text-xs text-slate-500">{team.player_ids.length} players | C {team.captain || '-'} | VC {team.vice_captain || '-'} | {team.updated_at || '-'}</p>
                 </button>
               ))}
               {teams.length === 0 && <div className="px-4 py-6 text-sm text-slate-500">No submitted teams.</div>}

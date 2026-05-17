@@ -611,7 +611,7 @@ async def export_points_table(user: dict = Depends(get_current_user)):
     worksheet.append(weekend_bonus_row)
 
     if any(super_team_bonus_map.values()):
-        super_team_bonus_row = ["Super Team Winner Bonus"]
+        super_team_bonus_row = ["Super Team Rank Bonus"]
         for user_row in users:
             super_team_bonus_row.append(super_team_bonus_map.get(user_row["user_id"], 0))
         worksheet.append(super_team_bonus_row)

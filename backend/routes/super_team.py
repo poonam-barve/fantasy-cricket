@@ -11,11 +11,15 @@ admin_router = APIRouter(prefix="/api/admin/super-team", tags=["admin-super-team
 
 class SuperTeamBody(BaseModel):
     players: list[int]
+    captain: int
+    vice_captain: int
 
 
 class AdminSuperTeamBody(BaseModel):
     user_id: int
     players: list[int]
+    captain: int
+    vice_captain: int
 
 
 @router.get("")
@@ -42,7 +46,7 @@ async def super_team_status(user: dict = Depends(get_current_user)):
 
 @router.post("")
 async def submit_super_team(body: SuperTeamBody, user: dict = Depends(get_current_user)):
-    entry = super_team_service.save_team(user["id"], body.players)
+    entry = super_team_service.save_team(user["id"], body.players, body.captain, body.vice_captain)
     return {"success": True, "team": entry}
 
 
@@ -85,6 +89,8 @@ async def admin_update_super_team(body: AdminSuperTeamBody, user: dict = Depends
     entry = super_team_service.save_team(
         body.user_id,
         body.players,
+        body.captain,
+        body.vice_captain,
         updated_by=user["id"],
         ignore_lock=True,
     )
