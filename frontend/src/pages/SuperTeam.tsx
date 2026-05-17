@@ -31,6 +31,7 @@ type SuperPlayerPoints = {
 type MyTeamPlayer = { player_id: number | string };
 
 const roles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder', 'Bowler'];
+const requiredRoles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder'];
 const SUPER_TEAM_SIZE = 12;
 const PLAYERS_PER_TEAM = 3;
 const MIN_BOWLERS = 3;
@@ -99,7 +100,7 @@ export default function SuperTeamPage() {
     'Super Team is a one-time playoff squad for Matches 71-74.',
     'Pick 12 players from the four teams playing Match 71 and Match 72.',
     'Select exactly 3 players from each playoff team.',
-    'Pick at least 1 Wicketkeeper, 1 Batter, 1 AllRounder, and 1 Bowler.',
+    'Pick at least 1 Wicketkeeper, 1 Batter, 1 AllRounder.',
     'You must select at least 3 Bowlers overall.',
     'Your job is to predict who will progress: players can score again if their team reaches Match 73 or Match 74.',
     'No captain, vice-captain, backups, substitutes, or Playing XI availability rules apply.',
@@ -181,11 +182,11 @@ export default function SuperTeamPage() {
     });
     return counts;
   }, [selectedPlayers]);
-  const missingRoles = roles.filter((role) => (roleCounts[role] || 0) < 1);
+  const missingRoles = requiredRoles.filter((role) => (roleCounts[role] || 0) < 1);
   const invalidTeams = (context?.teams || []).filter((team) => (teamCounts[team] || 0) !== PLAYERS_PER_TEAM);
   const validationMessage = (() => {
     if (selected.size !== SUPER_TEAM_SIZE) return `Select ${SUPER_TEAM_SIZE - selected.size} more players.`;
-    if (missingRoles.length > 0) return 'Select at least 1 player from each role.';
+    if (missingRoles.length > 0) return 'Select at least 1 Wicketkeeper, 1 Batter, and 1 AllRounder.';
     if (bowlerCount < MIN_BOWLERS) return `Select at least ${MIN_BOWLERS} Bowlers.`;
     if (invalidTeams.length > 0) return `Select exactly ${PLAYERS_PER_TEAM} players from each team.`;
     return '';

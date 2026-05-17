@@ -51,6 +51,12 @@ export default function Navbar() {
             >
               Settings
             </Link>
+            <Link
+              to="/rules"
+              className="inline-flex items-center gap-1 rounded-lg bg-blue-500/15 px-3 py-1.5 text-xs font-medium text-blue-300 transition hover:bg-blue-500/25"
+            >
+              Rules
+            </Link>
             <button
               onClick={handleLogout}
               className="text-xs bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition font-medium"

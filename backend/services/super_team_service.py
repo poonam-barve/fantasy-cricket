@@ -16,7 +16,7 @@ SUPER_TEAM_BONUS = 400
 SUPER_TEAM_SIZE = 12
 SUPER_TEAM_PLAYERS_PER_TEAM = 3
 SUPER_TEAM_MIN_BOWLERS = 3
-SUPER_TEAM_ROLES = ["Wicketkeeper", "Batter", "AllRounder", "Bowler"]
+SUPER_TEAM_REQUIRED_ROLES = ["Wicketkeeper", "Batter", "AllRounder"]
 
 SUPER_TEAM_CACHE_LOCK = threading.Lock()
 SUPER_TEAM_CACHE: dict[int, dict] = {}
@@ -309,11 +309,11 @@ def validate_selection(player_ids: list[int]) -> list[int]:
         raise HTTPException(status_code=400, detail="Some players are not eligible for Super Team")
     role_counts = {
         role: sum(1 for player in selected if player and player["Role"] == role)
-        for role in SUPER_TEAM_ROLES
+        for role in SUPER_TEAM_REQUIRED_ROLES
     }
     missing_roles = [role for role, count in role_counts.items() if count < 1]
     if missing_roles:
-        raise HTTPException(status_code=400, detail="Select at least 1 player from each role")
+        raise HTTPException(status_code=400, detail="Select at least 1 Wicketkeeper, 1 Batter, and 1 AllRounder")
     bowler_count = sum(1 for player in selected if player and player["Role"] == "Bowler")
     if bowler_count < SUPER_TEAM_MIN_BOWLERS:
         raise HTTPException(status_code=400, detail=f"At least {SUPER_TEAM_MIN_BOWLERS} Bowlers required")

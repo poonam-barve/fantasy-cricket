@@ -7,6 +7,7 @@ type Submission = { user_id: number; name: string; player_ids: number[]; updated
 type Standing = { user_id: number; name: string; points: number; rank: number };
 
 const roles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder', 'Bowler'];
+const requiredRoles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder'];
 const SUPER_TEAM_SIZE = 12;
 const PLAYERS_PER_TEAM = 3;
 const MIN_BOWLERS = 3;
@@ -83,10 +84,10 @@ export default function AdminSuperTeam() {
   }, {});
   const eligibleTeams = [...new Set(allPlayers.map((player) => player.team))];
   const invalidTeams = eligibleTeams.filter((team) => (teamCounts[team] || 0) !== PLAYERS_PER_TEAM);
-  const missingRoles = roles.filter((role) => (roleCounts[role] || 0) < 1);
+  const missingRoles = requiredRoles.filter((role) => (roleCounts[role] || 0) < 1);
   const validationMessage = (() => {
     if (selected.size !== SUPER_TEAM_SIZE) return `Select exactly ${SUPER_TEAM_SIZE} players.`;
-    if (missingRoles.length > 0) return 'Select at least 1 player from each role.';
+    if (missingRoles.length > 0) return 'Select at least 1 Wicketkeeper, 1 Batter, and 1 AllRounder.';
     if (bowlerCount < MIN_BOWLERS) return `Select at least ${MIN_BOWLERS} Bowlers.`;
     if (invalidTeams.length > 0) return `Select exactly ${PLAYERS_PER_TEAM} players from each playoff team.`;
     return '';

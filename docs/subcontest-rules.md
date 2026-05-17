@@ -21,7 +21,7 @@ This document is the compact source of truth for fantasy subcontests beyond the 
 - Team selection locks at the scheduled start time of Match `71`.
 - Each user selects exactly `12` players.
 - Select exactly `3` players from each of the four playoff teams.
-- Select at least `1` player from each role: `Wicketkeeper`, `Batter`, `AllRounder`, and `Bowler`.
+- Pick at least `1` `Wicketkeeper`, `1` `Batter`, and `1` `AllRounder`.
 - Select at least `3` Bowlers overall.
 - No captain, vice-captain, backups, substitutes, or Playing XI availability rules apply.
 - Players earn their normal fantasy points in every playoff match they appear in.

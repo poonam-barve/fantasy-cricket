@@ -389,7 +389,7 @@ export default function DashboardPage() {
           <p className="text-white/40 text-sm mt-1">Hippies Mahasangram</p>
 
           {/* Quick Actions */}
-          <div className={`grid gap-2 sm:gap-3 mt-6 ${superTeamStatus?.context?.visible ? 'grid-cols-5' : 'grid-cols-4'}`}>
+          <div className={`grid gap-2 sm:gap-3 mt-6 ${superTeamStatus?.context?.visible ? 'grid-cols-4' : 'grid-cols-3'}`}>
           <Link to="/leaderboard"
             className="flex flex-col items-center gap-2 p-3 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 rounded-2xl transition-all group">
             <div className="w-9 h-9 bg-amber-500/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -408,15 +408,6 @@ export default function DashboardPage() {
             </div>
             <span className="w-full text-center text-white/50 text-xs font-medium leading-tight">Points Table</span>
           </Link>
-          <Link to="/rules"
-            className="flex flex-col items-center gap-2 p-3 bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 rounded-2xl transition-all group">
-            <div className="w-9 h-9 bg-blue-500/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-              <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            <span className="w-full text-center text-blue-300 text-xs font-medium leading-tight">Rules</span>
-          </Link>
           <Link to="/weekend"
             className="flex flex-col items-center gap-2 p-3 bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/20 rounded-2xl transition-all group">
             <div className="w-9 h-9 bg-purple-500/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -428,19 +419,13 @@ export default function DashboardPage() {
           </Link>
           {superTeamStatus?.context?.visible && (
             <Link to="/super-team"
-              className={`flex flex-col items-center gap-2 p-3 border rounded-2xl transition-all group ${
-                superTeamStatus.context.enabled
-                  ? 'bg-cyan-500/10 hover:bg-cyan-500/15 border-cyan-500/20'
-                  : 'bg-white/5 border-white/10 opacity-70'
-              }`}>
-              <div className={`w-9 h-9 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform ${
-                superTeamStatus.context.enabled ? 'bg-cyan-500/20' : 'bg-white/10'
-              }`}>
-                <svg className={`w-4 h-4 ${superTeamStatus.context.enabled ? 'text-cyan-300' : 'text-white/40'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              className="flex flex-col items-center gap-2 rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-3 transition-all hover:bg-cyan-500/15 group">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-500/20 transition-transform group-hover:scale-110">
+                <svg className="h-4 w-4 text-cyan-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5zm14 4l1.5 3 3 1.5-3 1.5-1.5 3-1.5-3-3-1.5 3-1.5L19 7z" />
                 </svg>
               </div>
-              <span className={`w-full text-center text-xs font-medium leading-tight ${superTeamStatus.context.enabled ? 'text-cyan-300' : 'text-white/45'}`}>
+              <span className="w-full text-center text-xs font-medium leading-tight text-cyan-300">
                 Super Team
               </span>
             </Link>
