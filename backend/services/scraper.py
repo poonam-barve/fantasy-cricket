@@ -268,6 +268,7 @@ def refresh_playing_xi_cache(
     match_date: str | None = None,
     match_time: str | None = None,
     toss_time: str | None = None,
+    persist_resolved_ids: bool = True,
 ) -> dict:
     """Refresh and persist Playing XI data for scheduler/admin use."""
     if not _acquire_playing_xi_refresh(match_id):
@@ -289,17 +290,34 @@ def refresh_playing_xi_cache(
             match_time=match_time,
             toss_time=toss_time,
             force_refresh=True,
+            persist_resolved_ids=persist_resolved_ids,
         )
     finally:
         _release_playing_xi_refresh(match_id)
 
 
-def fetch_scorecard_html(match_id, team1: str | None = None, team2: str | None = None, match_date: str | None = None, force_refresh: bool = False):
+def fetch_scorecard_html(
+    match_id,
+    team1: str | None = None,
+    team2: str | None = None,
+    match_date: str | None = None,
+    force_refresh: bool = False,
+    persist_resolved_ids: bool = True,
+):
     espn_match_id = None
     if team1 and team2:
-        espn_match_id = data_service.get_stored_espn_match_id(int(match_id))
+        espn_match_id = data_service.get_stored_espn_match_id(
+            int(match_id),
+            allow_db_fallback=persist_resolved_ids,
+        )
         if not espn_match_id or force_refresh:
-            resolved_match_id = resolve_espn_match_id(int(match_id), team1, team2, force_refresh=force_refresh)
+            resolved_match_id = resolve_espn_match_id(
+                int(match_id),
+                team1,
+                team2,
+                force_refresh=force_refresh,
+                persist=persist_resolved_ids,
+            )
             if resolved_match_id:
                 espn_match_id = resolved_match_id
 
@@ -354,7 +372,13 @@ def fetch_scorecard_html(match_id, team1: str | None = None, team2: str | None =
         return summary_html
 
     if team1 and team2 and not force_refresh:
-        refreshed_match_id = resolve_espn_match_id(int(match_id), team1, team2, force_refresh=True)
+        refreshed_match_id = resolve_espn_match_id(
+            int(match_id),
+            team1,
+            team2,
+            force_refresh=True,
+            persist=persist_resolved_ids,
+        )
         if refreshed_match_id and refreshed_match_id != espn_match_id:
             fetched_html = _try_fetch(int(refreshed_match_id))
             if fetched_html:
@@ -370,10 +394,19 @@ def get_last_fetched_espn_scorecard_url(match_id: int) -> str | None:
     return LAST_ESPN_SCORECARD_URL.get(int(match_id))
 
 
-def fetch_cricbuzz_scorecard_html(match_id: int, team1: str | None = None, team2: str | None = None):
-    cricbuzz_match_id = CRICBUZZ_MATCH_ID_MAP.get(int(match_id)) or data_service.get_stored_cricbuzz_match_id(int(match_id))
+def fetch_cricbuzz_scorecard_html(
+    match_id: int,
+    team1: str | None = None,
+    team2: str | None = None,
+    *,
+    persist_resolved_ids: bool = True,
+):
+    cricbuzz_match_id = CRICBUZZ_MATCH_ID_MAP.get(int(match_id)) or data_service.get_stored_cricbuzz_match_id(
+        int(match_id),
+        allow_db_fallback=persist_resolved_ids,
+    )
     if not cricbuzz_match_id and team1 and team2:
-        cricbuzz_match_id = resolve_cricbuzz_match_id(int(match_id), team1, team2)
+        cricbuzz_match_id = resolve_cricbuzz_match_id(int(match_id), team1, team2, persist=persist_resolved_ids)
     if not cricbuzz_match_id:
         print(f"[Cricbuzz Scorecard] Match {match_id}: no cached Cricbuzz match id found")
         return None
@@ -384,7 +417,13 @@ def fetch_cricbuzz_scorecard_html(match_id: int, team1: str | None = None, team2
         if res.status_code != 200:
             print(f"[Cricbuzz Scorecard] Match {match_id}: status {res.status_code} for {url}")
             if team1 and team2:
-                refreshed_match_id = resolve_cricbuzz_match_id(int(match_id), team1, team2, force_refresh=True)
+                refreshed_match_id = resolve_cricbuzz_match_id(
+                    int(match_id),
+                    team1,
+                    team2,
+                    force_refresh=True,
+                    persist=persist_resolved_ids,
+                )
                 if refreshed_match_id and refreshed_match_id != cricbuzz_match_id:
                     refreshed_url = f"https://www.cricbuzz.com/live-cricket-scorecard/{refreshed_match_id}"
                     refreshed_res = _session_get(refreshed_url)
@@ -395,7 +434,13 @@ def fetch_cricbuzz_scorecard_html(match_id: int, team1: str | None = None, team2
     except Exception as e:
         print(f"[Cricbuzz Scorecard] Match {match_id}: error fetching {url}: {e}")
         if team1 and team2:
-            refreshed_match_id = resolve_cricbuzz_match_id(int(match_id), team1, team2, force_refresh=True)
+            refreshed_match_id = resolve_cricbuzz_match_id(
+                int(match_id),
+                team1,
+                team2,
+                force_refresh=True,
+                persist=persist_resolved_ids,
+            )
             if refreshed_match_id and refreshed_match_id != cricbuzz_match_id:
                 refreshed_url = f"https://www.cricbuzz.com/live-cricket-scorecard/{refreshed_match_id}"
                 try:
@@ -759,10 +804,19 @@ def initialize_espn_match_map(matches_data: list[dict]) -> dict[int, int]:
     return ESPN_MATCH_ID_MAP
 
 
-def resolve_espn_match_id(match_id: int, team1: str, team2: str, force_refresh: bool = False) -> int | None:
+def resolve_espn_match_id(
+    match_id: int,
+    team1: str,
+    team2: str,
+    force_refresh: bool = False,
+    persist: bool = True,
+) -> int | None:
     stored_match_id = None
     try:
-        stored_match_id = data_service.get_stored_espn_match_id(int(match_id))
+        stored_match_id = data_service.get_stored_espn_match_id(
+            int(match_id),
+            allow_db_fallback=persist,
+        )
     except Exception:
         stored_match_id = None
 
@@ -782,10 +836,11 @@ def resolve_espn_match_id(match_id: int, team1: str, team2: str, force_refresh: 
     resolved = schedule_lookup.get(key)
     if resolved:
         ESPN_MATCH_ID_MAP[int(match_id)] = int(resolved)
-        try:
-            data_service.update_match_fields(int(match_id), espn_match_id=int(resolved))
-        except Exception:
-            pass
+        if persist:
+            try:
+                data_service.update_match_fields(int(match_id), espn_match_id=int(resolved))
+            except Exception:
+                pass
         return int(resolved)
 
     return int(stored_match_id) if stored_match_id else cached_match_id
@@ -901,7 +956,7 @@ def _normalize_cricbuzz_match_key(match_id: int, team1: str, team2: str) -> tupl
     )
 
 
-def _fetch_and_store_cricbuzz_match_id(match_id: int, team1: str, team2: str) -> int | None:
+def _fetch_and_store_cricbuzz_match_id(match_id: int, team1: str, team2: str, *, persist: bool = True) -> int | None:
     schedule_lookup = _fetch_cricbuzz_schedule_lookup()
     if not schedule_lookup:
         return None
@@ -910,10 +965,11 @@ def _fetch_and_store_cricbuzz_match_id(match_id: int, team1: str, team2: str) ->
     resolved = schedule_lookup.get(key)
     if resolved:
         CRICBUZZ_MATCH_ID_MAP[int(match_id)] = resolved
-        try:
-            data_service.update_match_fields(int(match_id), cricbuzz_match_id=int(resolved))
-        except Exception:
-            pass
+        if persist:
+            try:
+                data_service.update_match_fields(int(match_id), cricbuzz_match_id=int(resolved))
+            except Exception:
+                pass
     return resolved
 
 
@@ -1039,10 +1095,19 @@ def _extract_cricbuzz_embedded_json(html_text: str, key: str) -> dict | None:
         return None
 
 
-def resolve_cricbuzz_match_id(match_id: int, team1: str, team2: str, force_refresh: bool = False) -> int | None:
+def resolve_cricbuzz_match_id(
+    match_id: int,
+    team1: str,
+    team2: str,
+    force_refresh: bool = False,
+    persist: bool = True,
+) -> int | None:
     stored_match_id = None
     try:
-        stored_match_id = data_service.get_stored_cricbuzz_match_id(int(match_id))
+        stored_match_id = data_service.get_stored_cricbuzz_match_id(
+            int(match_id),
+            allow_db_fallback=persist,
+        )
     except Exception:
         stored_match_id = None
 
@@ -1054,7 +1119,7 @@ def resolve_cricbuzz_match_id(match_id: int, team1: str, team2: str, force_refre
     if cached_match_id and not force_refresh:
         return cached_match_id
 
-    resolved = _fetch_and_store_cricbuzz_match_id(match_id, team1, team2)
+    resolved = _fetch_and_store_cricbuzz_match_id(match_id, team1, team2, persist=persist)
     if resolved:
         CRICBUZZ_MATCH_ID_MAP[int(match_id)] = resolved
         return resolved
@@ -2031,6 +2096,7 @@ def _fetch_playing_xi_impl(
     match_time: str | None = None,
     toss_time: str | None = None,
     force_refresh: bool = False,
+    persist_resolved_ids: bool = True,
 ) -> dict:
     with PLAYING_XI_CACHE_LOCK:
         cached = PLAYING_XI_CACHE.get(int(match_id))
@@ -2096,7 +2162,15 @@ def _fetch_playing_xi_impl(
         return payload
 
     print(f"[Playing XI] Match {match_id}: checking Cricbuzz match id")
-    cricbuzz_match_id = data_service.get_stored_cricbuzz_match_id(int(match_id)) or resolve_cricbuzz_match_id(int(match_id), team1, team2)
+    cricbuzz_match_id = data_service.get_stored_cricbuzz_match_id(
+        int(match_id),
+        allow_db_fallback=persist_resolved_ids,
+    ) or resolve_cricbuzz_match_id(
+        int(match_id),
+        team1,
+        team2,
+        persist=persist_resolved_ids,
+    )
     if not cricbuzz_match_id:
         print(f"[Playing XI] Match {match_id}: no Cricbuzz match id found after schedule lookup")
         payload = {"announced": False, "url": "", "player_ids": [], "substitute_ids": []}
@@ -2127,7 +2201,13 @@ def _fetch_playing_xi_impl(
             squads_html = res.text
         elif team1 and team2:
             print(f"[Playing XI] Match {match_id}: re-resolving Cricbuzz match id after squads miss")
-            refreshed_match_id = resolve_cricbuzz_match_id(int(match_id), team1, team2, force_refresh=True)
+            refreshed_match_id = resolve_cricbuzz_match_id(
+                int(match_id),
+                team1,
+                team2,
+                force_refresh=True,
+                persist=persist_resolved_ids,
+            )
             if refreshed_match_id and refreshed_match_id != cricbuzz_match_id:
                 cricbuzz_match_id = refreshed_match_id
                 commentary_url = build_cricbuzz_commentary_url(cricbuzz_match_id)
@@ -2164,7 +2244,13 @@ def _fetch_playing_xi_impl(
                 commentary_html = commentary_res.text
             elif team1 and team2:
                 print(f"[Playing XI] Match {match_id}: re-resolving Cricbuzz match id after commentary miss")
-                refreshed_match_id = resolve_cricbuzz_match_id(int(match_id), team1, team2, force_refresh=True)
+                refreshed_match_id = resolve_cricbuzz_match_id(
+                    int(match_id),
+                    team1,
+                    team2,
+                    force_refresh=True,
+                    persist=persist_resolved_ids,
+                )
                 if refreshed_match_id and refreshed_match_id != cricbuzz_match_id:
                     cricbuzz_match_id = refreshed_match_id
                     commentary_url = build_cricbuzz_commentary_url(cricbuzz_match_id)

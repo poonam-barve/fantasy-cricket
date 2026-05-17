@@ -294,27 +294,27 @@ def _build_match_scores_payload(
             role_lookup[pid_str] = role
         pp_lookup[pid_str] = float(p.calculate_player_points(role) if role else 0)
 
-    owners_by_player = _load_player_owners(db, match_id)
+    team_selection_rows = data_service.get_cached_match_team_selection_rows(match_id)
+    owners_by_player = _load_player_owners(db, match_id, team_selection_rows)
     team1 = clean_team_name(_row_value(match_row, "team1", "Team1", default=""))
     team2 = clean_team_name(_row_value(match_row, "team2", "Team2", default=""))
 
     selected_rows = []
     if _is_live_window(match_row):
-        selected_rows = db.execute(
-            """
-            SELECT DISTINCT
-                p.id,
-                p.name,
-                p.team,
-                p.role
-            FROM user_teams ut
-            JOIN players p ON p.id = ut.player_id
-            WHERE ut.match_id = ?
-              AND p.team IN (?, ?)
-            ORDER BY p.team, p.role, p.name
-            """,
-            (match_id, team1, team2),
-        ).fetchall()
+        seen_selected_ids: set[int] = set()
+        for row in team_selection_rows:
+            player_id = int(row["player_id"])
+            if player_id in seen_selected_ids:
+                continue
+            if row.get("team") not in {team1, team2}:
+                continue
+            seen_selected_ids.add(player_id)
+            selected_rows.append({
+                "id": player_id,
+                "name": row.get("player_name", ""),
+                "team": row.get("team", ""),
+                "role": row.get("role", ""),
+            })
 
     players = []
     for p in match_obj.players.values():
@@ -362,7 +362,7 @@ def _build_match_scores_payload(
     # Use live-calculated per-player points to compute contestant totals for
     # the main scores response so that these totals stay in sync with the
     # team breakdown (which uses the cached snapshot).
-    contestants = _compute_contestants_from_player_points(db, match_id, pp_lookup)
+    contestants = _compute_contestants_from_player_points(db, match_id, pp_lookup, team_selection_rows)
     contestants = _enrich_contestants_with_predictions(contestants, match_id, match_row)
     contestants = _rank_contestants(contestants)
 
@@ -595,7 +595,7 @@ def refresh_scores_response_cache_once(match_statuses: set[str] | None = None) -
             persisted_match_ids = {
                 int(match_id)
                 for match_id in updated_match_ids
-                if str(snapshot.get(int(match_id), {}).get("match_status") or "").strip().lower() in {"completed", "nr"}
+                if str(snapshot.get(int(match_id), {}).get("match_status") or "").strip().lower() == "completed"
             }
 
             if persisted_match_ids:
@@ -684,23 +684,14 @@ def prewarm_non_live_match_payloads():
     return {"warmed": warmed, "matches": len(matches_data)}
 
 
-def _compute_contestants_from_player_points(db, match_id: int, pp_lookup: dict[str, float] | None = None) -> list[dict]:
-    team_rows = db.execute(
-        """
-        SELECT
-            u.id AS user_id,
-            u.name AS user_name,
-            ut.player_id,
-            ut.is_captain,
-            ut.is_vice_captain
-        FROM user_teams ut
-        JOIN users u ON u.id = ut.user_id
-        WHERE ut.match_id = ?
-          AND u.is_active = 1
-        ORDER BY u.id
-        """,
-        (match_id,),
-    ).fetchall()
+def _compute_contestants_from_player_points(
+    db,
+    match_id: int,
+    pp_lookup: dict[str, float] | None = None,
+    team_rows: list[dict] | None = None,
+) -> list[dict]:
+    if team_rows is None:
+        team_rows = data_service.get_cached_match_team_selection_rows(match_id)
 
     totals: dict[int, dict] = {}
     for row in team_rows:
@@ -731,13 +722,16 @@ def _enrich_contestants_with_predictions(contestants: list[dict], match_id: int,
     Bonus points are added to the contestant's total so that rankings and
     medals reflect prediction bonuses once the match is completed.
     """
+    apply_bonus = _is_completed_score_target(match_row)
     try:
-        predictions = data_service.get_match_predictions(match_id)
-        bonuses = data_service.compute_prediction_bonuses(match_id)
+        predictions = (
+            data_service.get_match_predictions(match_id)
+            if apply_bonus
+            else data_service.get_cached_match_predictions(match_id)
+        )
+        bonuses = data_service.compute_prediction_bonuses(match_id) if apply_bonus else {}
     except Exception:
         return contestants
-
-    apply_bonus = _is_completed_score_target(match_row)
 
     def _prediction_tier_for_diff(diff: float) -> tuple[str | None, float]:
         for tier in data_service.PREDICTION_BONUS_TIERS:
@@ -790,23 +784,9 @@ def _rank_contestants(contestants: list[dict]) -> list[dict]:
     return ranked
 
 
-def _load_player_owners(db, match_id: int) -> dict[int, list[dict]]:
-    rows = db.execute(
-        """
-        SELECT
-            ut.player_id,
-            u.id AS user_id,
-            u.name AS user_name,
-            ut.is_captain,
-            ut.is_vice_captain
-        FROM user_teams ut
-        JOIN users u ON u.id = ut.user_id
-        WHERE ut.match_id = ?
-          AND u.is_active = 1
-        ORDER BY ut.player_id, u.name
-        """,
-        (match_id,),
-    ).fetchall()
+def _load_player_owners(db, match_id: int, rows: list[dict] | None = None) -> dict[int, list[dict]]:
+    if rows is None:
+        rows = data_service.get_cached_match_team_selection_rows(match_id)
 
     owners_by_player: dict[int, list[dict]] = {}
     for row in rows:
@@ -1030,6 +1010,7 @@ def _build_live_match_payload(
         team2,
         registry,
         match_date,
+        log_unknown_players=not require_scorecard_sources,
     )
 
     players_rows = _build_players_rows(players_data, team1, team2)
@@ -1044,16 +1025,28 @@ def _build_live_match_payload(
         match_date,
         match_time,
         toss_time,
+        persist_resolved_ids=not require_scorecard_sources,
     )
     playing_ids = playing_xi.get("player_ids", [])
     if playing_ids:
         match_obj.apply_playing_xi(playing_ids)
 
-    html_content = fetch_cricbuzz_scorecard_html(match_id, team1, team2)
+    html_content = fetch_cricbuzz_scorecard_html(
+        match_id,
+        team1,
+        team2,
+        persist_resolved_ids=not require_scorecard_sources,
+    )
     if html_content:
         match_obj.parse_cricbuzz_scorecard_html(html_content, reset_players=False)
 
-    espn_html = fetch_scorecard_html(match_id, team1, team2, force_refresh=force_refresh_scorecard)
+    espn_html = fetch_scorecard_html(
+        match_id,
+        team1,
+        team2,
+        force_refresh=force_refresh_scorecard,
+        persist_resolved_ids=not require_scorecard_sources,
+    )
     if espn_html:
         soup = BeautifulSoup(espn_html, "html.parser")
         match_obj.parse_espn_bowling_dot_balls(soup, get_last_fetched_espn_scorecard_url(match_id))

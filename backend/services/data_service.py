@@ -38,6 +38,7 @@ PLAYING_XI_STATUS_LOCK = get_cache_lock("playing_xi_status")
 LAST_MATCH_XI_LOCK = get_cache_lock("last_match_xi")
 SCORE_PREDICTION_LOCK = get_cache_lock("score_prediction")
 TEAM_CONTESTANT_LOCK = get_cache_lock("team_contestants")
+MATCH_TEAM_SELECTION_LOCK = get_cache_lock("match_team_selections")
 USER_TEAM_SUMMARY_LOCK = get_cache_lock("user_team_summary")
 
 PLAYER_MATCH_PAYLOAD_CACHE: dict[int, dict] = {}
@@ -45,6 +46,7 @@ PLAYING_XI_STATUS_CACHE: dict[tuple, dict] = {}
 LAST_MATCH_XI_CACHE: dict[tuple[int, str], dict] = {}
 SCORE_PREDICTION_CACHE: dict[int, dict[int, float]] = {}
 TEAM_CONTESTANT_CACHE: dict[int, list[dict]] = {}
+MATCH_TEAM_SELECTION_CACHE: dict[int, list[dict]] = {}
 USER_TEAM_SUMMARY_CACHE: dict[int, dict[int, dict]] = {}
 USER_TEAM_SUMMARY_ALL_LOADED: set[int] = set()
 
@@ -287,18 +289,72 @@ def set_cached_match_contestants(match_id: int, contestants: list[dict]) -> None
         TEAM_CONTESTANT_CACHE[int(match_id)] = copy.deepcopy(contestants)
 
 
+def _fetch_match_team_selection_rows(match_id: int) -> list[dict]:
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT
+            u.id AS user_id,
+            u.name AS user_name,
+            ut.player_id,
+            ut.is_captain,
+            ut.is_vice_captain,
+            p.name AS player_name,
+            p.team,
+            p.role
+        FROM user_teams ut
+        JOIN users u ON u.id = ut.user_id
+        JOIN players p ON p.id = ut.player_id
+        WHERE ut.match_id = ?
+          AND u.is_active = 1
+        ORDER BY u.id, p.team, p.role, p.name
+        """,
+        (int(match_id),),
+    ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def get_cached_match_team_selection_rows(match_id: int) -> list[dict]:
+    with MATCH_TEAM_SELECTION_LOCK:
+        payload = MATCH_TEAM_SELECTION_CACHE.get(int(match_id))
+        if payload is not None:
+            return copy.deepcopy(payload)
+
+    payload = _fetch_match_team_selection_rows(int(match_id))
+    with MATCH_TEAM_SELECTION_LOCK:
+        MATCH_TEAM_SELECTION_CACHE[int(match_id)] = copy.deepcopy(payload)
+        return copy.deepcopy(payload)
+
+
+def refresh_match_team_selection_cache(match_id: int) -> list[dict]:
+    payload = _fetch_match_team_selection_rows(int(match_id))
+    with MATCH_TEAM_SELECTION_LOCK:
+        MATCH_TEAM_SELECTION_CACHE[int(match_id)] = copy.deepcopy(payload)
+        return copy.deepcopy(payload)
+
+
+def invalidate_match_team_selection_cache(match_id: int | None = None) -> None:
+    with MATCH_TEAM_SELECTION_LOCK:
+        if match_id is None:
+            MATCH_TEAM_SELECTION_CACHE.clear()
+        else:
+            MATCH_TEAM_SELECTION_CACHE.pop(int(match_id), None)
+
+
 def invalidate_match_contestant_cache(match_id: int | None = None) -> None:
     with TEAM_CONTESTANT_LOCK:
         if match_id is None:
             TEAM_CONTESTANT_CACHE.clear()
         else:
             TEAM_CONTESTANT_CACHE.pop(int(match_id), None)
+    invalidate_match_team_selection_cache(match_id)
 
 
 def refresh_match_contestant_cache(match_id: int) -> list[dict]:
     grouped = _fetch_team_contestants([int(match_id)])
     contestants = grouped.get(int(match_id), [])
     set_cached_match_contestants(int(match_id), contestants)
+    refresh_match_team_selection_cache(int(match_id))
     return copy.deepcopy(contestants)
 
 
@@ -306,6 +362,11 @@ def prime_contestant_cache(match_ids: list[int] | None = None) -> dict[int, int]
     db = get_db()
     params: list[int] = []
     query = "SELECT id FROM matches"
+    if match_ids is None:
+        invalidate_match_team_selection_cache()
+    else:
+        for match_id in match_ids:
+            invalidate_match_team_selection_cache(int(match_id))
     if match_ids:
         normalized_ids = [int(match_id) for match_id in match_ids]
         placeholders = ",".join("?" * len(normalized_ids))
@@ -731,9 +792,11 @@ def get_match_by_id(match_id: int) -> dict | None:
     return _row_to_dict(row) if row else None
 
 
-def get_stored_cricbuzz_match_id(match_id: int) -> int | None:
+def get_stored_cricbuzz_match_id(match_id: int, *, allow_db_fallback: bool = True) -> int | None:
     value = _get_cached_match_field(int(match_id), "CricbuzzMatchID")
     if value in (None, ""):
+        if not allow_db_fallback:
+            return None
         db = get_db()
         row = db.execute(
             "SELECT cricbuzz_match_id FROM matches WHERE id = ?",
@@ -750,9 +813,11 @@ def get_stored_cricbuzz_match_id(match_id: int) -> int | None:
         return None
 
 
-def get_stored_espn_match_id(match_id: int) -> int | None:
+def get_stored_espn_match_id(match_id: int, *, allow_db_fallback: bool = True) -> int | None:
     value = _get_cached_match_field(int(match_id), "ESPNMatchID")
     if value in (None, ""):
+        if not allow_db_fallback:
+            return None
         db = get_db()
         row = db.execute(
             "SELECT espn_match_id FROM matches WHERE id = ?",
@@ -1168,6 +1233,7 @@ def apply_backups_for_match(match_id: int | str, playing_ids: list[int], substit
 
     if swap_count:
         db.commit()
+        refresh_match_team_selection_cache(mid)
         for changed_user_id in changed_user_ids:
             refresh_user_team_summary_cache(changed_user_id, mid)
     return swap_count

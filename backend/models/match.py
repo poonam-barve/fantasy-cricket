@@ -28,12 +28,22 @@ def clean_team_name(name):
 
 
 class Match:
-    def __init__(self, match_id, team1, team2, registry: PlayerRegistry, match_date: str | None = None):
+    def __init__(
+        self,
+        match_id,
+        team1,
+        team2,
+        registry: PlayerRegistry,
+        match_date: str | None = None,
+        *,
+        log_unknown_players: bool = True,
+    ):
         self.match_id = match_id
         self.team1 = team1
         self.team2 = team2
         self.registry = registry
         self.match_date = match_date or ""
+        self.log_unknown_players = log_unknown_players
         self.players = {}  # pid -> Player
         self.scorecard = []
 
@@ -51,7 +61,7 @@ class Match:
         candidates = self.registry.get_player_candidates(cleaned_name, team)
 
         if len(candidates) <= 1:
-            if not direct_pid:
+            if not direct_pid and self.log_unknown_players:
                 try:
                     data_service.log_unknown_player(
                         cleaned_name,
@@ -80,7 +90,7 @@ class Match:
                 )
             return preferred_pid
 
-        if not direct_pid:
+        if not direct_pid and self.log_unknown_players:
             try:
                 data_service.log_unknown_player(
                     cleaned_name,
