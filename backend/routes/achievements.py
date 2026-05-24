@@ -216,9 +216,13 @@ def _build_response_from_db(db=None) -> dict:
     ).fetchall()
 
     if not rows:
-        return {"categories": []}
+        return {"categories": [], "all_stats": []}
 
     entries = [dict(r) for r in rows]
+
+    # Add total_medals field
+    for e in entries:
+        e["total_medals"] = e["gold"] + e["silver"] + e["bronze"]
 
     def top5(key, secondary_keys=None):
         if secondary_keys:
@@ -226,18 +230,69 @@ def _build_response_from_db(db=None) -> dict:
         else:
             sort_key = lambda x: -x[key]
         sorted_list = sorted(entries, key=sort_key)
-        return [{"user_id": e["user_id"], "name": e["name"], "value": e[key]} for e in sorted_list[:5] if e[key] > 0]
+        # Include all entries tied with the 5th position
+        result = []
+        for e in sorted_list:
+            if e[key] <= 0:
+                continue
+            if len(result) >= 5 and e[key] < result[4]["value"]:
+                break
+            result.append({"user_id": e["user_id"], "name": e["name"], "value": e[key]})
+        return result
+
+    # Compute ranks for all users in each category
+    rank_categories = [
+        ("gold", ["silver", "bronze"]),
+        ("silver", ["gold", "bronze"]),
+        ("bronze", ["gold", "silver"]),
+        ("total_medals", ["gold", "silver"]),
+        ("knockout_wins", None),
+        ("total_points", None),
+        ("highest_score", None),
+        ("predictions_total", None),
+        ("perfect_strike", None),
+        ("elite_precision", None),
+        ("great_call", None),
+    ]
+
+    ranks_by_user: dict[int, dict[str, int]] = defaultdict(dict)
+    for key, secondary in rank_categories:
+        if secondary:
+            sort_key = lambda x: tuple(-x[k] for k in [key] + secondary)
+        else:
+            sort_key = lambda x: -x[key]
+        sorted_list = sorted(entries, key=sort_key)
+        for i, e in enumerate(sorted_list):
+            ranks_by_user[e["user_id"]][key] = i + 1
+
+    # all_stats: per-user stats with ranks (for my_stats lookup)
+    all_stats = []
+    for e in entries:
+        uid = e["user_id"]
+        all_stats.append({
+            "user_id": uid,
+            "name": e["name"],
+            "stats": {
+                "gold": {"value": e["gold"], "rank": ranks_by_user[uid].get("gold", 0)},
+                "silver": {"value": e["silver"], "rank": ranks_by_user[uid].get("silver", 0)},
+                "bronze": {"value": e["bronze"], "rank": ranks_by_user[uid].get("bronze", 0)},
+                "total_medals": {"value": e["total_medals"], "rank": ranks_by_user[uid].get("total_medals", 0)},
+                "knockout_wins": {"value": e["knockout_wins"], "rank": ranks_by_user[uid].get("knockout_wins", 0)},
+                "total_points": {"value": e["total_points"], "rank": ranks_by_user[uid].get("total_points", 0)},
+                "highest_score": {"value": e["highest_score"], "rank": ranks_by_user[uid].get("highest_score", 0)},
+                "predictions_total": {"value": e["predictions_total"], "rank": ranks_by_user[uid].get("predictions_total", 0)},
+                "perfect_strike": {"value": e["perfect_strike"], "rank": ranks_by_user[uid].get("perfect_strike", 0)},
+                "elite_precision": {"value": e["elite_precision"], "rank": ranks_by_user[uid].get("elite_precision", 0)},
+                "great_call": {"value": e["great_call"], "rank": ranks_by_user[uid].get("great_call", 0)},
+            },
+        })
 
     return {
         "categories": [
             {"title": "Most Gold Medals", "icon": "gold", "entries": top5("gold", ["silver", "bronze"])},
             {"title": "Most Silver Medals", "icon": "silver", "entries": top5("silver", ["gold", "bronze"])},
             {"title": "Most Bronze Medals", "icon": "bronze", "entries": top5("bronze", ["gold", "silver"])},
-            {"title": "Most Total Medals", "icon": "medals",
-             "entries": (lambda: sorted(
-                 [{"user_id": e["user_id"], "name": e["name"], "value": e["gold"] + e["silver"] + e["bronze"]} for e in entries],
-                 key=lambda x: -x["value"]
-             )[:5])()},
+            {"title": "Most Total Medals", "icon": "medals", "entries": top5("total_medals", ["gold", "silver"])},
             {"title": "Knockout Battle Wins", "icon": "trophy", "entries": top5("knockout_wins")},
             {"title": "Most Total Points", "icon": "points", "entries": top5("total_points")},
             {"title": "Highest Match Score", "icon": "fire", "entries": top5("highest_score")},
@@ -245,7 +300,8 @@ def _build_response_from_db(db=None) -> dict:
             {"title": "Perfect Strike", "icon": "perfect", "entries": top5("perfect_strike")},
             {"title": "Elite Precision", "icon": "elite", "entries": top5("elite_precision")},
             {"title": "Great Call", "icon": "great", "entries": top5("great_call")},
-        ]
+        ],
+        "all_stats": all_stats,
     }
 
 
@@ -255,21 +311,32 @@ async def get_achievements(user: dict = Depends(get_current_user)):
 
     with _cache_lock:
         if _cached_response is not None:
-            return _cached_response
+            data = _cached_response
+        else:
+            data = None
 
-    # Try loading from DB (fast path after restart)
-    db = get_db()
-    has_data = db.execute("SELECT 1 FROM achievement_stats LIMIT 1").fetchone()
-    if has_data:
-        response = _build_response_from_db(db)
-        with _cache_lock:
-            _cached_response = response
-        return response
+    if data is None:
+        # Try loading from DB (fast path after restart)
+        db = get_db()
+        has_data = db.execute("SELECT 1 FROM achievement_stats LIMIT 1").fetchone()
+        if has_data:
+            data = _build_response_from_db(db)
+            with _cache_lock:
+                _cached_response = data
+        else:
+            # Cold start: full recompute
+            _full_recompute()
+            with _cache_lock:
+                data = _cached_response or {"categories": [], "all_stats": []}
 
-    # Cold start: full recompute
-    _full_recompute()
-    with _cache_lock:
-        return _cached_response or {"categories": []}
+    # Extract current user's stats
+    my_stats = None
+    for s in data.get("all_stats", []):
+        if s["user_id"] == user["id"]:
+            my_stats = s["stats"]
+            break
+
+    return {"categories": data["categories"], "my_stats": my_stats}
 
 
 @router.post("/admin/achievements/recalculate")
