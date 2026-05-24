@@ -715,6 +715,24 @@ def init_db():
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS achievement_stats (
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                gold INTEGER NOT NULL DEFAULT 0,
+                silver INTEGER NOT NULL DEFAULT 0,
+                bronze INTEGER NOT NULL DEFAULT 0,
+                total_points REAL NOT NULL DEFAULT 0,
+                highest_score REAL NOT NULL DEFAULT 0,
+                knockout_wins INTEGER NOT NULL DEFAULT 0,
+                predictions_total INTEGER NOT NULL DEFAULT 0,
+                perfect_strike INTEGER NOT NULL DEFAULT 0,
+                elite_precision INTEGER NOT NULL DEFAULT 0,
+                great_call INTEGER NOT NULL DEFAULT 0,
+                last_computed_match_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(user_id)
+            )
+        """)
+
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_user_match ON user_teams(user_id, match_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_match ON user_teams(match_id)")
@@ -873,6 +891,23 @@ def init_db():
                 updated_at TEXT NOT NULL,
                 updated_by INTEGER REFERENCES users(id),
                 UNIQUE(user_id, player_id)
+            );
+        """)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS achievement_stats (
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                gold INTEGER NOT NULL DEFAULT 0,
+                silver INTEGER NOT NULL DEFAULT 0,
+                bronze INTEGER NOT NULL DEFAULT 0,
+                total_points REAL NOT NULL DEFAULT 0,
+                highest_score REAL NOT NULL DEFAULT 0,
+                knockout_wins INTEGER NOT NULL DEFAULT 0,
+                predictions_total INTEGER NOT NULL DEFAULT 0,
+                perfect_strike INTEGER NOT NULL DEFAULT 0,
+                elite_precision INTEGER NOT NULL DEFAULT 0,
+                great_call INTEGER NOT NULL DEFAULT 0,
+                last_computed_match_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(user_id)
             );
         """)
         _ensure_user_teams_updated_at_sqlite(conn)
