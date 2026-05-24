@@ -1,3 +1,4 @@
+import threading
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends
@@ -7,9 +8,18 @@ from backend.middleware.auth import get_current_user
 
 router = APIRouter(prefix="/api", tags=["achievements"])
 
+# In-memory cache: invalidated when a match completes
+_cache_lock = threading.Lock()
+_cached_response: dict | None = None
 
-@router.get("/achievements")
-async def get_achievements(user: dict = Depends(get_current_user)):
+
+def invalidate_achievements_cache():
+    global _cached_response
+    with _cache_lock:
+        _cached_response = None
+
+
+def _compute_achievements() -> dict:
     db = get_db()
 
     # --- Medals: compute from contestant_points ---
@@ -36,7 +46,7 @@ async def get_achievements(user: dict = Depends(get_current_user)):
     highest_score: list[dict] = []
 
     for match_id, contestants in matches_data.items():
-        # Already sorted by points DESC from SQL
+        prev_rank = 1
         for i, c in enumerate(contestants):
             uid = c["user_id"]
             medals[uid]["name"] = c["name"]
@@ -79,11 +89,6 @@ async def get_achievements(user: dict = Depends(get_current_user)):
     ).fetchall()
 
     # --- Build categories ---
-    def top_n(data, key, n=5):
-        sorted_list = sorted(data, key=lambda x: -x[key])
-        return sorted_list[:n]
-
-    # Medal leaderboards
     medal_list = [
         {"user_id": uid, "name": d["name"], "gold": d["gold"], "silver": d["silver"], "bronze": d["bronze"],
          "total": d["gold"] + d["silver"] + d["bronze"]}
@@ -108,42 +113,57 @@ async def get_achievements(user: dict = Depends(get_current_user)):
     # Knockout wins
     knockout_top = [{"user_id": r["user_id"], "name": r["name"], "value": r["wins"]} for r in kb_rows][:5]
 
-    categories = [
-        {
-            "title": "Most Gold Medals",
-            "icon": "gold",
-            "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["gold"]} for e in gold_top],
-        },
-        {
-            "title": "Most Silver Medals",
-            "icon": "silver",
-            "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["silver"]} for e in silver_top],
-        },
-        {
-            "title": "Most Bronze Medals",
-            "icon": "bronze",
-            "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["bronze"]} for e in bronze_top],
-        },
-        {
-            "title": "Most Total Medals",
-            "icon": "medals",
-            "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["total"]} for e in total_medals_top],
-        },
-        {
-            "title": "Knockout Battle Wins",
-            "icon": "trophy",
-            "entries": knockout_top,
-        },
-        {
-            "title": "Most Total Points",
-            "icon": "points",
-            "entries": points_top,
-        },
-        {
-            "title": "Highest Match Score",
-            "icon": "fire",
-            "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["value"]} for e in highest_score_top],
-        },
-    ]
+    return {
+        "categories": [
+            {
+                "title": "Most Gold Medals",
+                "icon": "gold",
+                "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["gold"]} for e in gold_top],
+            },
+            {
+                "title": "Most Silver Medals",
+                "icon": "silver",
+                "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["silver"]} for e in silver_top],
+            },
+            {
+                "title": "Most Bronze Medals",
+                "icon": "bronze",
+                "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["bronze"]} for e in bronze_top],
+            },
+            {
+                "title": "Most Total Medals",
+                "icon": "medals",
+                "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["total"]} for e in total_medals_top],
+            },
+            {
+                "title": "Knockout Battle Wins",
+                "icon": "trophy",
+                "entries": knockout_top,
+            },
+            {
+                "title": "Most Total Points",
+                "icon": "points",
+                "entries": points_top,
+            },
+            {
+                "title": "Highest Match Score",
+                "icon": "fire",
+                "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["value"]} for e in highest_score_top],
+            },
+        ]
+    }
 
-    return {"categories": categories}
+
+@router.get("/achievements")
+async def get_achievements(user: dict = Depends(get_current_user)):
+    global _cached_response
+    with _cache_lock:
+        if _cached_response is not None:
+            return _cached_response
+
+    result = _compute_achievements()
+
+    with _cache_lock:
+        _cached_response = result
+
+    return result

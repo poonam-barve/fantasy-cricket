@@ -72,6 +72,12 @@ def _invalidate_matches_response_cache():
     invalidate_matches_response_cache()
 
 
+def _invalidate_achievements_cache():
+    from backend.routes.achievements import invalidate_achievements_cache
+
+    invalidate_achievements_cache()
+
+
 class Tournament:
     def __init__(self):
         self.matches = {}
@@ -264,6 +270,9 @@ class Tournament:
             on_match_completed(int(match_id))
         except Exception as exc:
             self._scheduler_log("SCORE", f"weekend tournament hook failed for match {match_id}: {exc}")
+
+        # Invalidate achievements cache
+        _invalidate_achievements_cache()
 
         return True
 
