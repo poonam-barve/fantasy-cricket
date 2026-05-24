@@ -23,6 +23,10 @@ const ICON_MAP: Record<string, { emoji: string; color: string; bg: string }> = {
   trophy: { emoji: '🏆', color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/20' },
   points: { emoji: '⭐', color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20' },
   fire: { emoji: '🔥', color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
+  predictions: { emoji: '🎯', color: 'text-cyan-400', bg: 'bg-cyan-500/10 border-cyan-500/20' },
+  perfect: { emoji: '💎', color: 'text-pink-400', bg: 'bg-pink-500/10 border-pink-500/20' },
+  elite: { emoji: '🎯', color: 'text-indigo-400', bg: 'bg-indigo-500/10 border-indigo-500/20' },
+  great: { emoji: '👏', color: 'text-teal-400', bg: 'bg-teal-500/10 border-teal-500/20' },
 };
 
 function CategoryCard({ category, myUserId }: { category: AchievementCategory; myUserId: number | null }) {

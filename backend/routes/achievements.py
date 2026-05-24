@@ -1,5 +1,4 @@
 import threading
-from collections import defaultdict
 
 from fastapi import APIRouter, Depends
 
@@ -20,61 +19,45 @@ def invalidate_achievements_cache():
 
 
 def _compute_achievements() -> dict:
+    from backend.routes.leaderboard import _load_effective_match_points, _compute_medals
+
     db = get_db()
+    effective_match_points = _load_effective_match_points(db)
 
-    # --- Medals: compute from contestant_points ---
-    rows = db.execute(
-        """
-        SELECT cp.user_id, u.name, cp.match_id, cp.points
-        FROM contestant_points cp
-        JOIN users u ON u.id = cp.user_id
-        JOIN matches m ON m.id = cp.match_id
-        WHERE m.status = 'completed'
-        ORDER BY cp.match_id, cp.points DESC
-        """
-    ).fetchall()
+    # --- Medals (same logic as leaderboard) ---
+    medals_by_user = _compute_medals(effective_match_points)
 
-    # Group by match and rank
-    matches_data: dict[int, list[dict]] = defaultdict(list)
-    for r in rows:
-        matches_data[r["match_id"]].append(
-            {"user_id": r["user_id"], "name": r["name"], "points": r["points"]}
-        )
-
-    medals: dict[int, dict] = defaultdict(lambda: {"gold": 0, "silver": 0, "bronze": 0, "name": ""})
-    total_points: dict[int, dict] = defaultdict(lambda: {"total": 0.0, "name": ""})
+    # Build name map from effective data
+    name_map: dict[int, str] = {}
+    total_points: dict[int, float] = {}
     highest_score: list[dict] = []
 
-    for match_id, contestants in matches_data.items():
-        prev_rank = 1
-        for i, c in enumerate(contestants):
+    for match_id, contestants in effective_match_points.items():
+        if not contestants:
+            continue
+        for c in contestants:
             uid = c["user_id"]
-            medals[uid]["name"] = c["name"]
-            total_points[uid]["name"] = c["name"]
-            total_points[uid]["total"] += c["points"]
+            name_map[uid] = c["name"]
+            total_points[uid] = total_points.get(uid, 0.0) + float(c["points"])
 
-            # Rank with ties
-            if i == 0:
-                rank = 1
-            elif c["points"] == contestants[i - 1]["points"]:
-                rank = prev_rank
-            else:
-                rank = i + 1
-            prev_rank = rank
+        # Highest single match score (top scorer of this match)
+        top = max(contestants, key=lambda x: x["points"])
+        highest_score.append(
+            {"user_id": top["user_id"], "name": top["name"], "value": round(float(top["points"]), 1), "match_id": match_id}
+        )
 
-            if rank == 1:
-                medals[uid]["gold"] += 1
-            elif rank == 2:
-                medals[uid]["silver"] += 1
-            elif rank == 3:
-                medals[uid]["bronze"] += 1
+    # --- Prediction Bonuses ---
+    from backend.services.data_service import compute_prediction_bonuses
+    from collections import defaultdict
 
-        # Track highest single score
-        if contestants:
-            top = contestants[0]
-            highest_score.append(
-                {"user_id": top["user_id"], "name": top["name"], "value": top["points"], "match_id": match_id}
-            )
+    prediction_counts: dict[int, dict[str, int]] = defaultdict(lambda: {"Perfect Strike": 0, "Elite Precision": 0, "Great Call": 0, "total": 0})
+    completed_match_ids = list(effective_match_points.keys())
+    for mid in completed_match_ids:
+        bonuses = compute_prediction_bonuses(mid)
+        for uid, info in bonuses.items():
+            label = info["label"]
+            prediction_counts[uid][label] = prediction_counts[uid].get(label, 0) + 1
+            prediction_counts[uid]["total"] += 1
 
     # --- Knockout Battle Wins ---
     kb_rows = db.execute(
@@ -90,9 +73,9 @@ def _compute_achievements() -> dict:
 
     # --- Build categories ---
     medal_list = [
-        {"user_id": uid, "name": d["name"], "gold": d["gold"], "silver": d["silver"], "bronze": d["bronze"],
+        {"user_id": uid, "name": name_map.get(uid, ""), "gold": d["gold"], "silver": d["silver"], "bronze": d["bronze"],
          "total": d["gold"] + d["silver"] + d["bronze"]}
-        for uid, d in medals.items()
+        for uid, d in medals_by_user.items()
     ]
 
     gold_top = sorted(medal_list, key=lambda x: (-x["gold"], -x["silver"], -x["bronze"]))[:5]
@@ -102,8 +85,8 @@ def _compute_achievements() -> dict:
 
     # Points leaderboard
     points_list = [
-        {"user_id": uid, "name": d["name"], "value": round(d["total"], 1)}
-        for uid, d in total_points.items()
+        {"user_id": uid, "name": name_map.get(uid, ""), "value": round(pts, 1)}
+        for uid, pts in total_points.items()
     ]
     points_top = sorted(points_list, key=lambda x: -x["value"])[:5]
 
@@ -112,6 +95,17 @@ def _compute_achievements() -> dict:
 
     # Knockout wins
     knockout_top = [{"user_id": r["user_id"], "name": r["name"], "value": r["wins"]} for r in kb_rows][:5]
+
+    # Prediction leaderboards
+    pred_list = [
+        {"user_id": uid, "name": name_map.get(uid, ""), **counts}
+        for uid, counts in prediction_counts.items()
+        if uid in name_map
+    ]
+    perfect_top = sorted(pred_list, key=lambda x: -x["Perfect Strike"])[:5]
+    elite_top = sorted(pred_list, key=lambda x: -x["Elite Precision"])[:5]
+    great_top = sorted(pred_list, key=lambda x: -x["Great Call"])[:5]
+    predictions_total_top = sorted(pred_list, key=lambda x: -x["total"])[:5]
 
     return {
         "categories": [
@@ -149,6 +143,26 @@ def _compute_achievements() -> dict:
                 "title": "Highest Match Score",
                 "icon": "fire",
                 "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["value"]} for e in highest_score_top],
+            },
+            {
+                "title": "Most Predictions Won",
+                "icon": "predictions",
+                "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["total"]} for e in predictions_total_top if e["total"] > 0],
+            },
+            {
+                "title": "Perfect Strike",
+                "icon": "perfect",
+                "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["Perfect Strike"]} for e in perfect_top if e["Perfect Strike"] > 0],
+            },
+            {
+                "title": "Elite Precision",
+                "icon": "elite",
+                "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["Elite Precision"]} for e in elite_top if e["Elite Precision"] > 0],
+            },
+            {
+                "title": "Great Call",
+                "icon": "great",
+                "entries": [{"user_id": e["user_id"], "name": e["name"], "value": e["Great Call"]} for e in great_top if e["Great Call"] > 0],
             },
         ]
     }
