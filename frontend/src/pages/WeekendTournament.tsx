@@ -305,7 +305,7 @@ function BracketDiagram({ rounds, isMe, numRounds }: { rounds: WeekendTournament
           <div className="flex flex-col items-center justify-center shrink-0 pl-2" style={{ height: totalHeight }}>
             <span className="text-3xl mb-1">&#x1F3C6;</span>
             <span className="text-xs font-bold text-amber-400 text-center">{winnerName}</span>
-            <span className="text-[9px] text-amber-400/60 mt-0.5">Weekend Champion</span>
+            <span className="text-[9px] text-amber-400/60 mt-0.5">Knockout Champion</span>
           </div>
         )}
       </div>
@@ -322,12 +322,12 @@ export default function WeekendTournamentPage() {
   const { profile } = useAuth();
 
   const contestRules = [
-    'Weekend Battles run whenever there are matches on Saturday and/or Sunday. More matches = bigger bracket!',
+    'Knockout Battles run whenever there are matches on Saturday and/or Sunday. More matches = bigger bracket!',
     'The last match before Saturday becomes the qualifier. Top 2^n users qualify, where n = number of weekend matches (e.g. 4 matches → 16 players, 3 → 8, 2 → 4).',
     'Players are randomly drawn into a knockout bracket. The bracket is fixed from the draw — adjacent winners always play each other.',
-    'Each weekend match is one knockout round. Winners advance until the Final decides the Weekend Champion.',
-    'Weekend battle head-to-heads use raw match fantasy points only. Score prediction bonuses do not affect bracket results and are counted separately on the main leaderboard.',
-    'If scores are tied, the higher overall leaderboard rank wins the head-to-head. The Weekend Champion gets +200 bonus points on the leaderboard!',
+    'Each weekend match is one knockout round. Winners advance until the Final decides the Knockout Champion.',
+    'Knockout Battle head-to-heads use raw match fantasy points only. Score prediction bonuses do not affect bracket results and are counted separately on the main leaderboard.',
+    'If scores are tied, the higher overall leaderboard rank wins the head-to-head. The Knockout Champion gets +200 bonus points on the leaderboard!',
   ];
 
   const fetchData = async () => {
@@ -372,7 +372,7 @@ export default function WeekendTournamentPage() {
     <div>
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold text-white">Weekend Battle</h2>
+        <h2 className="text-xl font-bold text-white">Knockout Battle</h2>
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -402,15 +402,15 @@ export default function WeekendTournamentPage() {
       ) : !tournament || tournament.status === 'none' ? (
         <div className="text-center py-16">
           <span className="text-4xl mb-4 block">&#x1F3CF;</span>
-          <p className="text-white/40 text-sm">No weekend competition available right now.</p>
-          <p className="text-white/25 text-xs mt-1">Competitions run on weekends with matches on Saturday and/or Sunday.</p>
+          <p className="text-white/40 text-sm">No knockout battle available right now.</p>
+          <p className="text-white/25 text-xs mt-1">Battles run on weekends with matches on Saturday and/or Sunday.</p>
         </div>
       ) : (
         <>
           {/* Status Banner */}
           <div className="bg-white/5 border border-white/10 rounded-2xl p-4 mb-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold text-white">Weekend Champion</span>
+              <span className="text-sm font-semibold text-white">Knockout Champion</span>
               <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${statusLabel(tournament.status).color}`}>
                 {statusLabel(tournament.status).text}
               </span>
@@ -422,7 +422,7 @@ export default function WeekendTournamentPage() {
                 <span className="text-3xl">&#x1F3C6;</span>
                 <div>
                   <p className="text-amber-400 text-sm font-bold">{tournament.winner.name}</p>
-                  <p className="text-amber-400/60 text-[10px]">Weekend Champion</p>
+                  <p className="text-amber-400/60 text-[10px]">Knockout Champion</p>
                 </div>
               </div>
             )}
@@ -520,7 +520,7 @@ export default function WeekendTournamentPage() {
           <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#07130d]/98 shadow-2xl shadow-black/60">
             <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-purple-300">Weekend Battle</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-purple-300">Knockout Battle</p>
                 <h3 className="text-lg font-bold text-white">What's this?</h3>
               </div>
               <button

@@ -415,7 +415,7 @@ export default function DashboardPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
-            <span className="w-full text-center text-purple-300 text-xs font-medium leading-tight">Weekend Battle</span>
+            <span className="w-full text-center text-purple-300 text-xs font-medium leading-tight">Knockout Battle</span>
           </Link>
           {superTeamStatus?.context?.visible && (
             <Link to="/super-team"
