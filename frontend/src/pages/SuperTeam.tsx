@@ -5,6 +5,7 @@ import { useToast } from '../components/Toast';
 import type { Player } from '../types';
 
 type Role = 'Wicketkeeper' | 'Batter' | 'AllRounder' | 'Bowler';
+type PlayerView = Role | 'Squad';
 type SuperContext = {
   visible: boolean;
   enabled: boolean;
@@ -97,7 +98,8 @@ export default function SuperTeamPage() {
   const [contestants, setContestants] = useState<Contestant[]>([]);
   const [missingUsers, setMissingUsers] = useState<MissingUser[]>([]);
   const [contestantsTab, setContestantsTab] = useState<'playing' | 'missing'>('playing');
-  const [activeRole, setActiveRole] = useState<Role>('Wicketkeeper');
+  const [activeTeam, setActiveTeam] = useState<string | null>(null);
+  const [activePlayerView, setActivePlayerView] = useState<PlayerView>('Squad');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showRules, setShowRules] = useState(false);
@@ -146,10 +148,24 @@ export default function SuperTeamPage() {
     void load();
   }, [load]);
 
+  const allPoolPlayers = useMemo(() => roles.flatMap((role) => playersByRole[role] || []), [playersByRole]);
+
+  const availableTeams = useMemo(() => {
+    const teams = Array.from(new Set(allPoolPlayers.map((player) => player.team).filter(Boolean)));
+    return teams.sort();
+  }, [allPoolPlayers]);
+
+  useEffect(() => {
+    if (availableTeams.length === 0) {
+      setActiveTeam(null);
+      return;
+    }
+    setActiveTeam((current) => (current && availableTeams.includes(current) ? current : availableTeams[0]));
+  }, [availableTeams]);
+
   const selectedPlayers = useMemo(() => {
-    const all = roles.flatMap((role) => playersByRole[role] || []);
-    return all.filter((player) => selected.has(player.id));
-  }, [playersByRole, selected]);
+    return allPoolPlayers.filter((player) => selected.has(player.id));
+  }, [allPoolPlayers, selected]);
 
   const sortPlayers = (players: Player[]) => {
     return [...players].sort((a, b) => {
@@ -161,18 +177,22 @@ export default function SuperTeamPage() {
     });
   };
 
-  const visibleRolePlayers = useMemo(() => {
-    return sortPlayers(playersByRole[activeRole] || []);
-  }, [activeRole, playersByRole]);
+  const visibleTeamPlayers = useMemo(() => {
+    return sortPlayers(allPoolPlayers.filter((player) => {
+      if (activeTeam && player.team !== activeTeam) return false;
+      if (activePlayerView !== 'Squad' && player.role !== activePlayerView) return false;
+      return true;
+    }));
+  }, [activePlayerView, activeTeam, allPoolPlayers]);
 
   const normalizedPlayerSearch = playerSearch.trim().toLowerCase();
   const playerSearchResults = useMemo(() => {
     if (!normalizedPlayerSearch) return [];
-    return sortPlayers(roles.flatMap((role) => playersByRole[role] || []).filter((player) => {
+    return sortPlayers(allPoolPlayers.filter((player) => {
       const haystack = `${player.name} ${player.team} ${player.role}`.toLowerCase();
       return haystack.includes(normalizedPlayerSearch);
     }));
-  }, [normalizedPlayerSearch, playersByRole]);
+  }, [allPoolPlayers, normalizedPlayerSearch]);
 
   const teamCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -211,9 +231,30 @@ export default function SuperTeamPage() {
     return '';
   })();
 
+  const playerSelectionBlockReason = (player: Player) => {
+    if (selected.has(player.id)) return '';
+    if (!context?.can_edit) return 'Selection is locked.';
+    if (selected.size >= SUPER_TEAM_SIZE) return `Maximum ${SUPER_TEAM_SIZE} players selected.`;
+    const teamLimit = context.substitution_open ? 4 : PLAYERS_PER_TEAM;
+    if ((teamCounts[player.team] || 0) >= teamLimit) {
+      return context.substitution_open
+        ? 'Maximum 4 players from this team.'
+        : `Already selected ${PLAYERS_PER_TEAM} players from this team.`;
+    }
+    return '';
+  };
+
   const togglePlayer = (playerId: number) => {
     if (!context?.can_edit) return;
     setOpenHistoryPlayerId(null);
+    const player = allPoolPlayers.find((item) => item.id === playerId);
+    if (player) {
+      const blockReason = playerSelectionBlockReason(player);
+      if (blockReason) {
+        toast(blockReason, 'error');
+        return;
+      }
+    }
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(playerId)) {
@@ -494,51 +535,70 @@ export default function SuperTeamPage() {
 
       {showSelection && (
         <>
-          <div className="grid gap-2 rounded-2xl border border-white/10 bg-white/5 p-3 sm:grid-cols-4">
-            <div className="rounded-xl bg-black/30 p-3 text-center">
-              <p className="text-[11px] text-white/35">Selected</p>
-              <p className="text-lg font-bold text-white">{selected.size}/{SUPER_TEAM_SIZE}</p>
-            </div>
-            <div className="rounded-xl bg-black/30 p-3 text-center">
-              <p className="text-[11px] text-white/35">Bowlers</p>
-              <p className={`text-lg font-bold ${bowlerCount >= MIN_BOWLERS ? 'text-blue-300' : 'text-amber-300'}`}>{bowlerCount}/{MIN_BOWLERS}</p>
-            </div>
-            <div className="rounded-xl bg-black/30 p-3 text-center">
-              <p className="text-[11px] text-white/35">C / VC</p>
-              <p className={`text-lg font-bold ${captain && viceCaptain && captain !== viceCaptain ? 'text-blue-300' : 'text-amber-300'}`}>
-                {(captain ? 1 : 0) + (viceCaptain ? 1 : 0)}/2
-              </p>
-            </div>
-            {(context.teams || []).map((team) => (
-              <div key={team} className="rounded-xl bg-black/30 p-3 text-center">
-                <p className="truncate text-[11px] text-white/35">{team}</p>
-                <p className={`text-lg font-bold ${
-                  context.substitution_open
-                    ? (teamCounts[team] || 0) <= 4 ? 'text-blue-300' : 'text-amber-300'
-                    : teamCounts[team] === PLAYERS_PER_TEAM ? 'text-blue-300' : 'text-amber-300'
-                }`}>
-                  {teamCounts[team] || 0}/{context.substitution_open ? 4 : PLAYERS_PER_TEAM}
+          <div className="-mx-4 overflow-x-auto px-4">
+            <div className="flex min-w-max gap-2 rounded-xl border border-white/10 bg-white/5 p-2">
+              <div className="min-w-20 rounded-lg bg-black/30 px-3 py-2 text-center">
+                <p className="text-[11px] text-white/35">Selected</p>
+                <p className="text-sm font-bold text-white">{selected.size}/{SUPER_TEAM_SIZE}</p>
+              </div>
+              <div className="min-w-20 rounded-lg bg-black/30 px-3 py-2 text-center">
+                <p className="text-[11px] text-white/35">Bowlers</p>
+                <p className={`text-sm font-bold ${bowlerCount >= MIN_BOWLERS ? 'text-blue-300' : 'text-amber-300'}`}>{bowlerCount}/{MIN_BOWLERS}</p>
+              </div>
+              <div className="min-w-20 rounded-lg bg-black/30 px-3 py-2 text-center">
+                <p className="text-[11px] text-white/35">C / VC</p>
+                <p className={`text-sm font-bold ${captain && viceCaptain && captain !== viceCaptain ? 'text-blue-300' : 'text-amber-300'}`}>
+                  {(captain ? 1 : 0) + (viceCaptain ? 1 : 0)}/2
                 </p>
               </div>
-            ))}
+              {(context.teams || []).map((team) => (
+                <div key={team} className="min-w-20 rounded-lg bg-black/30 px-3 py-2 text-center">
+                  <p className="truncate text-[11px] text-white/35">{team}</p>
+                  <p className={`text-sm font-bold ${
+                    context.substitution_open
+                      ? (teamCounts[team] || 0) <= 4 ? 'text-blue-300' : 'text-amber-300'
+                      : teamCounts[team] === PLAYERS_PER_TEAM ? 'text-blue-300' : 'text-amber-300'
+                  }`}>
+                    {teamCounts[team] || 0}/{context.substitution_open ? 4 : PLAYERS_PER_TEAM}
+                  </p>
+                </div>
+              ))}
+            </div>
           </div>
 
-          <div className="flex gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
-            {roles.map((role) => (
-              <button key={role} onClick={() => setActiveRole(role)} className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition ${activeRole === role ? 'bg-white text-black' : 'text-white/55 hover:bg-white/10'}`}>
-                {role === 'Wicketkeeper' ? 'WK' : role === 'Batter' ? 'BAT' : role === 'AllRounder' ? 'AR' : 'BALL'}
+          <div className="-mx-4 overflow-x-auto px-4">
+            <div className="flex min-w-max gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
+              {availableTeams.map((team) => (
+                <button key={team} type="button" onClick={() => setActiveTeam(team)} className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${activeTeam === team ? 'bg-white text-black' : 'text-white/55 hover:bg-white/10'}`}>
+                  {team}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="-mx-4 overflow-x-auto px-4">
+            <div className="flex min-w-max gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
+              {(['Squad', ...roles] as PlayerView[]).map((view) => (
+                <button
+                  key={view}
+                  type="button"
+                  onClick={() => setActivePlayerView(view)}
+                  className={`min-w-14 rounded-lg px-3 py-2 text-xs font-semibold transition ${activePlayerView === view ? 'bg-white text-black' : 'text-white/55 hover:bg-white/10'}`}
+                >
+                  {view === 'Squad' ? 'Squad' : view === 'Wicketkeeper' ? 'WK' : view === 'Batter' ? 'BAT' : view === 'AllRounder' ? 'AR' : 'BALL'}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setShowPlayerSearch(true)}
+                className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-white/60 transition hover:bg-white/10 hover:text-white"
+                aria-label="Search players"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m21 21-4.35-4.35m1.85-5.15a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z" />
+                </svg>
               </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => setShowPlayerSearch(true)}
-              className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-white/60 transition hover:bg-white/10 hover:text-white"
-              aria-label="Search players"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m21 21-4.35-4.35m1.85-5.15a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z" />
-              </svg>
-            </button>
+            </div>
           </div>
 
           {showPlayerSearch && (
@@ -568,15 +628,20 @@ export default function SuperTeamPage() {
           )}
 
           <div className="grid gap-3 sm:grid-cols-2">
-            {(showPlayerSearch && normalizedPlayerSearch ? playerSearchResults : visibleRolePlayers).map((player) => {
+            {(showPlayerSearch && normalizedPlayerSearch ? playerSearchResults : visibleTeamPlayers).map((player) => {
               const isSelected = selected.has(player.id);
               const isCaptain = captain === player.id;
               const isViceCaptain = viceCaptain === player.id;
+              const blockReason = playerSelectionBlockReason(player);
+              const isSelectionBlocked = Boolean(blockReason);
               return (
                 <div
                   key={player.id}
                   onClick={() => togglePlayer(player.id)}
-                  className={`relative cursor-pointer rounded-2xl border p-4 text-left transition ${openHistoryPlayerId === player.id ? 'z-40' : 'z-10'} ${isSelected ? 'border-blue-400/60 bg-blue-500/15' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+                  title={blockReason || undefined}
+                  className={`relative rounded-2xl border p-4 text-left transition ${openHistoryPlayerId === player.id ? 'z-40' : 'z-10'} ${
+                    isSelectionBlocked ? 'cursor-not-allowed border-white/5 bg-white/[0.025]' : 'cursor-pointer'
+                  } ${isSelected ? 'border-blue-400/60 bg-blue-500/15' : isSelectionBlocked ? '' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
                 >
                   <div className="flex items-start gap-3">
                     <PlayerHistoryToggle
@@ -585,11 +650,11 @@ export default function SuperTeamPage() {
                       isSelected={isSelected}
                       onToggle={() => setOpenHistoryPlayerId((current) => (current === player.id ? null : player.id))}
                     />
-                    <div className="min-w-0 flex-1">
+                    <div className={`min-w-0 flex-1 ${isSelectionBlocked ? 'opacity-45' : ''}`}>
                       <p className="truncate text-sm font-semibold text-white">{player.name}</p>
                       <p className="text-xs text-white/40">{player.team} | {player.role}</p>
                     </div>
-                    <div className="flex flex-shrink-0 items-center gap-1">
+                    <div className={`flex flex-shrink-0 items-center gap-1 ${isSelectionBlocked ? 'opacity-45' : ''}`}>
                       {isSelected && (
                         <>
                           <button
@@ -617,11 +682,14 @@ export default function SuperTeamPage() {
                         </>
                       )}
                       <span className={`rounded-lg px-2 py-1 text-xs font-bold ${isSelected ? 'bg-blue-400 text-black' : 'bg-white/10 text-white/40'}`}>
-                        {isSelected ? 'Selected' : '+'}
+                        {isSelected ? 'Selected' : isSelectionBlocked ? 'Full' : '+'}
                       </span>
                     </div>
                   </div>
-                  <p className="mt-3 text-xs text-white/55">{statText(player)}</p>
+                  <p className={`mt-3 text-xs text-white/55 ${isSelectionBlocked ? 'opacity-45' : ''}`}>{statText(player)}</p>
+                  {isSelectionBlocked && (
+                    <p className="mt-2 text-[11px] font-medium text-white/35">{blockReason}</p>
+                  )}
                 </div>
               );
             })}
