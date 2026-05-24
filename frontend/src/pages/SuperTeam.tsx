@@ -38,6 +38,7 @@ type MyTeamPlayer = { player_id: number | string; is_captain?: boolean; is_vice_
 
 const roles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder', 'Bowler'];
 const requiredRoles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder'];
+const MY_TEAM_TAB = 'My Team';
 const SUPER_TEAM_SIZE = 12;
 const PLAYERS_PER_TEAM = 3;
 const MIN_BOWLERS = 4;
@@ -160,7 +161,7 @@ export default function SuperTeamPage() {
       setActiveTeam(null);
       return;
     }
-    setActiveTeam((current) => (current && availableTeams.includes(current) ? current : availableTeams[0]));
+    setActiveTeam((current) => (current === MY_TEAM_TAB || (current && availableTeams.includes(current)) ? current : availableTeams[0]));
   }, [availableTeams]);
 
   const selectedPlayers = useMemo(() => {
@@ -184,6 +185,7 @@ export default function SuperTeamPage() {
       return true;
     }));
   }, [activePlayerView, activeTeam, allPoolPlayers]);
+  const visibleSelectionPlayers = activeTeam === MY_TEAM_TAB ? sortPlayers(selectedPlayers) : visibleTeamPlayers;
 
   const normalizedPlayerSearch = playerSearch.trim().toLowerCase();
   const playerSearchResults = useMemo(() => {
@@ -568,14 +570,38 @@ export default function SuperTeamPage() {
 
           <div className="-mx-4 overflow-x-auto px-4">
             <div className="flex min-w-max gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTeam(MY_TEAM_TAB);
+                  setShowPlayerSearch(false);
+                  setPlayerSearch('');
+                  setOpenHistoryPlayerId(null);
+                }}
+                className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${activeTeam === MY_TEAM_TAB ? 'bg-white text-black' : 'text-white/55 hover:bg-white/10'}`}
+              >
+                My Team
+                <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${activeTeam === MY_TEAM_TAB ? 'bg-black/10 text-black/70' : 'bg-white/10 text-white/60'}`}>
+                  {selected.size}
+                </span>
+              </button>
               {availableTeams.map((team) => (
-                <button key={team} type="button" onClick={() => setActiveTeam(team)} className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${activeTeam === team ? 'bg-white text-black' : 'text-white/55 hover:bg-white/10'}`}>
+                <button
+                  key={team}
+                  type="button"
+                  onClick={() => {
+                    setActiveTeam(team);
+                    setOpenHistoryPlayerId(null);
+                  }}
+                  className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${activeTeam === team ? 'bg-white text-black' : 'text-white/55 hover:bg-white/10'}`}
+                >
                   {team}
                 </button>
               ))}
             </div>
           </div>
 
+          {activeTeam !== MY_TEAM_TAB && (
           <div className="-mx-4 overflow-x-auto px-4">
             <div className="flex min-w-max gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
               {(['Squad', ...roles] as PlayerView[]).map((view) => (
@@ -600,6 +626,7 @@ export default function SuperTeamPage() {
               </button>
             </div>
           </div>
+          )}
 
           {showPlayerSearch && (
             <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2">
@@ -628,7 +655,7 @@ export default function SuperTeamPage() {
           )}
 
           <div className="grid gap-3 sm:grid-cols-2">
-            {(showPlayerSearch && normalizedPlayerSearch ? playerSearchResults : visibleTeamPlayers).map((player) => {
+            {(showPlayerSearch && normalizedPlayerSearch && activeTeam !== MY_TEAM_TAB ? playerSearchResults : visibleSelectionPlayers).map((player) => {
               const isSelected = selected.has(player.id);
               const isCaptain = captain === player.id;
               const isViceCaptain = viceCaptain === player.id;
@@ -696,6 +723,11 @@ export default function SuperTeamPage() {
             {showPlayerSearch && normalizedPlayerSearch && playerSearchResults.length === 0 && (
               <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-8 text-center text-sm text-white/40 sm:col-span-2">
                 No players found.
+              </div>
+            )}
+            {activeTeam === MY_TEAM_TAB && visibleSelectionPlayers.length === 0 && (
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-8 text-center text-sm text-white/40 sm:col-span-2">
+                No players selected yet.
               </div>
             )}
           </div>
