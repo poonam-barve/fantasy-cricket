@@ -9,14 +9,19 @@ type SuperContext = {
   visible: boolean;
   enabled: boolean;
   locked: boolean;
+  can_edit?: boolean;
+  substitution_open?: boolean;
+  substitution_finalized?: boolean;
   bonus_visible: boolean;
   teams: string[];
+  substitution_teams?: string[];
   message: string;
   matches?: Record<string, { Team1: string; Team2: string; Date: string; Time: string; Status?: string | null }>;
 };
 type Contestant = { user_id: number; name: string; last_team_updated: string | null };
 type MissingUser = { id: number; name: string };
-type Standing = { user_id: number; name: string; points: number; rank: number; match_points: Record<string, number> };
+type Penalty = { total: number; new_player_count: number; new_player_penalty: number; captain_changed: boolean; captain_penalty: number; vice_captain_changed: boolean; vice_captain_penalty: number; new_player_ids?: number[] };
+type Standing = { user_id: number; name: string; points: number; gross_points?: number; penalty?: Penalty; rank: number; match_points: Record<string, number> };
 type SuperBreakdownPlayer = { player_id: number; name: string; team: string; role: Role; base_points?: number; multiplier?: number; tag?: string; points: number };
 type SuperBreakdownMatch = { match_id: number; points: number; players: SuperBreakdownPlayer[] };
 type SuperUserBreakdown = Standing & { matches: SuperBreakdownMatch[] };
@@ -54,6 +59,7 @@ function statText(player: Player) {
 function statusLabel(context: SuperContext) {
   if (!context.enabled) return { text: 'Upcoming', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' };
   if (context.bonus_visible) return { text: 'Completed', color: 'bg-white/10 text-white/50 border-white/20' };
+  if (context.substitution_open) return { text: 'Subs Open', color: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' };
   if (context.locked) return { text: 'Live', color: 'bg-green-500/20 text-green-400 border-green-500/30' };
   return { text: 'Open', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30' };
 }
@@ -82,6 +88,7 @@ export default function SuperTeamPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [captain, setCaptain] = useState<number | null>(null);
   const [viceCaptain, setViceCaptain] = useState<number | null>(null);
+  const [myPenalty, setMyPenalty] = useState<Penalty | null>(null);
   const [standings, setStandings] = useState<Standing[]>([]);
   const [userBreakdowns, setUserBreakdowns] = useState<SuperUserBreakdown[]>([]);
   const [playerPointRows, setPlayerPointRows] = useState<SuperPlayerPoints[]>([]);
@@ -99,13 +106,14 @@ export default function SuperTeamPage() {
   const [playerSearch, setPlayerSearch] = useState('');
   const [openHistoryPlayerId, setOpenHistoryPlayerId] = useState<number | null>(null);
   const superTeamRules = [
-    'Super Team is a one-time playoff squad.',
+    'Super Team is a one-team playoff squad.',
     'Pick 12 players from the four playoff teams',
-    'Select exactly 3 players from each playoff team. At least 1 Wicketkeeper, 1 Batter, 1 AllRounder.',
-    'You must select at least 4 Bowlers overall. Bowlers can be from any playoff team.',
+    'Select exactly 3 players from each playoff team. ',
+    'You must select at least 1 Wicketkeeper, 1 Batter, 1 AllRounder and 4 Bowlers. Bowlers can be from any team.',
     'Captain scores 1.5x points. Vice-Captain scores 1.2x points.',
-    'No backups, substitutes, or Playing XI availability rules apply.',
-    'Team selection locks at the scheduled start of Playoffs',
+    'Initial team selection locks at Qualifier 1 toss.',
+    'After Eliminator is completed, substitutions open until Qualifier 2 toss. You can subsitute players, with a maximum of 4 players per team.',
+    'Each new player costs -100. Captain change costs -50 and Vice-Captain change costs -25 penalty in overall points',
     'After Final, rank 1 gets +400, rank 2 gets +200, and rank 3 gets +100 leaderboard bonus.',
   ];
 
@@ -126,6 +134,7 @@ export default function SuperTeamPage() {
       const viceCaptainPlayer = myTeamPlayers.find((player) => player.is_vice_captain);
       setCaptain(captainPlayer ? Number(captainPlayer.player_id) : res.data.my_team?.captain ? Number(res.data.my_team.captain) : null);
       setViceCaptain(viceCaptainPlayer ? Number(viceCaptainPlayer.player_id) : res.data.my_team?.vice_captain ? Number(res.data.my_team.vice_captain) : null);
+      setMyPenalty(res.data.my_team?.penalty || null);
     } catch {
       toast('Failed to load Super Team.', 'error');
     } finally {
@@ -188,12 +197,14 @@ export default function SuperTeamPage() {
     return counts;
   }, [selectedPlayers]);
   const missingRoles = requiredRoles.filter((role) => (roleCounts[role] || 0) < 1);
+  const overLimitTeams = Object.entries(teamCounts).filter(([, count]) => count > 4).map(([team]) => team);
   const invalidTeams = (context?.teams || []).filter((team) => (teamCounts[team] || 0) !== PLAYERS_PER_TEAM);
   const validationMessage = (() => {
     if (selected.size !== SUPER_TEAM_SIZE) return `Select ${SUPER_TEAM_SIZE - selected.size} more players.`;
     if (missingRoles.length > 0) return 'Select at least 1 Wicketkeeper, 1 Batter, and 1 AllRounder.';
     if (bowlerCount < MIN_BOWLERS) return `Select at least ${MIN_BOWLERS} Bowlers.`;
-    if (invalidTeams.length > 0) return `Select exactly ${PLAYERS_PER_TEAM} players from each team.`;
+    if (context?.substitution_open && overLimitTeams.length > 0) return 'Select at most 4 players from each team.';
+    if (!context?.substitution_open && invalidTeams.length > 0) return `Select exactly ${PLAYERS_PER_TEAM} players from each team.`;
     if (!captain || !selected.has(captain)) return 'Select a Captain.';
     if (!viceCaptain || !selected.has(viceCaptain)) return 'Select a Vice-Captain.';
     if (captain === viceCaptain) return 'Captain and Vice-Captain must be different.';
@@ -201,7 +212,7 @@ export default function SuperTeamPage() {
   })();
 
   const togglePlayer = (playerId: number) => {
-    if (context?.locked) return;
+    if (!context?.can_edit) return;
     setOpenHistoryPlayerId(null);
     setSelected((prev) => {
       const next = new Set(prev);
@@ -252,7 +263,7 @@ export default function SuperTeamPage() {
     );
   }
 
-  const showSelection = context.enabled && !context.locked;
+  const showSelection = context.enabled && Boolean(context.can_edit);
   const currentStatus = statusLabel(context);
   const leader = standings.find((row) => row.rank === 1);
   const selectedUserBreakdown = userBreakdowns.find((row) => row.user_id === selectedBreakdownUserId) || userBreakdowns[0];
@@ -310,6 +321,29 @@ export default function SuperTeamPage() {
           </div>
         )}
 
+        {context.substitution_open && (
+          <div className="mb-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3">
+            <p className="text-xs font-semibold text-cyan-200">Substitution window open</p>
+            <p className="mt-1 text-xs text-cyan-100/60">
+              Changes are compared with your original team. Choose from {(context.substitution_teams || []).join(' | ') || 'remaining teams'} plus original players. Final team locks at Match 73 toss.
+            </p>
+          </div>
+        )}
+
+        {myPenalty && myPenalty.total > 0 && (
+          <div className="mb-3 rounded-xl border border-amber-400/20 bg-amber-500/10 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold text-amber-200">Current penalty</p>
+              <p className="text-sm font-bold text-amber-200">-{myPenalty.total}</p>
+            </div>
+            <p className="mt-1 text-[11px] text-amber-100/60">
+              New players: -{myPenalty.new_player_penalty || 0}
+              {myPenalty.captain_penalty ? ` | Captain: -${myPenalty.captain_penalty}` : ''}
+              {myPenalty.vice_captain_penalty ? ` | Vice-Captain: -${myPenalty.vice_captain_penalty}` : ''}
+            </p>
+          </div>
+        )}
+
         <div className="mt-2 flex items-center gap-1">
           {[71, 72, 73, 74].map((matchId) => {
             const match = context.matches?.[String(matchId)];
@@ -350,7 +384,10 @@ export default function SuperTeamPage() {
                 <div className="w-10 text-center text-sm font-bold text-white/60">#{row.rank}</div>
                 <div className="flex-1 min-w-0">
                   <p className="truncate text-sm font-semibold text-white">{row.name}</p>
-                  <p className="text-[11px] text-white/35">M71 {row.match_points?.['71'] || 0} | M72 {row.match_points?.['72'] || 0} | M73 {row.match_points?.['73'] || 0} | M74 {row.match_points?.['74'] || 0}</p>
+                  <p className="text-[11px] text-white/35">
+                    M71 {row.match_points?.['71'] || 0} | M72 {row.match_points?.['72'] || 0} | M73 {row.match_points?.['73'] || 0} | M74 {row.match_points?.['74'] || 0}
+                    {row.penalty?.total ? ` | Penalty -${row.penalty.total}` : ''}
+                  </p>
                 </div>
                 <div className="text-sm font-bold text-blue-300">{row.points} pts</div>
               </button>
@@ -369,7 +406,12 @@ export default function SuperTeamPage() {
                 </p>
                 <p className="text-xs text-white/35">Selected player points by playoff match</p>
               </div>
-              <p className="text-sm font-bold text-cyan-200">{formatPoints(selectedUserBreakdown.points)} pts</p>
+              <div className="text-right">
+                <p className="text-sm font-bold text-cyan-200">{formatPoints(selectedUserBreakdown.points)} pts</p>
+                {selectedUserBreakdown.penalty?.total ? (
+                  <p className="text-[11px] text-amber-300">-{selectedUserBreakdown.penalty.total} penalty</p>
+                ) : null}
+              </div>
             </div>
           </div>
           <div className="border-b border-white/10 p-2">
@@ -470,7 +512,13 @@ export default function SuperTeamPage() {
             {(context.teams || []).map((team) => (
               <div key={team} className="rounded-xl bg-black/30 p-3 text-center">
                 <p className="truncate text-[11px] text-white/35">{team}</p>
-                <p className={`text-lg font-bold ${teamCounts[team] === PLAYERS_PER_TEAM ? 'text-blue-300' : 'text-amber-300'}`}>{teamCounts[team] || 0}/{PLAYERS_PER_TEAM}</p>
+                <p className={`text-lg font-bold ${
+                  context.substitution_open
+                    ? (teamCounts[team] || 0) <= 4 ? 'text-blue-300' : 'text-amber-300'
+                    : teamCounts[team] === PLAYERS_PER_TEAM ? 'text-blue-300' : 'text-amber-300'
+                }`}>
+                  {teamCounts[team] || 0}/{context.substitution_open ? 4 : PLAYERS_PER_TEAM}
+                </p>
               </div>
             ))}
           </div>

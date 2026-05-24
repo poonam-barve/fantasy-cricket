@@ -24,9 +24,13 @@ class AdminSuperTeamBody(BaseModel):
 
 @router.get("")
 async def super_team_home(user: dict = Depends(get_current_user)):
+    context = super_team_service.get_context()
+    if context.get("substitution_open") or context.get("substitution_finalized"):
+        super_team_service.ensure_original_snapshots()
+        super_team_service.refresh_super_team_standings_cache()
     return {
         "context": super_team_service.get_context(),
-        "players": super_team_service.grouped_player_pool(),
+        "players": super_team_service.grouped_player_pool(user["id"]),
         "my_team": super_team_service.my_team(user["id"]),
         "standings": super_team_service.standings(),
         "details": super_team_service.details(),
@@ -106,6 +110,7 @@ async def admin_update_super_team(body: AdminSuperTeamBody, user: dict = Depends
 
 @admin_router.post("/recalculate")
 async def admin_recalculate_super_team(user: dict = Depends(require_admin)):
+    super_team_service.ensure_original_snapshots()
     summary = super_team_service.refresh_super_team_standings_cache()
     try:
         from backend.routes.leaderboard import invalidate_leaderboard_cache, refresh_leaderboard_cache_once
