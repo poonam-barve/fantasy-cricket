@@ -389,7 +389,7 @@ export default function DashboardPage() {
           <p className="text-white/40 text-sm mt-1">Hippies Mahasangram</p>
 
           {/* Quick Actions */}
-          <div className={`grid gap-2 sm:gap-3 mt-6 ${superTeamStatus?.context?.visible ? 'grid-cols-4' : 'grid-cols-3'}`}>
+          <div className={`grid gap-2 sm:gap-3 mt-6 ${superTeamStatus?.context?.visible ? 'grid-cols-5' : 'grid-cols-4'}`}>
           <Link to="/leaderboard"
             className="flex flex-col items-center gap-2 p-3 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 rounded-2xl transition-all group">
             <div className="w-9 h-9 bg-amber-500/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -416,6 +416,15 @@ export default function DashboardPage() {
               </svg>
             </div>
             <span className="w-full text-center text-purple-300 text-xs font-medium leading-tight">Knockout Battle</span>
+          </Link>
+          <Link to="/achievements"
+            className="flex flex-col items-center gap-2 p-3 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 rounded-2xl transition-all group">
+            <div className="w-9 h-9 bg-emerald-500/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+              <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <span className="w-full text-center text-emerald-300 text-xs font-medium leading-tight">Achievements</span>
           </Link>
           {superTeamStatus?.context?.visible && (
             <Link to="/super-team"

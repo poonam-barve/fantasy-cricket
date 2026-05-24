@@ -17,6 +17,7 @@ const Rules = lazy(() => import('./pages/Rules'));
 const Settings = lazy(() => import('./pages/Settings'));
 const WeekendTournament = lazy(() => import('./pages/WeekendTournament'));
 const SuperTeam = lazy(() => import('./pages/SuperTeam'));
+const Achievements = lazy(() => import('./pages/Achievements'));
 
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
@@ -64,6 +65,7 @@ export default function App() {
             <Route path="/points-table" element={<ProtectedRoute><AppLayout><PointsTable /></AppLayout></ProtectedRoute>} />
             <Route path="/weekend" element={<ProtectedRoute><AppLayout><WeekendTournament /></AppLayout></ProtectedRoute>} />
             <Route path="/super-team" element={<ProtectedRoute><AppLayout><SuperTeam /></AppLayout></ProtectedRoute>} />
+            <Route path="/achievements" element={<ProtectedRoute><AppLayout><Achievements /></AppLayout></ProtectedRoute>} />
             <Route path="/rules" element={<ProtectedRoute><AppLayout><Rules /></AppLayout></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><AppLayout><Settings /></AppLayout></ProtectedRoute>} />
 

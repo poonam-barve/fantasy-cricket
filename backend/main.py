@@ -31,7 +31,7 @@ from backend.services.venue_stats import prime_today_venue_cache
 from backend.services.weekend_tournament_service import prime_weekend_tournament_cache
 from backend.services import super_team_service
 from backend.models.tournament import Tournament
-from backend.routes import auth, matches, players, teams, scores, leaderboard, admin, weekend_tournament, super_team
+from backend.routes import auth, matches, players, teams, scores, leaderboard, admin, weekend_tournament, super_team, achievements
 
 app = FastAPI(title="Fantasy Cricket API")
 
@@ -58,6 +58,7 @@ app.include_router(admin.router)
 app.include_router(weekend_tournament.router)
 app.include_router(super_team.router)
 app.include_router(super_team.admin_router)
+app.include_router(achievements.router)
 
 
 @app.get("/api/runtime/current-time")
