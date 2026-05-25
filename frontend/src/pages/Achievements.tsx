@@ -101,7 +101,7 @@ function CategoryCard({ category, myUserId }: { category: AchievementCategory; m
         <h3 className={`text-sm font-bold ${style.color}`}>{category.title}</h3>
       </div>
       <div className="space-y-2">
-        {category.entries.map((entry, i) => {
+        {category.entries.map((entry) => {
           const isMe = entry.user_id === myUserId;
           const rankColorMap: Record<number, string> = { 1: 'text-yellow-400', 2: 'text-gray-300', 3: 'text-amber-600' };
           return (
