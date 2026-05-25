@@ -32,6 +32,7 @@ This document is the compact source of truth for fantasy subcontests beyond the 
 - Second-window penalties compare edited team to final team.
 - First-window new player penalties: `80` for Wicketkeeper/Batter/AllRounder and `60` for Bowler.
 - Second-window new player penalties: `100` for Wicketkeeper/Batter/AllRounder and `80` for Bowler.
+- Simple version: Window 1 swaps cost `80` for batting-side roles or `60` for Bowlers; Window 2 swaps cost `100` for batting-side roles or `80` for Bowlers.
 - Captain change penalty is `50%` of the relevant role substitution penalty.
 - Vice-Captain change penalty is `25%` of the relevant role substitution penalty.
 - Players earn their normal fantasy points in every playoff match they appear in.

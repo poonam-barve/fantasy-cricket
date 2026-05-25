@@ -119,6 +119,7 @@ export default function SuperTeamPage() {
     'Initial team selection locks at Qualifier 1 toss.',
     'Two substitution windows open before Qualifier 2 and Final tosses.',
     'Substitution penalties are role based and reset for each window.',
+    'Window 1: new WK/BAT/AR -80, new Bowler -60. Window 2: new WK/BAT/AR -100, new Bowler -80. Captain changes cost half, Vice-Captain changes cost one-fourth points penalty.',
     'After Final, rank 1 gets +1000, rank 2 gets +600, and rank 3 gets +300 leaderboard bonus.',
   ];
 
@@ -610,16 +611,6 @@ export default function SuperTeamPage() {
                   {(captain ? 1 : 0) + (viceCaptain ? 1 : 0)}/2
                 </p>
               </div>
-              {(context.teams || []).map((team) => (
-                <div key={team} className="min-w-20 rounded-lg bg-black/30 px-3 py-2 text-center">
-                  <p className="truncate text-[11px] text-white/35">{team}</p>
-                  <p className={`text-sm font-bold ${
-                    (teamCounts[team] || 0) > 0 ? 'text-blue-300' : 'text-white/45'
-                  }`}>
-                    {teamCounts[team] || 0}
-                  </p>
-                </div>
-              ))}
             </div>
           </div>
 
@@ -651,6 +642,9 @@ export default function SuperTeamPage() {
                   className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${activeTeam === team ? 'bg-white text-black' : 'text-white/55 hover:bg-white/10'}`}
                 >
                   {team}
+                  <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${activeTeam === team ? 'bg-black/10 text-black/70' : 'bg-white/10 text-white/60'}`}>
+                    {teamCounts[team] || 0}
+                  </span>
                 </button>
               ))}
             </div>

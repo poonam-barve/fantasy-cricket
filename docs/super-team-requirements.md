@@ -147,6 +147,8 @@ Example:
 
 Penalties are phase-based. A later phase does not compare back to the original team unless the original team was copied into the previous phase snapshot.
 
+Simple version: Window 1 swaps cost `80` for batting-side roles or `60` for Bowlers; Window 2 swaps cost `100` for batting-side roles or `80` for Bowlers. Captain changes cost half of that role's swap penalty, and Vice-Captain changes cost one-fourth.
+
 ### Window 1 Penalty
 
 Compare `original team` to `edited team`.
