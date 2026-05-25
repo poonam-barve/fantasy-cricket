@@ -230,14 +230,18 @@ def _build_response_from_db(db=None) -> dict:
         else:
             sort_key = lambda x: -x[key]
         sorted_list = sorted(entries, key=sort_key)
-        # Include all entries tied with the 5th position
         result = []
+        rank = 0
+        prev_value = None
         for e in sorted_list:
             if e[key] <= 0:
                 continue
-            if len(result) >= 5 and e[key] < result[4]["value"]:
-                break
-            result.append({"user_id": e["user_id"], "name": e["name"], "value": e[key]})
+            if e[key] != prev_value:
+                rank = len(result) + 1
+                if rank > 5:
+                    break
+                prev_value = e[key]
+            result.append({"user_id": e["user_id"], "name": e["name"], "value": e[key], "rank": rank})
         return result
 
     # Compute ranks for all users in each category

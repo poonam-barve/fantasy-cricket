@@ -7,6 +7,7 @@ interface AchievementEntry {
   user_id: number;
   name: string;
   value: number;
+  rank: number;
 }
 
 interface AchievementCategory {
@@ -102,7 +103,7 @@ function CategoryCard({ category, myUserId }: { category: AchievementCategory; m
       <div className="space-y-2">
         {category.entries.map((entry, i) => {
           const isMe = entry.user_id === myUserId;
-          const rankColors = ['text-yellow-400', 'text-gray-300', 'text-amber-600', 'text-white/50', 'text-white/40'];
+          const rankColorMap: Record<number, string> = { 1: 'text-yellow-400', 2: 'text-gray-300', 3: 'text-amber-600' };
           return (
             <div
               key={entry.user_id}
@@ -111,8 +112,8 @@ function CategoryCard({ category, myUserId }: { category: AchievementCategory; m
               }`}
             >
               <div className="flex items-center gap-2.5">
-                <span className={`text-xs font-bold w-4 ${rankColors[i] || 'text-white/40'}`}>
-                  {i + 1}
+                <span className={`text-xs font-bold w-4 ${rankColorMap[entry.rank] || 'text-white/40'}`}>
+                  {entry.rank}
                 </span>
                 <span className="text-sm text-white/90 truncate max-w-[140px]">
                   {entry.name}
