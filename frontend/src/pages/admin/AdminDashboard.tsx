@@ -7,6 +7,8 @@ export default function AdminDashboard() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
+  const [recalculating, setRecalculating] = useState(false);
+  const [recalcMsg, setRecalcMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -73,6 +75,19 @@ export default function AdminDashboard() {
     },
   ];
 
+  const handleRecalculate = async () => {
+    setRecalculating(true);
+    setRecalcMsg(null);
+    try {
+      await client.post('/api/admin/achievements/recalculate');
+      setRecalcMsg('Achievements recalculated successfully');
+    } catch {
+      setRecalcMsg('Failed to recalculate');
+    } finally {
+      setRecalculating(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -100,6 +115,23 @@ export default function AdminDashboard() {
           </div>
         ))}
       </div>
+
+      {/* Admin Actions */}
+      <h2 className="text-lg font-bold text-gray-800 mt-8 mb-4">Actions</h2>
+      <div className="flex flex-wrap gap-3">
+        <button
+          onClick={handleRecalculate}
+          disabled={recalculating}
+          className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+        >
+          {recalculating ? 'Recalculating...' : 'Recalculate Achievements'}
+        </button>
+      </div>
+      {recalcMsg && (
+        <p className={`mt-2 text-sm ${recalcMsg.includes('Failed') ? 'text-red-600' : 'text-green-600'}`}>
+          {recalcMsg}
+        </p>
+      )}
     </div>
   );
 }
