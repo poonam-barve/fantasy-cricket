@@ -20,16 +20,18 @@ class AdminSuperTeamBody(BaseModel):
     players: list[int]
     captain: int
     vice_captain: int
+    phase: str = "current"
 
 
 @router.get("")
 async def super_team_home(user: dict = Depends(get_current_user)):
     context = super_team_service.get_context()
-    if context.get("substitution_open") or context.get("substitution_finalized"):
-        super_team_service.ensure_original_snapshots()
+    if context.get("locked"):
+        super_team_service.ensure_phase_snapshots(context)
         super_team_service.refresh_super_team_standings_cache()
     return {
         "context": super_team_service.get_context(),
+        "my_user_id": user["id"],
         "players": super_team_service.grouped_player_pool(user["id"]),
         "my_team": super_team_service.my_team(user["id"]),
         "standings": super_team_service.standings(),
@@ -52,6 +54,11 @@ async def super_team_status(user: dict = Depends(get_current_user)):
 async def submit_super_team(body: SuperTeamBody, user: dict = Depends(get_current_user)):
     entry = super_team_service.save_team(user["id"], body.players, body.captain, body.vice_captain)
     return {"success": True, "team": entry}
+
+
+@router.post("/penalty-preview")
+async def preview_super_team_penalty(body: SuperTeamBody, user: dict = Depends(get_current_user)):
+    return super_team_service.projected_penalty(user["id"], body.players, body.captain, body.vice_captain)
 
 
 @router.get("/contestants")
@@ -84,20 +91,30 @@ async def admin_super_team(user: dict = Depends(require_admin)):
         "context": super_team_service.get_context(),
         "players": super_team_service.grouped_player_pool(),
         "teams": list(super_team_service.get_submissions().values()),
+        "snapshots": super_team_service.admin_snapshot_payload(),
         "standings": super_team_service.standings(),
     }
 
 
 @admin_router.put("")
 async def admin_update_super_team(body: AdminSuperTeamBody, user: dict = Depends(require_admin)):
-    entry = super_team_service.save_team(
-        body.user_id,
-        body.players,
-        body.captain,
-        body.vice_captain,
-        updated_by=user["id"],
-        ignore_lock=True,
-    )
+    if body.phase == "current":
+        entry = super_team_service.save_team(
+            body.user_id,
+            body.players,
+            body.captain,
+            body.vice_captain,
+            updated_by=user["id"],
+            ignore_lock=True,
+        )
+    else:
+        entry = super_team_service.replace_snapshot(
+            body.phase,
+            body.user_id,
+            body.players,
+            body.captain,
+            body.vice_captain,
+        )
     try:
         from backend.routes.leaderboard import invalidate_leaderboard_cache, refresh_leaderboard_cache_once
 
@@ -110,7 +127,7 @@ async def admin_update_super_team(body: AdminSuperTeamBody, user: dict = Depends
 
 @admin_router.post("/recalculate")
 async def admin_recalculate_super_team(user: dict = Depends(require_admin)):
-    super_team_service.ensure_original_snapshots()
+    super_team_service.ensure_phase_snapshots()
     summary = super_team_service.refresh_super_team_standings_cache()
     try:
         from backend.routes.leaderboard import invalidate_leaderboard_cache, refresh_leaderboard_cache_once

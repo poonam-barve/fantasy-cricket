@@ -13,6 +13,8 @@ type SuperContext = {
   can_edit?: boolean;
   substitution_open?: boolean;
   substitution_finalized?: boolean;
+  substitution_phase?: number;
+  public_visible?: boolean;
   bonus_visible: boolean;
   teams: string[];
   substitution_teams?: string[];
@@ -21,9 +23,9 @@ type SuperContext = {
 };
 type Contestant = { user_id: number; name: string; last_team_updated: string | null };
 type MissingUser = { id: number; name: string };
-type Penalty = { total: number; new_player_count: number; new_player_penalty: number; captain_changed: boolean; captain_penalty: number; vice_captain_changed: boolean; vice_captain_penalty: number; new_player_ids?: number[] };
+type Penalty = { total: number; new_player_count: number; new_player_penalty: number; captain_changed: boolean; captain_penalty: number; vice_captain_changed: boolean; vice_captain_penalty: number; new_player_ids?: number[]; phase1?: Penalty; phase2?: Penalty };
 type Standing = { user_id: number; name: string; points: number; gross_points?: number; penalty?: Penalty; rank: number; match_points: Record<string, number> };
-type SuperBreakdownPlayer = { player_id: number; name: string; team: string; role: Role; base_points?: number; multiplier?: number; tag?: string; points: number };
+type SuperBreakdownPlayer = { player_id: number; name: string; team: string; role: Role; base_points?: number; multiplier?: number; tag?: string; points: number; removed?: boolean };
 type SuperBreakdownMatch = { match_id: number; points: number; players: SuperBreakdownPlayer[] };
 type SuperUserBreakdown = Standing & { matches: SuperBreakdownMatch[] };
 type SuperPlayerPoints = {
@@ -40,7 +42,6 @@ const roles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder', 'Bowler'];
 const requiredRoles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder'];
 const MY_TEAM_TAB = 'My Team';
 const SUPER_TEAM_SIZE = 12;
-const PLAYERS_PER_TEAM = 3;
 const MIN_BOWLERS = 4;
 const formatPoints = (value: number | null | undefined) => {
   if (value == null || Number.isNaN(value)) return '-';
@@ -91,7 +92,9 @@ export default function SuperTeamPage() {
   const [captain, setCaptain] = useState<number | null>(null);
   const [viceCaptain, setViceCaptain] = useState<number | null>(null);
   const [myPenalty, setMyPenalty] = useState<Penalty | null>(null);
+  const [projectedPenalty, setProjectedPenalty] = useState<Penalty | null>(null);
   const [standings, setStandings] = useState<Standing[]>([]);
+  const [myUserId, setMyUserId] = useState<number | null>(null);
   const [userBreakdowns, setUserBreakdowns] = useState<SuperUserBreakdown[]>([]);
   const [playerPointRows, setPlayerPointRows] = useState<SuperPlayerPoints[]>([]);
   const [selectedBreakdownUserId, setSelectedBreakdownUserId] = useState<number | null>(null);
@@ -111,19 +114,19 @@ export default function SuperTeamPage() {
   const superTeamRules = [
     'Super Team is a one-team playoff squad.',
     'Pick 12 players from the four playoff teams',
-    'Select exactly 3 players from each playoff team. ',
     'You must select at least 1 Wicketkeeper, 1 Batter, 1 AllRounder and 4 Bowlers. Bowlers can be from any team.',
-    'Captain scores 1.5x points. Vice-Captain scores 1.2x points.',
+    'Captain scores 1.5x points. Vice-Captain scores 1.25x points rounded up to the next 0.5.',
     'Initial team selection locks at Qualifier 1 toss.',
-    'After Eliminator is completed, substitutions open until Qualifier 2 toss. You can subsitute players, with a maximum of 4 players per team.',
-    'Each new player costs -100. Captain change costs -50 and Vice-Captain change costs -25 penalty in overall points',
-    'After Final, rank 1 gets +400, rank 2 gets +200, and rank 3 gets +100 leaderboard bonus.',
+    'Two substitution windows open before Qualifier 2 and Final tosses.',
+    'Substitution penalties are role based and reset for each window.',
+    'After Final, rank 1 gets +1000, rank 2 gets +600, and rank 3 gets +300 leaderboard bonus.',
   ];
 
   const load = useCallback(async () => {
     try {
       const res = await client.get('/api/super-team');
       setContext(res.data.context);
+      setMyUserId(res.data.my_user_id || null);
       setPlayersByRole(res.data.players || {});
       setStandings(res.data.standings || []);
       setUserBreakdowns(res.data.details?.user_breakdowns || []);
@@ -219,14 +222,10 @@ export default function SuperTeamPage() {
     return counts;
   }, [selectedPlayers]);
   const missingRoles = requiredRoles.filter((role) => (roleCounts[role] || 0) < 1);
-  const overLimitTeams = Object.entries(teamCounts).filter(([, count]) => count > 4).map(([team]) => team);
-  const invalidTeams = (context?.teams || []).filter((team) => (teamCounts[team] || 0) !== PLAYERS_PER_TEAM);
   const validationMessage = (() => {
     if (selected.size !== SUPER_TEAM_SIZE) return `Select ${SUPER_TEAM_SIZE - selected.size} more players.`;
     if (missingRoles.length > 0) return 'Select at least 1 Wicketkeeper, 1 Batter, and 1 AllRounder.';
     if (bowlerCount < MIN_BOWLERS) return `Select at least ${MIN_BOWLERS} Bowlers.`;
-    if (context?.substitution_open && overLimitTeams.length > 0) return 'Select at most 4 players from each team.';
-    if (!context?.substitution_open && invalidTeams.length > 0) return `Select exactly ${PLAYERS_PER_TEAM} players from each team.`;
     if (!captain || !selected.has(captain)) return 'Select a Captain.';
     if (!viceCaptain || !selected.has(viceCaptain)) return 'Select a Vice-Captain.';
     if (captain === viceCaptain) return 'Captain and Vice-Captain must be different.';
@@ -237,14 +236,32 @@ export default function SuperTeamPage() {
     if (selected.has(player.id)) return '';
     if (!context?.can_edit) return 'Selection is locked.';
     if (selected.size >= SUPER_TEAM_SIZE) return `Maximum ${SUPER_TEAM_SIZE} players selected.`;
-    const teamLimit = context.substitution_open ? 4 : PLAYERS_PER_TEAM;
-    if ((teamCounts[player.team] || 0) >= teamLimit) {
-      return context.substitution_open
-        ? 'Maximum 4 players from this team.'
-        : `Already selected ${PLAYERS_PER_TEAM} players from this team.`;
-    }
     return '';
   };
+
+  useEffect(() => {
+    if (!context?.substitution_open || validationMessage || !captain || !viceCaptain) {
+      setProjectedPenalty(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await client.post('/api/super-team/penalty-preview', {
+          players: [...selected],
+          captain,
+          vice_captain: viceCaptain,
+        });
+        if (!cancelled) setProjectedPenalty(res.data || null);
+      } catch {
+        if (!cancelled) setProjectedPenalty(null);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [captain, context?.substitution_open, selected, validationMessage, viceCaptain]);
 
   const togglePlayer = (playerId: number) => {
     if (!context?.can_edit) return;
@@ -311,6 +328,18 @@ export default function SuperTeamPage() {
   const leader = standings.find((row) => row.rank === 1);
   const selectedUserBreakdown = userBreakdowns.find((row) => row.user_id === selectedBreakdownUserId) || userBreakdowns[0];
   const selectedMatchBreakdown = selectedUserBreakdown?.matches.find((match) => match.match_id === activeBreakdownMatchId) || selectedUserBreakdown?.matches[0];
+  const myUserBreakdown = myUserId ? userBreakdowns.find((row) => row.user_id === myUserId) || null : null;
+  const myMatchBreakdown = myUserBreakdown?.matches.find((match) => match.match_id === activeBreakdownMatchId) || null;
+  const comparison = (() => {
+    if (!myMatchBreakdown || !selectedMatchBreakdown || selectedUserBreakdown?.user_id === myUserId) return null;
+    const mine = new Map(myMatchBreakdown.players.map((player) => [player.player_id, player]));
+    const theirs = new Map(selectedMatchBreakdown.players.map((player) => [player.player_id, player]));
+    const common = [...mine.values()].filter((player) => theirs.has(player.player_id));
+    const onlyMine = [...mine.values()].filter((player) => !theirs.has(player.player_id));
+    const onlyTheirs = [...theirs.values()].filter((player) => !mine.has(player.player_id));
+    const roleDiff = common.filter((player) => (player.tag || '') !== (theirs.get(player.player_id)?.tag || ''));
+    return { common, onlyMine, onlyTheirs, roleDiff };
+  })();
 
   return (
     <div className="space-y-5">
@@ -368,21 +397,23 @@ export default function SuperTeamPage() {
           <div className="mb-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3">
             <p className="text-xs font-semibold text-cyan-200">Substitution window open</p>
             <p className="mt-1 text-xs text-cyan-100/60">
-              Changes are compared with your original team. Choose from {(context.substitution_teams || []).join(' | ') || 'remaining teams'} plus original players. Final team locks at Match 73 toss.
+              {context.substitution_phase === 2
+                ? 'Changes are compared with your edited team. Final team locks at Match 74 toss.'
+                : 'Changes are compared with your original team. Edited team locks at Match 73 toss.'}
             </p>
           </div>
         )}
 
-        {myPenalty && myPenalty.total > 0 && (
+        {(projectedPenalty || myPenalty) && (projectedPenalty || myPenalty)!.total > 0 && (
           <div className="mb-3 rounded-xl border border-amber-400/20 bg-amber-500/10 p-3">
             <div className="flex items-center justify-between gap-3">
-              <p className="text-xs font-semibold text-amber-200">Current penalty</p>
-              <p className="text-sm font-bold text-amber-200">-{myPenalty.total}</p>
+              <p className="text-xs font-semibold text-amber-200">{projectedPenalty ? 'Projected penalty' : 'Current penalty'}</p>
+              <p className="text-sm font-bold text-amber-200">-{(projectedPenalty || myPenalty)!.total}</p>
             </div>
             <p className="mt-1 text-[11px] text-amber-100/60">
-              New players: -{myPenalty.new_player_penalty || 0}
-              {myPenalty.captain_penalty ? ` | Captain: -${myPenalty.captain_penalty}` : ''}
-              {myPenalty.vice_captain_penalty ? ` | Vice-Captain: -${myPenalty.vice_captain_penalty}` : ''}
+              New players: -{(projectedPenalty || myPenalty)!.new_player_penalty || 0}
+              {(projectedPenalty || myPenalty)!.captain_penalty ? ` | Captain: -${(projectedPenalty || myPenalty)!.captain_penalty}` : ''}
+              {(projectedPenalty || myPenalty)!.vice_captain_penalty ? ` | Vice-Captain: -${(projectedPenalty || myPenalty)!.vice_captain_penalty}` : ''}
             </p>
           </div>
         )}
@@ -478,9 +509,19 @@ export default function SuperTeamPage() {
           </div>
           <div className="divide-y divide-white/5">
             {(selectedMatchBreakdown?.players || []).map((player) => (
-              <div key={`${selectedMatchBreakdown?.match_id}-${player.player_id}`} className="flex items-center justify-between gap-3 px-4 py-3">
+              <div
+                key={`${selectedMatchBreakdown?.match_id}-${player.player_id}`}
+                className={`flex items-center justify-between gap-3 px-4 py-3 ${player.removed ? 'bg-amber-500/5' : ''}`}
+              >
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-white">{player.name}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-semibold text-white">{player.name}</p>
+                    {player.removed && (
+                      <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
+                        Removed
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-white/35">
                     {player.team} | {player.role}{player.tag ? ` | ${player.tag} x${player.multiplier}` : ''}
                   </p>
@@ -489,6 +530,22 @@ export default function SuperTeamPage() {
               </div>
             ))}
           </div>
+          {comparison && (
+            <div className="border-t border-white/10 p-4">
+              <p className="text-sm font-semibold text-white">Compare With My Team</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                <CompareMetric label="Common" value={comparison.common.length} />
+                <CompareMetric label="Only Me" value={comparison.onlyMine.length} />
+                <CompareMetric label="Only Them" value={comparison.onlyTheirs.length} />
+                <CompareMetric label="C/VC Diff" value={comparison.roleDiff.length} />
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                <CompareList title="Only Me" players={comparison.onlyMine} />
+                <CompareList title="Only Them" players={comparison.onlyTheirs} />
+                <CompareList title="C/VC Differences" players={comparison.roleDiff} />
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -557,11 +614,9 @@ export default function SuperTeamPage() {
                 <div key={team} className="min-w-20 rounded-lg bg-black/30 px-3 py-2 text-center">
                   <p className="truncate text-[11px] text-white/35">{team}</p>
                   <p className={`text-sm font-bold ${
-                    context.substitution_open
-                      ? (teamCounts[team] || 0) <= 4 ? 'text-blue-300' : 'text-amber-300'
-                      : teamCounts[team] === PLAYERS_PER_TEAM ? 'text-blue-300' : 'text-amber-300'
+                    (teamCounts[team] || 0) > 0 ? 'text-blue-300' : 'text-white/45'
                   }`}>
-                    {teamCounts[team] || 0}/{context.substitution_open ? 4 : PLAYERS_PER_TEAM}
+                    {teamCounts[team] || 0}
                   </p>
                 </div>
               ))}
@@ -833,6 +888,35 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
           <button onClick={onClose} className="rounded-lg p-2 text-white/50 hover:bg-white/10 hover:text-white">X</button>
         </div>
         {children}
+      </div>
+    </div>
+  );
+}
+
+function CompareMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+      <p className="text-[10px] uppercase tracking-wide text-white/35">{label}</p>
+      <p className="text-lg font-bold text-cyan-200">{value}</p>
+    </div>
+  );
+}
+
+function CompareList({ title, players }: { title: string; players: SuperBreakdownPlayer[] }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+      <p className="mb-2 text-xs font-semibold text-white/70">{title}</p>
+      <div className="space-y-1">
+        {players.length > 0 ? (
+          players.slice(0, 8).map((player) => (
+            <div key={`${title}-${player.player_id}`} className="flex items-center justify-between gap-2 text-xs">
+              <span className="truncate text-white/70">{player.name}{player.tag ? ` (${player.tag})` : ''}</span>
+              <span className="font-semibold text-blue-300">{formatPoints(player.points)}</span>
+            </div>
+          ))
+        ) : (
+          <div className="text-xs text-white/30">None</div>
+        )}
       </div>
     </div>
   );

@@ -41,6 +41,15 @@ const navItems = [
     ),
   },
   {
+    to: '/admin/backups',
+    label: 'Backups',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h10m0 0-3-3m3 3-3 3m9 7H10m0 0 3-3m-3 3 3 3" />
+      </svg>
+    ),
+  },
+  {
     to: '/admin/users',
     label: 'Users',
     icon: (

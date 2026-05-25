@@ -5,12 +5,19 @@ import type { Player, User } from '../../types';
 type Role = 'Wicketkeeper' | 'Batter' | 'AllRounder' | 'Bowler';
 type Submission = { user_id: number; name: string; player_ids: number[]; captain?: number | null; vice_captain?: number | null; updated_at?: string | null };
 type Standing = { user_id: number; name: string; points: number; rank: number };
+type SnapshotPhase = 'current' | 'original' | 'edited' | 'final';
+type SnapshotMap = Record<SnapshotPhase, Submission[]>;
 
 const roles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder', 'Bowler'];
 const requiredRoles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder'];
 const SUPER_TEAM_SIZE = 12;
-const PLAYERS_PER_TEAM = 3;
 const MIN_BOWLERS = 4;
+const snapshotPhases: { key: SnapshotPhase; label: string; helper: string }[] = [
+  { key: 'current', label: 'Current Draft', helper: 'Editable live/draft team' },
+  { key: 'original', label: 'Original', helper: 'Matches 71-72' },
+  { key: 'edited', label: 'Edited', helper: 'Match 73' },
+  { key: 'final', label: 'Final', helper: 'Match 74' },
+];
 
 function apiErrorDetail(error: unknown, fallback: string) {
   const response = (error as { response?: { data?: { detail?: unknown } } } | null)?.response;
@@ -26,8 +33,11 @@ export default function AdminSuperTeam() {
     Bowler: [],
   });
   const [teams, setTeams] = useState<Submission[]>([]);
+  const [snapshots, setSnapshots] = useState<SnapshotMap>({ current: [], original: [], edited: [], final: [] });
   const [standings, setStandings] = useState<Standing[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<number | ''>('');
+  const [activePhase, setActivePhase] = useState<SnapshotPhase>('current');
+  const [viewPhase, setViewPhase] = useState<SnapshotPhase>('current');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [captain, setCaptain] = useState<number | null>(null);
   const [viceCaptain, setViceCaptain] = useState<number | null>(null);
@@ -45,6 +55,12 @@ export default function AdminSuperTeam() {
       ]);
       setPlayersByRole(superRes.data.players || {});
       setTeams(superRes.data.teams || []);
+      setSnapshots({
+        current: superRes.data.snapshots?.current || superRes.data.teams || [],
+        original: superRes.data.snapshots?.original || [],
+        edited: superRes.data.snapshots?.edited || [],
+        final: superRes.data.snapshots?.final || [],
+      });
       setStandings(superRes.data.standings || []);
       setUsers(usersRes.data || []);
     } finally {
@@ -63,11 +79,12 @@ export default function AdminSuperTeam() {
       setViceCaptain(null);
       return;
     }
-    const existing = teams.find((team) => team.user_id === Number(selectedUserId));
+    const phaseTeams = snapshots[activePhase] || teams;
+    const existing = phaseTeams.find((team) => team.user_id === Number(selectedUserId));
     setSelected(new Set(existing?.player_ids || []));
     setCaptain(existing?.captain ? Number(existing.captain) : null);
     setViceCaptain(existing?.vice_captain ? Number(existing.vice_captain) : null);
-  }, [selectedUserId, teams]);
+  }, [activePhase, selectedUserId, snapshots, teams]);
 
   const allPlayers = useMemo(() => roles.flatMap((role) => playersByRole[role] || []), [playersByRole]);
   const selectedPlayers = allPlayers.filter((player) => selected.has(player.id));
@@ -88,14 +105,11 @@ export default function AdminSuperTeam() {
     acc[player.team] = (acc[player.team] || 0) + 1;
     return acc;
   }, {});
-  const eligibleTeams = [...new Set(allPlayers.map((player) => player.team))];
-  const invalidTeams = eligibleTeams.filter((team) => (teamCounts[team] || 0) !== PLAYERS_PER_TEAM);
   const missingRoles = requiredRoles.filter((role) => (roleCounts[role] || 0) < 1);
   const validationMessage = (() => {
     if (selected.size !== SUPER_TEAM_SIZE) return `Select exactly ${SUPER_TEAM_SIZE} players.`;
     if (missingRoles.length > 0) return 'Select at least 1 Wicketkeeper, 1 Batter, and 1 AllRounder.';
     if (bowlerCount < MIN_BOWLERS) return `Select at least ${MIN_BOWLERS} Bowlers.`;
-    if (invalidTeams.length > 0) return `Select exactly ${PLAYERS_PER_TEAM} players from each playoff team.`;
     if (!captain || !selected.has(captain)) return 'Select a Captain.';
     if (!viceCaptain || !selected.has(viceCaptain)) return 'Select a Vice-Captain.';
     if (captain === viceCaptain) return 'Captain and Vice-Captain must be different.';
@@ -132,8 +146,9 @@ export default function AdminSuperTeam() {
         players: [...selected],
         captain,
         vice_captain: viceCaptain,
+        phase: activePhase,
       });
-      setMessage('Super Team updated.');
+      setMessage(`${snapshotPhases.find((phase) => phase.key === activePhase)?.label || 'Super Team'} updated.`);
       await load();
     } catch (err: unknown) {
       setMessage(apiErrorDetail(err, 'Failed to update Super Team.'));
@@ -162,7 +177,7 @@ export default function AdminSuperTeam() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Super Team</h1>
-          <p className="text-sm text-slate-400">Admin edits obey the same 12-player rules and can be saved after lock.</p>
+          <p className="text-sm text-slate-400">Edit current drafts or phase snapshots for Matches 71-74.</p>
         </div>
         <button onClick={recalc} disabled={saving} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
           Recalculate
@@ -173,6 +188,25 @@ export default function AdminSuperTeam() {
 
       <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+          <div className="mb-4 grid gap-2 sm:grid-cols-4">
+            {snapshotPhases.map((phase) => (
+              <button
+                key={phase.key}
+                type="button"
+                onClick={() => {
+                  setActivePhase(phase.key);
+                  setViewPhase(phase.key);
+                }}
+                className={`rounded-lg border px-3 py-2 text-left transition ${
+                  activePhase === phase.key ? 'border-emerald-400 bg-emerald-500/10' : 'border-slate-800 bg-slate-950 hover:bg-slate-800'
+                }`}
+              >
+                <p className="text-sm font-semibold">{phase.label}</p>
+                <p className="text-[11px] text-slate-500">{phase.helper}</p>
+              </button>
+            ))}
+          </div>
+
           <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto]">
             <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value ? Number(e.target.value) : '')} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
               <option value="">Select user</option>
@@ -186,7 +220,7 @@ export default function AdminSuperTeam() {
           <div className="mb-4 grid gap-2 sm:grid-cols-4">
             <Metric label="Selected" value={`${selected.size}/${SUPER_TEAM_SIZE}`} good={selected.size === SUPER_TEAM_SIZE} />
             <Metric label="Bowlers" value={`${bowlerCount}/${MIN_BOWLERS}`} good={bowlerCount >= MIN_BOWLERS} />
-            <Metric label="Team Splits" value={invalidTeams.length === 0 ? 'OK' : `${invalidTeams.length} off`} good={invalidTeams.length === 0} />
+            <Metric label="Teams Used" value={String(Object.keys(teamCounts).length)} good={selected.size > 0} />
             <Metric label="Role Splits" value={missingRoles.length === 0 ? 'OK' : `${missingRoles.length} missing`} good={missingRoles.length === 0} />
             <Metric label="C / VC" value={`${(captain ? 1 : 0) + (viceCaptain ? 1 : 0)}/2`} good={Boolean(captain && viceCaptain && captain !== viceCaptain)} />
           </div>
@@ -261,15 +295,38 @@ export default function AdminSuperTeam() {
           </div>
 
           <div className="rounded-xl border border-slate-800 bg-slate-900">
-            <div className="border-b border-slate-800 px-4 py-3 text-sm font-semibold">Submitted Teams</div>
+            <div className="border-b border-slate-800 px-4 py-3">
+              <div className="mb-3 text-sm font-semibold">Teams By Snapshot</div>
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-950 p-1">
+                {snapshotPhases.map((phase) => (
+                  <button
+                    key={phase.key}
+                    type="button"
+                    onClick={() => setViewPhase(phase.key)}
+                    className={`rounded-md px-2 py-1.5 text-[11px] font-semibold ${
+                      viewPhase === phase.key ? 'bg-white text-slate-950' : 'text-slate-400 hover:bg-slate-800'
+                    }`}
+                  >
+                    {phase.label} ({(snapshots[phase.key] || []).length})
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="max-h-96 divide-y divide-slate-800 overflow-auto">
-              {teams.map((team) => (
-                <button key={team.user_id} onClick={() => setSelectedUserId(team.user_id)} className="block w-full px-4 py-3 text-left text-sm hover:bg-slate-800">
+              {(snapshots[viewPhase] || []).map((team) => (
+                <button
+                  key={`${viewPhase}-${team.user_id}`}
+                  onClick={() => {
+                    setActivePhase(viewPhase);
+                    setSelectedUserId(team.user_id);
+                  }}
+                  className="block w-full px-4 py-3 text-left text-sm hover:bg-slate-800"
+                >
                   <p className="font-medium">{team.name}</p>
-                  <p className="text-xs text-slate-500">{team.player_ids.length} players | C {team.captain || '-'} | VC {team.vice_captain || '-'} | {team.updated_at || '-'}</p>
+                  <p className="text-xs text-slate-500">{team.player_ids.length} players | C {team.captain || '-'} | VC {team.vice_captain || '-'} | {team.updated_at || (team as any).snapshot_at || '-'}</p>
                 </button>
               ))}
-              {teams.length === 0 && <div className="px-4 py-6 text-sm text-slate-500">No submitted teams.</div>}
+              {(snapshots[viewPhase] || []).length === 0 && <div className="px-4 py-6 text-sm text-slate-500">No teams in this snapshot.</div>}
             </div>
           </div>
         </div>

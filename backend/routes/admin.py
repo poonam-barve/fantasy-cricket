@@ -954,6 +954,14 @@ async def team_matches(user: dict = Depends(require_admin)):
     ).fetchall()
     return [dict(row) for row in rows]
 
+
+@router.get("/backups")
+async def backup_overview(
+    match_id: int | None = Query(None),
+    user: dict = Depends(require_admin),
+):
+    return data_service.get_admin_backup_overview(match_id)
+
 @router.get("/teams")
 async def view_teams(
     match_id: int = Query(...),

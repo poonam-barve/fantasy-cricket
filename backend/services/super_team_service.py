@@ -2,6 +2,7 @@ import copy
 import threading
 from collections import defaultdict
 from datetime import datetime
+import math
 
 from fastapi import HTTPException
 
@@ -12,17 +13,17 @@ from backend.services.match_status import resolve_match_status_from_row
 
 SUPER_MATCH_IDS = [71, 72, 73, 74]
 QUALIFIER_MATCH_IDS = [71, 72]
-SUPER_TEAM_BONUSES_BY_RANK = {1: 400, 2: 200, 3: 100}
+SUPER_TEAM_BONUSES_BY_RANK = {1: 1000, 2: 600, 3: 300}
 SUPER_TEAM_SIZE = 12
-SUPER_TEAM_PLAYERS_PER_TEAM = 3
-SUPER_TEAM_MAX_PLAYERS_PER_TEAM_AFTER_SUBS = 4
 SUPER_TEAM_MIN_BOWLERS = 4
 SUPER_TEAM_CAPTAIN_MULTIPLIER = 1.5
-SUPER_TEAM_VICE_CAPTAIN_MULTIPLIER = 1.2
+SUPER_TEAM_VICE_CAPTAIN_MULTIPLIER = 1.25
 SUPER_TEAM_REQUIRED_ROLES = ["Wicketkeeper", "Batter", "AllRounder"]
-SUPER_TEAM_PLAYER_SUB_PENALTY = 100
-SUPER_TEAM_CAPTAIN_CHANGE_PENALTY = 50
-SUPER_TEAM_VICE_CAPTAIN_CHANGE_PENALTY = 25
+SUPER_TEAM_SNAPSHOT_PHASES = ("original", "edited", "final")
+SUPER_TEAM_PHASE1_BAT_PENALTY = 80
+SUPER_TEAM_PHASE1_BOWL_PENALTY = 60
+SUPER_TEAM_PHASE2_BAT_PENALTY = 100
+SUPER_TEAM_PHASE2_BOWL_PENALTY = 80
 
 SUPER_TEAM_CACHE_LOCK = threading.Lock()
 SUPER_TEAM_CACHE: dict[int, dict] = {}
@@ -92,8 +93,27 @@ def _substitution_window_open(matches: dict[int, dict]) -> bool:
     )
 
 
-def _substitution_finalized(matches: dict[int, dict]) -> bool:
+def _second_substitution_window_open(matches: dict[int, dict]) -> bool:
+    return (
+        _status_for_match(matches.get(73)) == "completed"
+        and not _match_cutoff_reached(matches.get(74), use_toss_time=True)
+    )
+
+
+def _first_substitution_finalized(matches: dict[int, dict]) -> bool:
     return _match_cutoff_reached(matches.get(73), use_toss_time=True)
+
+
+def _second_substitution_finalized(matches: dict[int, dict]) -> bool:
+    return _match_cutoff_reached(matches.get(74), use_toss_time=True)
+
+
+def _active_substitution_phase(matches: dict[int, dict]) -> int:
+    if _second_substitution_window_open(matches):
+        return 2
+    if _substitution_window_open(matches):
+        return 1
+    return 0
 
 
 def _substitution_team_list(matches: dict[int, dict]) -> list[str]:
@@ -124,16 +144,22 @@ def get_context() -> dict:
     enabled = visible and len(teams) == 4 and all(not _is_tbd(team) for team in teams)
     match74_completed = _status_for_match(matches.get(74)) == "completed"
     locked = _is_locked(match71)
-    substitution_open = enabled and locked and _substitution_window_open(matches)
-    substitution_finalized = enabled and locked and _substitution_finalized(matches)
+    substitution_phase = _active_substitution_phase(matches) if enabled and locked else 0
+    substitution_open = substitution_phase > 0
+    first_substitution_finalized = enabled and locked and _first_substitution_finalized(matches)
+    second_substitution_finalized = enabled and locked and _second_substitution_finalized(matches)
     substitution_teams = _substitution_team_list(matches)
     return {
         "visible": visible,
         "enabled": enabled,
         "locked": locked,
         "can_edit": enabled and ((not locked) or substitution_open),
+        "public_visible": enabled and locked,
+        "substitution_phase": substitution_phase,
         "substitution_open": substitution_open,
-        "substitution_finalized": substitution_finalized,
+        "substitution_finalized": first_substitution_finalized,
+        "first_substitution_finalized": first_substitution_finalized,
+        "second_substitution_finalized": second_substitution_finalized,
         "substitution_teams": substitution_teams,
         "bonus_visible": match74_completed,
         "teams": teams if enabled else [],
@@ -145,8 +171,10 @@ def get_context() -> dict:
         "message": (
             "The playoff gates are shut for now. Once the final four are locked, Super Team turns into war mode."
             if not enabled
+            else "Second substitution window is open until Match 74 toss."
+            if substitution_phase == 2
             else "Substitution window is open until Match 73 toss."
-            if substitution_open
+            if substitution_phase == 1
             else ""
         ),
     }
@@ -197,6 +225,9 @@ def _fetch_submissions_from_db() -> dict[int, dict]:
 
 
 def _fetch_original_submissions_from_db() -> dict[int, dict]:
+    snapshots = _fetch_snapshot_submissions_from_db("original")
+    if snapshots:
+        return snapshots
     db = get_db()
     rows = db.execute(
         """
@@ -238,34 +269,84 @@ def _fetch_original_submissions_from_db() -> dict[int, dict]:
     return grouped
 
 
-def ensure_original_snapshots() -> int:
-    """Persist the locked Match 71/72 team as the comparison baseline."""
+def _fetch_snapshot_submissions_from_db(phase: str) -> dict[int, dict]:
     db = get_db()
-    existing_rows = db.execute("SELECT DISTINCT user_id FROM super_team_originals").fetchall()
-    existing_user_ids = {int(row["user_id"]) for row in existing_rows}
     rows = db.execute(
         """
-        SELECT user_id, player_id, is_captain, is_vice_captain
-        FROM super_teams
-        ORDER BY user_id, player_id
-        """
+        SELECT
+            sts.phase,
+            sts.user_id,
+            u.name AS user_name,
+            sts.player_id,
+            sts.is_captain,
+            sts.is_vice_captain,
+            sts.snapshot_at
+        FROM super_team_snapshots sts
+        JOIN users u ON u.id = sts.user_id
+        WHERE u.is_active = 1 AND sts.phase = ?
+        ORDER BY u.name, sts.player_id
+        """,
+        (phase,),
     ).fetchall()
+    grouped: dict[int, dict] = {}
+    for row in rows:
+        uid = int(row["user_id"])
+        entry = grouped.setdefault(
+            uid,
+            {
+                "user_id": uid,
+                "name": row["user_name"],
+                "phase": row["phase"],
+                "player_ids": [],
+                "captain": None,
+                "vice_captain": None,
+                "snapshot_at": row["snapshot_at"],
+            },
+        )
+        player_id = int(row["player_id"])
+        entry["player_ids"].append(player_id)
+        if row["is_captain"]:
+            entry["captain"] = player_id
+        if row["is_vice_captain"]:
+            entry["vice_captain"] = player_id
+        if row["snapshot_at"]:
+            entry["snapshot_at"] = row["snapshot_at"]
+    return grouped
+
+
+def _fetch_all_snapshots_from_db() -> dict[str, dict[int, dict]]:
+    return {phase: _fetch_snapshot_submissions_from_db(phase) for phase in SUPER_TEAM_SNAPSHOT_PHASES}
+
+
+def _save_snapshot_entry(phase: str, entry: dict, *, replace: bool = False) -> int:
+    if phase not in SUPER_TEAM_SNAPSHOT_PHASES:
+        raise HTTPException(status_code=400, detail="Invalid Super Team snapshot phase")
+    db = get_db()
+    user_id = int(entry["user_id"])
+    if replace:
+        db.execute("DELETE FROM super_team_snapshots WHERE phase = ? AND user_id = ?", (phase, user_id))
+    else:
+        existing = db.execute(
+            "SELECT 1 FROM super_team_snapshots WHERE phase = ? AND user_id = ? LIMIT 1",
+            (phase, user_id),
+        ).fetchone()
+        if existing:
+            return 0
     snapshot_at = _now_str()
     inserted = 0
-    for row in rows:
-        if int(row["user_id"]) in existing_user_ids:
-            continue
+    for pid in entry.get("player_ids", []):
         db.execute(
             """
-            INSERT INTO super_team_originals
-                (user_id, player_id, is_captain, is_vice_captain, snapshot_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO super_team_snapshots
+                (phase, user_id, player_id, is_captain, is_vice_captain, snapshot_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
-                int(row["user_id"]),
-                int(row["player_id"]),
-                int(row["is_captain"] or 0),
-                int(row["is_vice_captain"] or 0),
+                phase,
+                user_id,
+                int(pid),
+                1 if int(pid) == int(entry.get("captain") or 0) else 0,
+                1 if int(pid) == int(entry.get("vice_captain") or 0) else 0,
                 snapshot_at,
             ),
         )
@@ -274,53 +355,161 @@ def ensure_original_snapshots() -> int:
     return inserted
 
 
-def _penalty_details(original: dict | None, current: dict | None) -> dict:
+def ensure_original_snapshots() -> int:
+    """Persist the locked Match 71/72 team as the comparison baseline."""
+    db = get_db()
+    existing_rows = db.execute("SELECT DISTINCT user_id FROM super_team_snapshots WHERE phase = 'original'").fetchall()
+    existing_user_ids = {int(row["user_id"]) for row in existing_rows}
+    inserted = 0
+    for uid, entry in _fetch_submissions_from_db().items():
+        if int(uid) in existing_user_ids:
+            continue
+        inserted += _save_snapshot_entry("original", entry)
+    return inserted
+
+
+def ensure_phase_snapshots(context: dict | None = None) -> int:
+    context = context or get_context()
+    inserted = 0
+    submissions = _fetch_submissions_from_db()
+    if context.get("locked"):
+        inserted += ensure_original_snapshots()
+    snapshots = _fetch_all_snapshots_from_db()
+    originals = snapshots.get("original", {})
+    edited = snapshots.get("edited", {})
+    if context.get("first_substitution_finalized"):
+        for uid, original in originals.items():
+            if uid not in edited:
+                inserted += _save_snapshot_entry("edited", submissions.get(uid) or original)
+    snapshots = _fetch_all_snapshots_from_db()
+    edited = snapshots.get("edited", {})
+    final = snapshots.get("final", {})
+    if context.get("second_substitution_finalized"):
+        for uid, edited_entry in edited.items():
+            if uid not in final:
+                inserted += _save_snapshot_entry("final", submissions.get(uid) or edited_entry)
+    return inserted
+
+
+def replace_snapshot(phase: str, user_id: int, player_ids: list[int], captain: int, vice_captain: int) -> dict:
+    normalized = validate_selection(player_ids, int(user_id), allow_any_playoff_player=True)
+    captain_id, vice_captain_id = validate_leaders(normalized, captain, vice_captain)
+    user_row = get_db().execute("SELECT name FROM users WHERE id = ? AND is_active = 1", (int(user_id),)).fetchone()
+    if not user_row:
+        raise HTTPException(status_code=404, detail="User not found")
+    entry = {
+        "user_id": int(user_id),
+        "name": user_row["name"],
+        "player_ids": normalized,
+        "captain": captain_id,
+        "vice_captain": vice_captain_id,
+    }
+    _save_snapshot_entry(phase, entry, replace=True)
+    refresh_super_team_standings_cache()
+    return entry
+
+
+def _batting_sub_penalty_for_phase(phase: int) -> int:
+    return SUPER_TEAM_PHASE2_BAT_PENALTY if phase == 2 else SUPER_TEAM_PHASE1_BAT_PENALTY
+
+
+def _bowling_sub_penalty_for_phase(phase: int) -> int:
+    return SUPER_TEAM_PHASE2_BOWL_PENALTY if phase == 2 else SUPER_TEAM_PHASE1_BOWL_PENALTY
+
+
+def _is_bowling_role(role: str | None) -> bool:
+    return str(role or "") == "Bowler"
+
+
+def _sub_penalty_for_role(role: str | None, phase: int) -> int:
+    return _bowling_sub_penalty_for_phase(phase) if _is_bowling_role(role) else _batting_sub_penalty_for_phase(phase)
+
+
+def _penalty_details(original: dict | None, current: dict | None, *, phase: int = 1) -> dict:
     if not original or not current:
         return {
             "total": 0,
             "new_player_count": 0,
             "new_player_penalty": 0,
+            "new_player_penalties": [],
             "captain_changed": False,
             "captain_penalty": 0,
             "vice_captain_changed": False,
             "vice_captain_penalty": 0,
             "new_player_ids": [],
+            "phase": phase,
         }
+    players = _player_lookup()
     original_ids = {int(pid) for pid in original.get("player_ids", [])}
     current_ids = {int(pid) for pid in current.get("player_ids", [])}
     new_player_ids = sorted(current_ids - original_ids)
     captain_changed = int(original.get("captain") or 0) != int(current.get("captain") or 0)
     vice_captain_changed = int(original.get("vice_captain") or 0) != int(current.get("vice_captain") or 0)
-    new_player_penalty = len(new_player_ids) * SUPER_TEAM_PLAYER_SUB_PENALTY
-    captain_penalty = SUPER_TEAM_CAPTAIN_CHANGE_PENALTY if captain_changed else 0
-    vice_captain_penalty = SUPER_TEAM_VICE_CAPTAIN_CHANGE_PENALTY if vice_captain_changed else 0
+    new_player_penalties = []
+    for pid in new_player_ids:
+        player = players.get(int(pid), {})
+        penalty = _sub_penalty_for_role(player.get("Role"), phase)
+        new_player_penalties.append({
+            "player_id": int(pid),
+            "name": player.get("Name", ""),
+            "role": player.get("Role", ""),
+            "penalty": penalty,
+        })
+    new_player_penalty = sum(item["penalty"] for item in new_player_penalties)
+    captain_role = players.get(int(current.get("captain") or 0), {}).get("Role")
+    vice_captain_role = players.get(int(current.get("vice_captain") or 0), {}).get("Role")
+    captain_penalty = int(_sub_penalty_for_role(captain_role, phase) * 0.5) if captain_changed else 0
+    vice_captain_penalty = int(_sub_penalty_for_role(vice_captain_role, phase) * 0.25) if vice_captain_changed else 0
     total = new_player_penalty + captain_penalty + vice_captain_penalty
     return {
         "total": total,
         "new_player_count": len(new_player_ids),
         "new_player_penalty": new_player_penalty,
+        "new_player_penalties": new_player_penalties,
         "captain_changed": captain_changed,
         "captain_penalty": captain_penalty,
         "vice_captain_changed": vice_captain_changed,
         "vice_captain_penalty": vice_captain_penalty,
         "new_player_ids": new_player_ids,
+        "phase": phase,
     }
 
 
 def _penalty_lookup(submissions: dict[int, dict] | None = None) -> dict[int, dict]:
-    current = submissions or get_submissions()
-    originals = _fetch_original_submissions_from_db()
-    return {
-        int(uid): _penalty_details(originals.get(int(uid)), entry)
-        for uid, entry in current.items()
-    }
+    current = submissions or _fetch_submissions_from_db()
+    snapshots = _fetch_all_snapshots_from_db()
+    originals = snapshots.get("original", {}) or _fetch_original_submissions_from_db()
+    edited = snapshots.get("edited", {})
+    final = snapshots.get("final", {})
+    user_ids = set(current) | set(originals) | set(edited) | set(final)
+    penalties: dict[int, dict] = {}
+    for uid in user_ids:
+        phase1_current = edited.get(uid)
+        phase1 = _penalty_details(originals.get(uid), phase1_current, phase=1)
+        phase2_base = edited.get(uid)
+        phase2_current = final.get(uid)
+        phase2 = _penalty_details(phase2_base, phase2_current, phase=2)
+        total = int(phase1.get("total", 0) or 0) + int(phase2.get("total", 0) or 0)
+        penalties[int(uid)] = {
+            "total": total,
+            "phase1": phase1,
+            "phase2": phase2,
+            "new_player_count": int(phase1.get("new_player_count", 0) or 0) + int(phase2.get("new_player_count", 0) or 0),
+            "new_player_penalty": int(phase1.get("new_player_penalty", 0) or 0) + int(phase2.get("new_player_penalty", 0) or 0),
+            "captain_changed": bool(phase1.get("captain_changed") or phase2.get("captain_changed")),
+            "captain_penalty": int(phase1.get("captain_penalty", 0) or 0) + int(phase2.get("captain_penalty", 0) or 0),
+            "vice_captain_changed": bool(phase1.get("vice_captain_changed") or phase2.get("vice_captain_changed")),
+            "vice_captain_penalty": int(phase1.get("vice_captain_penalty", 0) or 0) + int(phase2.get("vice_captain_penalty", 0) or 0),
+            "new_player_ids": [*phase1.get("new_player_ids", []), *phase2.get("new_player_ids", [])],
+        }
+    return penalties
 
 
 def prime_super_team_cache() -> dict:
     global SUPER_TEAM_CACHE_LOADED
     context = get_context()
-    if context.get("substitution_open") or context.get("substitution_finalized"):
-        ensure_original_snapshots()
+    if context.get("locked"):
+        ensure_phase_snapshots(context)
     submissions = _fetch_submissions_from_db()
     with SUPER_TEAM_CACHE_LOCK:
         SUPER_TEAM_CACHE.clear()
@@ -360,14 +549,25 @@ def _original_player_ids_for_user(user_id: int | None) -> set[int]:
     return {int(pid) for pid in original.get("player_ids", [])}
 
 
+def _snapshot_player_ids_for_user(user_id: int | None) -> set[int]:
+    if user_id is None:
+        return set()
+    ids: set[int] = set()
+    for phase_entries in _fetch_all_snapshots_from_db().values():
+        entry = phase_entries.get(int(user_id))
+        if entry:
+            ids.update(int(pid) for pid in entry.get("player_ids", []))
+    return ids
+
+
 def _build_player_pool(user_id: int | None = None) -> list[dict]:
     global SUPER_PLAYER_POOL_KEY
     context = get_context()
-    original_ids = _original_player_ids_for_user(user_id) if context.get("substitution_open") else set()
-    teams = set(context.get("substitution_teams") or context["teams"]) if context.get("substitution_open") else set(context["teams"])
-    if not teams and not original_ids:
+    snapshot_ids = _snapshot_player_ids_for_user(user_id) if context.get("locked") else set()
+    teams = set(context["teams"])
+    if not teams and not snapshot_ids:
         return []
-    cache_key = tuple([str(user_id or 0), *sorted(teams), *[str(pid) for pid in sorted(original_ids)]])
+    cache_key = tuple([str(user_id or 0), *sorted(teams), *[str(pid) for pid in sorted(snapshot_ids)]])
     with SUPER_TEAM_CACHE_LOCK:
         if SUPER_PLAYER_POOL_KEY == cache_key:
             return copy.deepcopy(SUPER_PLAYER_POOL_CACHE)
@@ -377,9 +577,9 @@ def _build_player_pool(user_id: int | None = None) -> list[dict]:
     if teams:
         clauses.append(f"p.team IN ({','.join('?' * len(teams))})")
         params.extend(list(teams))
-    if original_ids:
-        clauses.append(f"p.id IN ({','.join('?' * len(original_ids))})")
-        params.extend(sorted(original_ids))
+    if snapshot_ids:
+        clauses.append(f"p.id IN ({','.join('?' * len(snapshot_ids))})")
+        params.extend(sorted(snapshot_ids))
     where_clause = " OR ".join(clauses)
     rows = db.execute(
         f"""
@@ -493,16 +693,16 @@ def grouped_player_pool(user_id: int | None = None) -> dict[str, list[dict]]:
 
 def _eligible_player_ids_for_context(context: dict, user_id: int | None = None) -> set[int]:
     players = _player_lookup()
-    original_ids = _original_player_ids_for_user(user_id) if context.get("substitution_open") else set()
-    eligible_teams = set(context.get("substitution_teams") or context["teams"]) if context.get("substitution_open") else set(context["teams"])
+    snapshot_ids = _snapshot_player_ids_for_user(user_id) if context.get("locked") else set()
+    eligible_teams = set(context["teams"])
     return {
         int(pid)
         for pid, player in players.items()
-        if player and (player["Team"] in eligible_teams or int(pid) in original_ids)
+        if player and (player["Team"] in eligible_teams or int(pid) in snapshot_ids)
     }
 
 
-def validate_selection(player_ids: list[int], user_id: int | None = None) -> list[int]:
+def validate_selection(player_ids: list[int], user_id: int | None = None, *, allow_any_playoff_player: bool = False) -> list[int]:
     if len(player_ids) != SUPER_TEAM_SIZE:
         raise HTTPException(status_code=400, detail=f"Exactly {SUPER_TEAM_SIZE} players required")
     normalized = [int(pid) for pid in player_ids]
@@ -516,7 +716,7 @@ def validate_selection(player_ids: list[int], user_id: int | None = None) -> lis
     selected = [players.get(pid) for pid in normalized]
     if any(player is None for player in selected):
         raise HTTPException(status_code=400, detail="Some player IDs are invalid")
-    if any(pid not in eligible_player_ids for pid in normalized):
+    if not allow_any_playoff_player and any(pid not in eligible_player_ids for pid in normalized):
         raise HTTPException(status_code=400, detail="Some players are not eligible for Super Team")
     role_counts = {
         role: sum(1 for player in selected if player and player["Role"] == role)
@@ -528,42 +728,11 @@ def validate_selection(player_ids: list[int], user_id: int | None = None) -> lis
     bowler_count = sum(1 for player in selected if player and player["Role"] == "Bowler")
     if bowler_count < SUPER_TEAM_MIN_BOWLERS:
         raise HTTPException(status_code=400, detail=f"At least {SUPER_TEAM_MIN_BOWLERS} Bowlers required")
-    team_counts: dict[str, int] = {}
-    for player in selected:
-        if player:
-            team_counts[player["Team"]] = team_counts.get(player["Team"], 0) + 1
-    if context.get("substitution_open"):
-        over_limit_teams = [
-            team for team, count in team_counts.items()
-            if count > SUPER_TEAM_MAX_PLAYERS_PER_TEAM_AFTER_SUBS
-        ]
-        if over_limit_teams:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Select at most {SUPER_TEAM_MAX_PLAYERS_PER_TEAM_AFTER_SUBS} players from each team",
-            )
-        return normalized
-    invalid_teams = [
-        team for team in context["teams"]
-        if team_counts.get(team, 0) != SUPER_TEAM_PLAYERS_PER_TEAM
-    ]
-    if invalid_teams:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Select exactly {SUPER_TEAM_PLAYERS_PER_TEAM} players from each playoff team",
-        )
     return normalized
 
 
 def validate_substitution_against_original(user_id: int, player_ids: list[int]) -> None:
-    originals = _fetch_original_submissions_from_db()
-    original = originals.get(int(user_id))
-    if not original:
-        return
-    original_ids = {int(pid) for pid in original.get("player_ids", [])}
-    final_ids = {int(pid) for pid in player_ids}
-    if len(final_ids - original_ids) > len(original_ids - final_ids):
-        raise HTTPException(status_code=400, detail="Every new Super Team player must replace one original player")
+    return
 
 
 def validate_leaders(player_ids: list[int], captain: int, vice_captain: int) -> tuple[int, int]:
@@ -595,16 +764,22 @@ def _super_team_tag(player_id: int, captain: int | None, vice_captain: int | Non
     return ""
 
 
+def _apply_super_team_multiplier(base_points: float, player_id: int, captain: int | None, vice_captain: int | None) -> float:
+    multiplier = _super_team_multiplier(player_id, captain, vice_captain)
+    points = base_points * multiplier
+    if vice_captain is not None and int(player_id) == int(vice_captain):
+        return math.ceil(points * 2) / 2
+    return points
+
+
 def save_team(user_id: int, player_ids: list[int], captain: int, vice_captain: int, updated_by: int | None = None, ignore_lock: bool = False) -> dict:
     global SUPER_TEAM_CACHE_LOADED
     context = get_context()
-    if context.get("substitution_open"):
-        ensure_original_snapshots()
+    if context.get("locked"):
+        ensure_phase_snapshots(context)
     if not context.get("can_edit") and not ignore_lock:
         raise HTTPException(status_code=400, detail="Super Team is locked")
     normalized = validate_selection(player_ids, int(user_id))
-    if context.get("substitution_open") and not ignore_lock:
-        validate_substitution_against_original(int(user_id), normalized)
     captain_id, vice_captain_id = validate_leaders(normalized, captain, vice_captain)
     db = get_db()
     user_row = db.execute("SELECT name FROM users WHERE id = ? AND is_active = 1", (int(user_id),)).fetchone()
@@ -644,6 +819,27 @@ def save_team(user_id: int, player_ids: list[int], captain: int, vice_captain: i
     return copy.deepcopy(entry)
 
 
+def projected_penalty(user_id: int, player_ids: list[int], captain: int, vice_captain: int) -> dict:
+    context = get_context()
+    normalized = validate_selection(player_ids, int(user_id))
+    captain_id, vice_captain_id = validate_leaders(normalized, captain, vice_captain)
+    draft = {
+        "user_id": int(user_id),
+        "player_ids": normalized,
+        "captain": captain_id,
+        "vice_captain": vice_captain_id,
+    }
+    ensure_phase_snapshots(context)
+    snapshots = _fetch_all_snapshots_from_db()
+    phase = int(context.get("substitution_phase") or 0)
+    if phase == 1:
+        return _penalty_details(snapshots.get("original", {}).get(int(user_id)), draft, phase=1)
+    if phase == 2:
+        baseline = snapshots.get("edited", {}).get(int(user_id)) or snapshots.get("original", {}).get(int(user_id))
+        return _penalty_details(baseline, draft, phase=2)
+    return _penalty_details(None, None, phase=0)
+
+
 def my_team(user_id: int) -> dict:
     submissions = get_submissions()
     entry = submissions.get(int(user_id))
@@ -651,6 +847,7 @@ def my_team(user_id: int) -> dict:
         return {"players": [], "updated_at": None, "penalty": _penalty_details(None, None)}
     players = _player_lookup()
     penalty = _penalty_lookup(submissions).get(int(user_id), _penalty_details(None, None))
+    snapshots = _fetch_all_snapshots_from_db()
     return {
         "players": [
             {
@@ -667,6 +864,10 @@ def my_team(user_id: int) -> dict:
         "vice_captain": entry.get("vice_captain"),
         "updated_at": entry.get("updated_at"),
         "penalty": penalty,
+        "snapshots": {
+            phase: snapshots.get(phase, {}).get(int(user_id))
+            for phase in SUPER_TEAM_SNAPSHOT_PHASES
+        },
     }
 
 
@@ -675,6 +876,17 @@ def contestants() -> list[dict]:
         {"user_id": entry["user_id"], "name": entry["name"], "last_team_updated": entry.get("updated_at")}
         for entry in sorted(get_submissions().values(), key=lambda item: item["name"])
     ]
+
+
+def admin_snapshot_payload() -> dict:
+    snapshots = _fetch_all_snapshots_from_db()
+    current = get_submissions()
+    return {
+        "current": list(current.values()),
+        "original": list(snapshots.get("original", {}).values()),
+        "edited": list(snapshots.get("edited", {}).values()),
+        "final": list(snapshots.get("final", {}).values()),
+    }
 
 
 def missing_users() -> list[dict]:
@@ -725,11 +937,16 @@ def _point_lookup_from_db() -> dict[tuple[int, int], float]:
 
 
 def refresh_super_team_standings_cache() -> dict:
-    submissions = get_submissions()
-    originals = _fetch_original_submissions_from_db()
-    penalties = _penalty_lookup(submissions)
     context = get_context()
-    penalty_applies = bool(context.get("substitution_finalized"))
+    if context.get("locked"):
+        ensure_phase_snapshots(context)
+    submissions = _fetch_submissions_from_db()
+    snapshots = _fetch_all_snapshots_from_db()
+    originals = snapshots.get("original", {}) or _fetch_original_submissions_from_db()
+    edited = snapshots.get("edited", {})
+    final = snapshots.get("final", {})
+    penalties = _penalty_lookup(submissions)
+    penalty_applies = bool(context.get("first_substitution_finalized") or context.get("second_substitution_finalized"))
     point_lookup = _point_lookup_from_db()
     point_lookup.update(_point_lookup_from_score_cache())
     players = _player_lookup()
@@ -740,13 +957,16 @@ def refresh_super_team_standings_cache() -> dict:
         match_points: dict[int, float] = defaultdict(float)
         match_players: dict[int, list[dict]] = {match_id: [] for match_id in SUPER_MATCH_IDS}
         total = 0.0
-        original_entry = originals.get(int(entry["user_id"]))
+        original_entry = originals.get(int(entry["user_id"])) or entry
+        edited_entry = edited.get(int(entry["user_id"])) or original_entry
+        final_entry = final.get(int(entry["user_id"])) or edited_entry
         score_entries_by_match = {
-            71: original_entry or entry,
-            72: original_entry or entry,
-            73: entry,
-            74: entry,
+            71: original_entry,
+            72: original_entry,
+            73: edited_entry,
+            74: final_entry,
         }
+        latest_ids = {int(pid) for pid in final_entry.get("player_ids", [])}
         for match_id in SUPER_MATCH_IDS:
             score_entry = score_entries_by_match[match_id]
             match_captain = score_entry.get("captain")
@@ -756,7 +976,7 @@ def refresh_super_team_standings_cache() -> dict:
                 multiplier = _super_team_multiplier(int(pid), match_captain, match_vice_captain)
                 tag = _super_team_tag(int(pid), match_captain, match_vice_captain)
                 base_pts = float(point_lookup.get((match_id, int(pid)), 0))
-                pts = base_pts * multiplier
+                pts = _apply_super_team_multiplier(base_pts, int(pid), match_captain, match_vice_captain)
                 match_points[match_id] += pts
                 total += pts
                 match_players[match_id].append({
@@ -768,6 +988,7 @@ def refresh_super_team_standings_cache() -> dict:
                     "multiplier": multiplier,
                     "tag": tag,
                     "points": round(pts, 2),
+                    "removed": int(pid) not in latest_ids,
                 })
         gross_points = round(total, 2)
         penalty = penalties.get(int(entry["user_id"]), _penalty_details(None, None))
@@ -813,7 +1034,7 @@ def refresh_super_team_standings_cache() -> dict:
 
     player_ids = sorted({
         int(pid)
-        for entry in [*submissions.values(), *originals.values()]
+        for entry in [*submissions.values(), *originals.values(), *edited.values(), *final.values()]
         for pid in entry.get("player_ids", [])
     })
     player_points = []

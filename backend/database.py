@@ -427,6 +427,18 @@ def _ensure_super_teams_postgres(cursor):
             UNIQUE(user_id, player_id)
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS super_team_snapshots (
+            id SERIAL PRIMARY KEY,
+            phase TEXT NOT NULL,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            player_id INTEGER NOT NULL REFERENCES players(id),
+            is_captain INTEGER NOT NULL DEFAULT 0,
+            is_vice_captain INTEGER NOT NULL DEFAULT 0,
+            snapshot_at TEXT NOT NULL,
+            UNIQUE(phase, user_id, player_id)
+        )
+    """)
 
 
 def _ensure_team_backups_sqlite(conn):
@@ -485,6 +497,18 @@ def _ensure_super_teams_sqlite(conn):
             UNIQUE(user_id, player_id)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS super_team_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phase TEXT NOT NULL,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            player_id INTEGER NOT NULL REFERENCES players(id),
+            is_captain INTEGER NOT NULL DEFAULT 0,
+            is_vice_captain INTEGER NOT NULL DEFAULT 0,
+            snapshot_at TEXT NOT NULL,
+            UNIQUE(phase, user_id, player_id)
+        )
+    """)
 
 
 def _ensure_matches_metadata_sqlite(conn):
@@ -521,6 +545,7 @@ def _ensure_indexes_sqlite(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_super_teams_user ON super_teams(user_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_super_teams_player ON super_teams(player_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_super_team_originals_user ON super_team_originals(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_super_team_snapshots_phase_user ON super_team_snapshots(phase, user_id)")
 
 
 def _ensure_matches_metadata_postgres(cursor):
@@ -704,6 +729,7 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_score_predictions_match ON score_predictions(match_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_super_teams_user ON super_teams(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_super_teams_player ON super_teams(player_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_super_team_snapshots_phase_user ON super_team_snapshots(phase, user_id)")
 
         conn.commit()
         conn.close()

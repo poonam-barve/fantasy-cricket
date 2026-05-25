@@ -296,9 +296,12 @@ def _fetch_match_team_selection_rows(match_id: int) -> list[dict]:
         SELECT
             u.id AS user_id,
             u.name AS user_name,
+            u.mobile AS mobile,
+            ut.match_id,
             ut.player_id,
             ut.is_captain,
             ut.is_vice_captain,
+            ut.updated_at,
             p.name AS player_name,
             p.team,
             p.role
@@ -311,7 +314,37 @@ def _fetch_match_team_selection_rows(match_id: int) -> list[dict]:
         """,
         (int(match_id),),
     ).fetchall()
-    return _rows_to_dicts(rows)
+    payload = _rows_to_dicts(rows)
+    backup_rows = db.execute(
+        """
+        SELECT
+            tb.user_id,
+            tb.backup_player_id,
+            tb.replaced_player_id,
+            p.name AS backup_player_name,
+            p.team AS backup_team,
+            p.role AS backup_role
+        FROM team_backups tb
+        JOIN players p ON p.id = tb.backup_player_id
+        WHERE tb.match_id = ?
+          AND tb.replaced_player_id IS NOT NULL
+        """,
+        (int(match_id),),
+    ).fetchall()
+    replacements = {
+        (int(row["user_id"]), int(row["replaced_player_id"])): dict(row)
+        for row in backup_rows
+    }
+    if replacements:
+        for row in payload:
+            replacement = replacements.get((int(row["user_id"]), int(row["player_id"])))
+            if not replacement:
+                continue
+            row["player_id"] = int(replacement["backup_player_id"])
+            row["player_name"] = replacement["backup_player_name"]
+            row["team"] = replacement["backup_team"]
+            row["role"] = replacement["backup_role"]
+    return payload
 
 
 def get_cached_match_team_selection_rows(match_id: int) -> list[dict]:
@@ -324,6 +357,11 @@ def get_cached_match_team_selection_rows(match_id: int) -> list[dict]:
     with MATCH_TEAM_SELECTION_LOCK:
         MATCH_TEAM_SELECTION_CACHE[int(match_id)] = copy.deepcopy(payload)
         return copy.deepcopy(payload)
+
+
+def set_cached_match_team_selection_rows(match_id: int, rows: list[dict]) -> None:
+    with MATCH_TEAM_SELECTION_LOCK:
+        MATCH_TEAM_SELECTION_CACHE[int(match_id)] = copy.deepcopy(rows)
 
 
 def refresh_match_team_selection_cache(match_id: int) -> list[dict]:
@@ -418,10 +456,22 @@ def _fetch_user_team_summaries(user_id: int, match_ids: list[int] | None = None)
         """,
         params,
     ).fetchall()
+    replacement_rows = db.execute(
+        f"""
+        SELECT match_id, backup_player_id, replaced_player_id
+        FROM team_backups
+        WHERE user_id = ?{match_filter} AND replaced_player_id IS NOT NULL
+        """,
+        params,
+    ).fetchall()
+    replacements_by_match: dict[int, dict[int, int]] = {}
+    for row in replacement_rows:
+        replacements_by_match.setdefault(int(row["match_id"]), {})[int(row["replaced_player_id"])] = int(row["backup_player_id"])
     for row in team_rows:
         match_id = int(row["match_id"])
+        replacement_id = replacements_by_match.get(match_id, {}).get(int(row["player_id"]))
         summaries.setdefault(match_id, {"selected_ids": [], "backup_count": 0})
-        summaries[match_id]["selected_ids"].append(int(row["player_id"]))
+        summaries[match_id]["selected_ids"].append(replacement_id or int(row["player_id"]))
 
     backup_rows = db.execute(
         f"""
@@ -897,6 +947,25 @@ def get_teams() -> list[dict]:
 
 
 def get_teams_for_matches(match_ids: list[int | str] | None = None) -> list[dict]:
+    if match_ids:
+        rows = []
+        for match_id in [int(mid) for mid in match_ids]:
+            rows.extend(get_cached_match_team_selection_rows(match_id))
+        return [
+            {
+                "UserID": r["user_id"],
+                "User": r["user_name"],
+                "Mobile": r.get("mobile") or "",
+                "IsActive": True,
+                "MatchID": str(int(match_id)) if (match_id := r.get("match_id")) is not None else "",
+                "PlayerID": r["player_id"],
+                "Name": r["player_name"],
+                "Captain": "TRUE" if r["is_captain"] else "FALSE",
+                "ViceCaptain": "TRUE" if r["is_vice_captain"] else "FALSE",
+            }
+            for r in rows
+        ]
+
     db = get_db()
     query = """
         SELECT
@@ -973,6 +1042,67 @@ def get_user_backups(user_id: int, match_id: int) -> list[dict]:
         (int(user_id), int(match_id)),
     ).fetchall()
     return _rows_to_dicts(rows)
+
+
+def get_admin_backup_overview(match_id: int | None = None) -> list[dict]:
+    db = get_db()
+    params: list[int] = []
+    match_filter = ""
+    if match_id is not None:
+        match_filter = " AND tb.match_id = ?"
+        params.append(int(match_id))
+    rows = db.execute(
+        f"""
+        SELECT
+            tb.user_id,
+            u.name AS user_name,
+            u.email AS user_email,
+            tb.match_id,
+            m.team1,
+            m.team2,
+            m.match_date,
+            tb.backup_order,
+            tb.backup_player_id,
+            bp.name AS backup_player_name,
+            bp.team AS backup_team,
+            bp.role AS backup_role,
+            tb.replaced_player_id,
+            rp.name AS replaced_player_name,
+            rp.team AS replaced_team,
+            rp.role AS replaced_role
+        FROM team_backups tb
+        JOIN users u ON u.id = tb.user_id
+        JOIN matches m ON m.id = tb.match_id
+        JOIN players bp ON bp.id = tb.backup_player_id
+        LEFT JOIN players rp ON rp.id = tb.replaced_player_id
+        WHERE u.is_active = 1{match_filter}
+        ORDER BY tb.match_id DESC, u.name, tb.backup_order
+        """,
+        params,
+    ).fetchall()
+    active_by_match: dict[int, set[tuple[int, int]]] = {}
+    for row in rows:
+        mid = int(row["match_id"])
+        if mid not in active_by_match:
+            active_by_match[mid] = {
+                (int(team_row["user_id"]), int(team_row["player_id"]))
+                for team_row in get_cached_match_team_selection_rows(mid)
+            }
+    result = []
+    for row in rows:
+        mid = int(row["match_id"])
+        backup_id = int(row["backup_player_id"])
+        uid = int(row["user_id"])
+        result.append({
+            **dict(row),
+            "user_id": uid,
+            "match_id": mid,
+            "backup_player_id": backup_id,
+            "replaced_player_id": int(row["replaced_player_id"]) if row["replaced_player_id"] is not None else None,
+            "was_replaced": row["replaced_player_id"] is not None,
+            "is_active_in_cached_team": (uid, backup_id) in active_by_match.get(mid, set()),
+        })
+    return result
 
 
 def save_user_backups(user_id: int, match_id: int, backup_player_ids: list[int]) -> None:
@@ -1094,22 +1224,7 @@ def apply_backups_for_match(match_id: int | str, playing_ids: list[int], substit
     playing_set = {int(pid) for pid in playing_ids}
     substitute_set = {int(pid) for pid in substitute_ids}
 
-    team_rows = db.execute(
-        """
-        SELECT
-            ut.id,
-            ut.user_id,
-            ut.player_id,
-            ut.is_captain,
-            ut.is_vice_captain
-        FROM user_teams ut
-        JOIN users u ON u.id = ut.user_id
-        WHERE ut.match_id = ?
-          AND u.is_active = 1
-        ORDER BY ut.user_id, ut.is_captain DESC, ut.is_vice_captain DESC, ut.id
-        """,
-        (mid,),
-    ).fetchall()
+    team_rows = get_cached_match_team_selection_rows(mid)
 
     backups = db.execute(
         """
@@ -1122,8 +1237,10 @@ def apply_backups_for_match(match_id: int | str, playing_ids: list[int], substit
     ).fetchall()
 
     team_rows_by_user: dict[int, list[dict]] = {}
-    for row in team_rows:
-        team_rows_by_user.setdefault(int(row["user_id"]), []).append(dict(row))
+    for index, row in enumerate(team_rows):
+        team_row = dict(row)
+        team_row["_cache_index"] = index
+        team_rows_by_user.setdefault(int(team_row["user_id"]), []).append(team_row)
 
     backups_by_user: dict[int, list[dict]] = {}
     for row in backups:
@@ -1212,14 +1329,23 @@ def apply_backups_for_match(match_id: int | str, playing_ids: list[int], substit
 
             old_player_id = int(chosen_invalid_row["player_id"])
             db.execute(
-                "UPDATE user_teams SET player_id = ? WHERE id = ?",
-                (new_player_id, int(chosen_invalid_row["id"])),
-            )
-            db.execute(
                 "UPDATE team_backups SET replaced_player_id = ? WHERE id = ?",
                 (old_player_id, int(backup_row["id"])),
             )
+            cached_index = chosen_invalid_row.get("_cache_index")
+            if cached_index is not None:
+                player_info = next((p for p in get_cached_data("players") if int(p.get("PlayerID", 0) or 0) == new_player_id), None) or {}
+                team_rows[int(cached_index)] = {
+                    **team_rows[int(cached_index)],
+                    "player_id": new_player_id,
+                    "player_name": player_info.get("Name", ""),
+                    "team": player_info.get("Team", ""),
+                    "role": player_info.get("Role", ""),
+                }
             chosen_invalid_row["player_id"] = new_player_id
+            chosen_invalid_row["player_name"] = team_rows[int(cached_index)]["player_name"] if cached_index is not None else chosen_invalid_row.get("player_name")
+            chosen_invalid_row["team"] = team_rows[int(cached_index)]["team"] if cached_index is not None else chosen_invalid_row.get("team")
+            chosen_invalid_row["role"] = team_rows[int(cached_index)]["role"] if cached_index is not None else chosen_invalid_row.get("role")
             selected_ids.discard(old_player_id)
             selected_ids.add(new_player_id)
             old_role = player_roles.get(old_player_id)
@@ -1233,9 +1359,9 @@ def apply_backups_for_match(match_id: int | str, playing_ids: list[int], substit
 
     if swap_count:
         db.commit()
-        refresh_match_team_selection_cache(mid)
+        set_cached_match_team_selection_rows(mid, team_rows)
         for changed_user_id in changed_user_ids:
-            refresh_user_team_summary_cache(changed_user_id, mid)
+            invalidate_user_team_summary_cache(changed_user_id, mid)
     return swap_count
 
 

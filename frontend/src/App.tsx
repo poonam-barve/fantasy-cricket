@@ -25,6 +25,7 @@ const ManageMatches = lazy(() => import('./pages/admin/ManageMatches'));
 const ManageUsers = lazy(() => import('./pages/admin/ManageUsers'));
 const ScoreControl = lazy(() => import('./pages/admin/ScoreControl'));
 const ManageTeams = lazy(() => import('./pages/admin/ManageTeams'));
+const ManageBackups = lazy(() => import('./pages/admin/ManageBackups'));
 const MissedPlayers = lazy(() => import('./pages/admin/MissedPlayers'));
 const AdminSuperTeam = lazy(() => import('./pages/admin/AdminSuperTeam'));
 
@@ -72,6 +73,7 @@ export default function App() {
               <Route path="players" element={<ManagePlayers />} />
               <Route path="matches" element={<ManageMatches />} />
               <Route path="teams" element={<ManageTeams />} />
+              <Route path="backups" element={<ManageBackups />} />
               <Route path="users" element={<ManageUsers />} />
               <Route path="scores" element={<ScoreControl />} />
               <Route path="missed-players" element={<MissedPlayers />} />
