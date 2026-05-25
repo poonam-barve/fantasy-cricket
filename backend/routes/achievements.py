@@ -263,7 +263,10 @@ def _build_response_from_db(db=None) -> dict:
             sort_key = lambda x: -x[key]
         sorted_list = sorted(entries, key=sort_key)
         for i, e in enumerate(sorted_list):
-            ranks_by_user[e["user_id"]][key] = i + 1
+            if i > 0 and e[key] == sorted_list[i - 1][key]:
+                ranks_by_user[e["user_id"]][key] = ranks_by_user[sorted_list[i - 1]["user_id"]][key]
+            else:
+                ranks_by_user[e["user_id"]][key] = i + 1
 
     # all_stats: per-user stats with ranks (for my_stats lookup)
     all_stats = []
