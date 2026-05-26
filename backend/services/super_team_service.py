@@ -549,21 +549,27 @@ def _original_player_ids_for_user(user_id: int | None) -> set[int]:
     return {int(pid) for pid in original.get("player_ids", [])}
 
 
-def _snapshot_player_ids_for_user(user_id: int | None) -> set[int]:
+def _snapshot_player_ids_for_user_from_cache(user_id: int | None) -> set[int]:
     if user_id is None:
         return set()
     ids: set[int] = set()
-    for phase_entries in _fetch_all_snapshots_from_db().values():
-        entry = phase_entries.get(int(user_id))
-        if entry:
-            ids.update(int(pid) for pid in entry.get("player_ids", []))
+    with SUPER_TEAM_CACHE_LOCK:
+        details_snapshot = copy.deepcopy(SUPER_DETAILS_CACHE)
+    for breakdown in details_snapshot.get("user_breakdowns", []):
+        if int(breakdown.get("user_id") or 0) != int(user_id):
+            continue
+        for match in breakdown.get("matches", []):
+            for player in match.get("players", []):
+                if player.get("player_id") is not None:
+                    ids.add(int(player["player_id"]))
+        break
     return ids
 
 
 def _build_player_pool(user_id: int | None = None) -> list[dict]:
     global SUPER_PLAYER_POOL_KEY
     context = get_context()
-    snapshot_ids = _snapshot_player_ids_for_user(user_id) if context.get("locked") else set()
+    snapshot_ids = _snapshot_player_ids_for_user_from_cache(user_id) if context.get("locked") else set()
     teams = set(context["teams"])
     if not teams and not snapshot_ids:
         return []
@@ -571,50 +577,47 @@ def _build_player_pool(user_id: int | None = None) -> list[dict]:
     with SUPER_TEAM_CACHE_LOCK:
         if SUPER_PLAYER_POOL_KEY == cache_key:
             return copy.deepcopy(SUPER_PLAYER_POOL_CACHE)
-    db = get_db()
-    clauses = []
-    params: list = []
-    if teams:
-        clauses.append(f"p.team IN ({','.join('?' * len(teams))})")
-        params.extend(list(teams))
-    if snapshot_ids:
-        clauses.append(f"p.id IN ({','.join('?' * len(snapshot_ids))})")
-        params.extend(sorted(snapshot_ids))
-    where_clause = " OR ".join(clauses)
-    rows = db.execute(
-        f"""
-        SELECT
-            p.id,
-            p.name,
-            p.team,
-            p.role,
-            p.type,
-            p.aliases,
-            COALESCE(SUM(pp.points), 0) AS total_points,
-            COUNT(pp.match_id) AS matches_played,
-            CASE WHEN COUNT(pp.match_id) > 0
-                 THEN ROUND(CAST(COALESCE(SUM(pp.points), 0) * 1.0 / COUNT(pp.match_id) AS numeric), 2)
-                 ELSE 0 END AS avg_points
-        FROM players p
-        LEFT JOIN player_points pp ON pp.player_id = p.id
-        WHERE {where_clause}
-        GROUP BY p.id, p.name, p.team, p.role, p.type, p.aliases
-        ORDER BY p.team, p.role, total_points DESC, p.name
-        """,
-        params,
-    ).fetchall()
-    player_ids = [int(row["id"]) for row in rows]
-    history_by_player = _load_recent_history(db, list(teams), player_ids)
-    last_match_map = _load_last_match_points(db)
+    with SUPER_TEAM_CACHE_LOCK:
+        details_snapshot = copy.deepcopy(SUPER_DETAILS_CACHE)
+    points_by_player = {
+        int(row["player_id"]): row
+        for row in details_snapshot.get("player_points", [])
+        if row.get("player_id") is not None
+    }
     players = []
-    for row in rows:
-        player = dict(row)
-        player["total_points"] = round(float(player.get("total_points") or 0), 2)
-        player["matches_played"] = int(player.get("matches_played") or 0)
-        player["avg_points"] = round(float(player.get("avg_points") or 0), 2)
-        player["last_match_points"] = last_match_map.get(int(player["id"]))
-        player["recent_history"] = history_by_player.get(int(player["id"]), [])
-        players.append(player)
+    for row in data_service.get_cached_data("players"):
+        pid = int(row["PlayerID"])
+        if row["Team"] not in teams and pid not in snapshot_ids:
+            continue
+        point_row = points_by_player.get(pid, {})
+        match_points = point_row.get("match_points", {}) or {}
+        nonzero_points = [float(value or 0) for value in match_points.values() if float(value or 0) != 0]
+        latest_points = None
+        for match_id in sorted(SUPER_MATCH_IDS, reverse=True):
+            if str(match_id) in match_points:
+                latest_points = round(float(match_points.get(str(match_id)) or 0), 2)
+                break
+        players.append({
+            "id": pid,
+            "name": row["Name"],
+            "team": row["Team"],
+            "role": row["Role"],
+            "type": row.get("Type"),
+            "aliases": row.get("Aliases", ""),
+            "total_points": round(float(point_row.get("points") or 0), 2),
+            "matches_played": len(nonzero_points),
+            "avg_points": round((sum(nonzero_points) / len(nonzero_points)) if nonzero_points else 0, 2),
+            "last_match_points": latest_points,
+            "recent_history": [
+                {
+                    "match_id": int(match_id),
+                    "points": round(float(points or 0), 2),
+                    "did_not_play": float(points or 0) == 0,
+                }
+                for match_id, points in sorted(match_points.items(), key=lambda item: int(item[0]), reverse=True)
+            ],
+        })
+    players.sort(key=lambda item: (item["team"], item["role"], -float(item["total_points"]), item["name"]))
     with SUPER_TEAM_CACHE_LOCK:
         SUPER_PLAYER_POOL_KEY = cache_key
         SUPER_PLAYER_POOL_CACHE.clear()
@@ -693,7 +696,7 @@ def grouped_player_pool(user_id: int | None = None) -> dict[str, list[dict]]:
 
 def _eligible_player_ids_for_context(context: dict, user_id: int | None = None) -> set[int]:
     players = _player_lookup()
-    snapshot_ids = _snapshot_player_ids_for_user(user_id) if context.get("locked") else set()
+    snapshot_ids = _snapshot_player_ids_for_user_from_cache(user_id) if context.get("locked") else set()
     eligible_teams = set(context["teams"])
     return {
         int(pid)
@@ -846,8 +849,10 @@ def my_team(user_id: int) -> dict:
     if not entry:
         return {"players": [], "updated_at": None, "penalty": _penalty_details(None, None)}
     players = _player_lookup()
-    penalty = _penalty_lookup(submissions).get(int(user_id), _penalty_details(None, None))
-    snapshots = _fetch_all_snapshots_from_db()
+    with SUPER_TEAM_CACHE_LOCK:
+        standings_snapshot = copy.deepcopy(SUPER_STANDINGS_CACHE)
+    standing = next((row for row in standings_snapshot if int(row.get("user_id") or 0) == int(user_id)), None)
+    penalty = (standing or {}).get("penalty") or _penalty_details(None, None)
     return {
         "players": [
             {
@@ -864,10 +869,7 @@ def my_team(user_id: int) -> dict:
         "vice_captain": entry.get("vice_captain"),
         "updated_at": entry.get("updated_at"),
         "penalty": penalty,
-        "snapshots": {
-            phase: snapshots.get(phase, {}).get(int(user_id))
-            for phase in SUPER_TEAM_SNAPSHOT_PHASES
-        },
+        "snapshots": {},
     }
 
 
@@ -923,6 +925,22 @@ def _point_lookup_from_score_cache() -> dict[tuple[int, int], float]:
     return lookup
 
 
+def _player_breakdown_lookup_from_score_cache() -> dict[tuple[int, int], list[dict]]:
+    lookup: dict[tuple[int, int], list[dict]] = {}
+    try:
+        from backend.routes.scores import get_cached_scores_snapshot
+        snapshot = get_cached_scores_snapshot()
+    except Exception:
+        snapshot = {}
+    for match_id in SUPER_MATCH_IDS:
+        payload = snapshot.get(match_id) or snapshot.get(str(match_id)) or {}
+        for player in payload.get("players", []):
+            if player.get("player_id") is None:
+                continue
+            lookup[(int(match_id), int(player["player_id"]))] = list(player.get("breakdown") or [])
+    return lookup
+
+
 def _point_lookup_from_db() -> dict[tuple[int, int], float]:
     db = get_db()
     rows = db.execute(
@@ -947,8 +965,10 @@ def refresh_super_team_standings_cache() -> dict:
     final = snapshots.get("final", {})
     penalties = _penalty_lookup(submissions)
     penalty_applies = bool(context.get("first_substitution_finalized") or context.get("second_substitution_finalized"))
-    point_lookup = _point_lookup_from_db()
-    point_lookup.update(_point_lookup_from_score_cache())
+    point_lookup = _point_lookup_from_score_cache()
+    if not point_lookup:
+        point_lookup = _point_lookup_from_db()
+    breakdown_lookup = _player_breakdown_lookup_from_score_cache()
     players = _player_lookup()
     rows = []
     user_breakdowns = []
@@ -1044,6 +1064,10 @@ def refresh_super_team_standings_cache() -> dict:
             str(match_id): round(float(point_lookup.get((match_id, pid), 0)), 2)
             for match_id in SUPER_MATCH_IDS
         }
+        match_breakdown_map = {
+            str(match_id): copy.deepcopy(breakdown_lookup.get((match_id, pid), []))
+            for match_id in SUPER_MATCH_IDS
+        }
         total_points = round(sum(match_point_map.values()), 2)
         player_points.append({
             "player_id": pid,
@@ -1052,6 +1076,7 @@ def refresh_super_team_standings_cache() -> dict:
             "role": player.get("Role", ""),
             "points": total_points,
             "match_points": match_point_map,
+            "match_breakdowns": match_breakdown_map,
         })
     player_points.sort(key=lambda item: (-float(item["points"]), item["team"], item["name"]))
 

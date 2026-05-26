@@ -25,10 +25,6 @@ class AdminSuperTeamBody(BaseModel):
 
 @router.get("")
 async def super_team_home(user: dict = Depends(get_current_user)):
-    context = super_team_service.get_context()
-    if context.get("locked"):
-        super_team_service.ensure_phase_snapshots(context)
-        super_team_service.refresh_super_team_standings_cache()
     return {
         "context": super_team_service.get_context(),
         "my_user_id": user["id"],

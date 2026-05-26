@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useToast } from '../components/Toast';
 import type { Player } from '../types';
+import { getTeamTheme } from '../utils/teamTheme';
 
 type Role = 'Wicketkeeper' | 'Batter' | 'AllRounder' | 'Bowler';
 type PlayerView = Role | 'Squad';
+type SuperTab = 'live' | 'myteam' | 'compare';
 type SuperContext = {
   visible: boolean;
   enabled: boolean;
@@ -28,6 +30,7 @@ type Standing = { user_id: number; name: string; points: number; gross_points?: 
 type SuperBreakdownPlayer = { player_id: number; name: string; team: string; role: Role; base_points?: number; multiplier?: number; tag?: string; points: number; removed?: boolean };
 type SuperBreakdownMatch = { match_id: number; points: number; players: SuperBreakdownPlayer[] };
 type SuperUserBreakdown = Standing & { matches: SuperBreakdownMatch[] };
+type AggregatedBreakdownPlayer = SuperBreakdownPlayer & { match_points: Record<string, number>; substituted: boolean };
 type SuperPlayerPoints = {
   player_id: number;
   name: string;
@@ -35,6 +38,7 @@ type SuperPlayerPoints = {
   role: Role;
   points: number;
   match_points: Record<string, number>;
+  match_breakdowns?: Record<string, { label: string; points: number }[]>;
 };
 type MyTeamPlayer = { player_id: number | string; is_captain?: boolean; is_vice_captain?: boolean };
 
@@ -43,6 +47,11 @@ const requiredRoles: Role[] = ['Wicketkeeper', 'Batter', 'AllRounder'];
 const MY_TEAM_TAB = 'My Team';
 const SUPER_TEAM_SIZE = 12;
 const MIN_BOWLERS = 4;
+const SUPER_TABS: Array<{ key: SuperTab; label: string }> = [
+  { key: 'live', label: 'Live' },
+  { key: 'myteam', label: 'My Team' },
+  { key: 'compare', label: 'Compare' },
+];
 const formatPoints = (value: number | null | undefined) => {
   if (value == null || Number.isNaN(value)) return '-';
   const rounded = Math.round(value * 2) / 2;
@@ -98,12 +107,14 @@ export default function SuperTeamPage() {
   const [userBreakdowns, setUserBreakdowns] = useState<SuperUserBreakdown[]>([]);
   const [playerPointRows, setPlayerPointRows] = useState<SuperPlayerPoints[]>([]);
   const [selectedBreakdownUserId, setSelectedBreakdownUserId] = useState<number | null>(null);
-  const [activeBreakdownMatchId, setActiveBreakdownMatchId] = useState(71);
+  const [activePlayerStatsMatchId, setActivePlayerStatsMatchId] = useState(71);
+  const [tab, setTab] = useState<SuperTab>('live');
   const [contestants, setContestants] = useState<Contestant[]>([]);
   const [missingUsers, setMissingUsers] = useState<MissingUser[]>([]);
   const [contestantsTab, setContestantsTab] = useState<'playing' | 'missing'>('playing');
   const [activeTeam, setActiveTeam] = useState<string | null>(null);
   const [activePlayerView, setActivePlayerView] = useState<PlayerView>('Squad');
+  const [expandedStatsPlayerId, setExpandedStatsPlayerId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showRules, setShowRules] = useState(false);
@@ -152,6 +163,13 @@ export default function SuperTeamPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (tab === 'compare' && !selectedBreakdownUserId) {
+      const firstOther = userBreakdowns.find((row) => row.user_id !== myUserId);
+      if (firstOther) setSelectedBreakdownUserId(firstOther.user_id);
+    }
+  }, [myUserId, selectedBreakdownUserId, tab, userBreakdowns]);
 
   const allPoolPlayers = useMemo(() => roles.flatMap((role) => playersByRole[role] || []), [playersByRole]);
 
@@ -327,26 +345,200 @@ export default function SuperTeamPage() {
   const showSelection = context.enabled && Boolean(context.can_edit);
   const currentStatus = statusLabel(context);
   const leader = standings.find((row) => row.rank === 1);
-  const selectedUserBreakdown = userBreakdowns.find((row) => row.user_id === selectedBreakdownUserId) || userBreakdowns[0];
-  const selectedMatchBreakdown = selectedUserBreakdown?.matches.find((match) => match.match_id === activeBreakdownMatchId) || selectedUserBreakdown?.matches[0];
+  const selectedUserBreakdown = userBreakdowns.find((row) => row.user_id === selectedBreakdownUserId)
+    || (tab === 'compare' ? userBreakdowns.find((row) => row.user_id !== myUserId) : userBreakdowns[0]);
   const myUserBreakdown = myUserId ? userBreakdowns.find((row) => row.user_id === myUserId) || null : null;
-  const myMatchBreakdown = myUserBreakdown?.matches.find((match) => match.match_id === activeBreakdownMatchId) || null;
+  const aggregateBreakdownPlayers = (entry: SuperUserBreakdown | null | undefined): AggregatedBreakdownPlayer[] => {
+    const players = new Map<number, AggregatedBreakdownPlayer>();
+    (entry?.matches || []).forEach((match) => {
+      match.players.forEach((player) => {
+        const existing = players.get(player.player_id);
+        if (existing) {
+          existing.points += Number(player.points || 0);
+          existing.match_points[String(match.match_id)] = Number(player.points || 0);
+          existing.substituted = existing.substituted || Boolean(player.removed);
+          if (player.tag) existing.tag = player.tag;
+          if (player.multiplier) existing.multiplier = player.multiplier;
+        } else {
+          players.set(player.player_id, {
+            ...player,
+            points: Number(player.points || 0),
+            match_points: { [String(match.match_id)]: Number(player.points || 0) },
+            substituted: Boolean(player.removed),
+          });
+        }
+      });
+    });
+    return [...players.values()].sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
+  };
+  const selectedAggregatePlayers = aggregateBreakdownPlayers(selectedUserBreakdown);
+  const myAggregatePlayers = aggregateBreakdownPlayers(myUserBreakdown);
   const comparison = (() => {
-    if (!myMatchBreakdown || !selectedMatchBreakdown || selectedUserBreakdown?.user_id === myUserId) return null;
-    const mine = new Map(myMatchBreakdown.players.map((player) => [player.player_id, player]));
-    const theirs = new Map(selectedMatchBreakdown.players.map((player) => [player.player_id, player]));
+    if (!myAggregatePlayers.length || !selectedAggregatePlayers.length || selectedUserBreakdown?.user_id === myUserId) return null;
+    const mine = new Map(myAggregatePlayers.map((player) => [player.player_id, player]));
+    const theirs = new Map(selectedAggregatePlayers.map((player) => [player.player_id, player]));
     const common = [...mine.values()].filter((player) => theirs.has(player.player_id));
     const onlyMine = [...mine.values()].filter((player) => !theirs.has(player.player_id));
     const onlyTheirs = [...theirs.values()].filter((player) => !mine.has(player.player_id));
     const roleDiff = common.filter((player) => (player.tag || '') !== (theirs.get(player.player_id)?.tag || ''));
-    return { common, onlyMine, onlyTheirs, roleDiff };
+    const pointDiff = common.filter((player) => {
+      const theirsPlayer = theirs.get(player.player_id);
+      return (player.tag || '') === (theirsPlayer?.tag || '') && Number(player.points || 0) !== Number(theirsPlayer?.points || 0);
+    });
+    const commonSame = common.filter((player) => {
+      const theirsPlayer = theirs.get(player.player_id);
+      return (player.tag || '') === (theirsPlayer?.tag || '') && Number(player.points || 0) === Number(theirsPlayer?.points || 0);
+    });
+    const differentPlayersDiff = onlyMine.reduce((sum, player) => sum + Number(player.points || 0), 0)
+      - onlyTheirs.reduce((sum, player) => sum + Number(player.points || 0), 0);
+    const roleDiffTotal = roleDiff.reduce((sum, player) => sum + Number(player.points || 0) - Number(theirs.get(player.player_id)?.points || 0), 0);
+    const pointDiffTotal = pointDiff.reduce((sum, player) => sum + Number(player.points || 0) - Number(theirs.get(player.player_id)?.points || 0), 0);
+    return { common, commonSame, onlyMine, onlyTheirs, roleDiff, pointDiff, differentPlayersDiff, roleDiffTotal, pointDiffTotal, theirs };
   })();
 
+  const playerStatsRows = playerPointRows
+    .map((player) => ({
+      ...player,
+      match_points_value: Number(player.match_points?.[String(activePlayerStatsMatchId)] || 0),
+    }))
+    .sort((a, b) => b.match_points_value - a.match_points_value || b.points - a.points || a.name.localeCompare(b.name));
+  const compareContestants = userBreakdowns.filter((row) => row.user_id !== myUserId);
+  const renderTeamBadge = (team: string, compact = false) => {
+    const theme = getTeamTheme(team);
+    return (
+      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-semibold ${compact ? 'text-[9px]' : 'text-[10px]'} ${theme.badgeClass}`}>
+        {theme.label}
+      </span>
+    );
+  };
+  const shortRole = (role: string) => role === 'Wicketkeeper' ? 'WK' : role === 'Batter' ? 'BAT' : role === 'AllRounder' ? 'AR' : role === 'Bowler' ? 'BOWL' : role;
+  const formatSigned = (value: number) => `${value > 0 ? '+' : ''}${formatPoints(value)}`;
+  const renderAggregatedPlayers = (players: AggregatedBreakdownPlayer[], keyPrefix: string) => (
+    <div className="grid grid-cols-2 gap-2">
+      {players.map((player) => (
+        <div key={`${keyPrefix}-${player.player_id}`} className={`rounded-xl border border-white/10 bg-gradient-to-r ${getTeamTheme(player.team).tintClass} px-2.5 py-2 ${player.substituted ? 'ring-1 ring-amber-400/25' : ''}`}>
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <p className="truncate text-[13px] font-medium text-white">{player.name}</p>
+                {player.tag && (
+                  <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1.5 text-[9px] font-bold ${player.tag === 'C' ? 'bg-amber-500 text-black' : 'bg-sky-500 text-black'}`}>
+                    {player.tag}
+                  </span>
+                )}
+                {player.substituted && (
+                  <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-200">
+                    Sub
+                  </span>
+                )}
+              </div>
+              <div className="mt-1 flex items-center gap-1.5 text-[11px] text-white/40">
+                {renderTeamBadge(player.team, true)}
+                <span>{shortRole(player.role)}</span>
+              </div>
+              <p className="mt-1 text-[10px] text-white/30">
+                M71 {formatPoints(player.match_points['71'] || 0)} | M72 {formatPoints(player.match_points['72'] || 0)} | M73 {formatPoints(player.match_points['73'] || 0)} | M74 {formatPoints(player.match_points['74'] || 0)}
+              </p>
+            </div>
+            <div className="shrink-0 text-right">
+              <p className="text-sm font-bold text-blue-400">{formatPoints(player.points)}</p>
+              <p className="text-[10px] text-white/30">Pts</p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+  const renderComparePlayerEntry = (player: AggregatedBreakdownPlayer | null | undefined, side: 'left' | 'right') => {
+    if (!player) {
+      return <div className="flex-1 rounded-xl border border-white/5 bg-black/20 px-3 py-2 text-xs text-white/25">Not selected</div>;
+    }
+    return (
+      <div className={`flex-1 rounded-xl border px-3 py-2 ${side === 'left' ? 'border-blue-500/20 bg-blue-500/10' : 'border-red-500/20 bg-red-500/10'}`}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <p className="truncate text-sm font-semibold text-white">{player.name}</p>
+              {player.tag && (
+                <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${player.tag === 'C' ? 'bg-amber-500 text-black' : 'bg-sky-500 text-black'}`}>
+                  {player.tag}
+                </span>
+              )}
+              {player.substituted && <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-amber-200">Sub</span>}
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-[11px] text-white/45">
+              {renderTeamBadge(player.team, true)}
+              <span>{shortRole(player.role)}</span>
+            </div>
+            <p className="mt-1 text-[10px] text-white/30">
+              M71 {formatPoints(player.match_points['71'] || 0)} | M72 {formatPoints(player.match_points['72'] || 0)} | M73 {formatPoints(player.match_points['73'] || 0)} | M74 {formatPoints(player.match_points['74'] || 0)}
+            </p>
+          </div>
+          <p className="shrink-0 text-sm font-bold text-blue-300">{formatPoints(player.points)}</p>
+        </div>
+      </div>
+    );
+  };
+  const renderCompareSection = (
+    title: string,
+    rows: Array<{ left?: AggregatedBreakdownPlayer | null; right?: AggregatedBreakdownPlayer | null; key: string }>,
+    total?: number,
+  ) => {
+    if (rows.length === 0) return null;
+    return (
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-white">{title}</h3>
+          {total != null && (
+            <span className={`rounded-full px-2 py-1 text-xs font-bold ${total > 0 ? 'bg-blue-500/20 text-blue-400' : total < 0 ? 'bg-red-500/20 text-red-400' : 'bg-white/10 text-white'}`}>
+              {formatSigned(total)} pts
+            </span>
+          )}
+        </div>
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div key={row.key} className="flex gap-2">
+              {renderComparePlayerEntry(row.left, 'left')}
+              {renderComparePlayerEntry(row.right, 'right')}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-xl font-bold text-white">Super Team</h2>
-        <div className="flex items-center gap-2">
+    <div className="min-h-screen bg-black">
+      <header className="mobile-safe-blur sticky top-[56px] z-30 border-b border-white/10 bg-black/80 md:backdrop-blur-lg">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <Link to="/dashboard" className="rounded-xl p-2 transition-all hover:bg-white/10" title="Back" aria-label="Back to dashboard">
+              <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </Link>
+            <div className="min-w-0">
+              <h1 className="text-lg font-bold text-white">Super Team</h1>
+              <p className="truncate text-xs text-white/40">{context.enabled ? context.teams.join(' | ') : context.message}</p>
+            </div>
+          </div>
+          <div className="shrink-0 grid w-[12.75rem] max-w-[52vw] grid-cols-3 gap-1 rounded-xl bg-white/5 p-1 sm:w-[15rem]">
+            {SUPER_TABS.map((entry) => (
+              <button
+                key={entry.key}
+                type="button"
+                onClick={() => setTab(entry.key)}
+                className={`w-full min-w-0 whitespace-nowrap rounded-lg px-1.5 py-1 text-[10px] font-medium transition sm:px-2 sm:text-[11px] ${tab === entry.key ? 'bg-white text-black' : 'text-white/50 hover:text-white'}`}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-6xl space-y-6 px-4 py-6">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             type="button"
             onClick={() => setShowRules(true)}
@@ -354,11 +546,6 @@ export default function SuperTeamPage() {
           >
             What's this?
           </button>
-          <Link to="/dashboard" className="p-2 hover:bg-white/10 rounded-xl transition-all" title="Back" aria-label="Back to dashboard">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </Link>
           <button
             onClick={() => {
               setContestantsTab('playing');
@@ -369,7 +556,6 @@ export default function SuperTeamPage() {
             Who's Playing
           </button>
         </div>
-      </div>
 
       <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
         <div className="mb-2 flex items-center justify-between gap-3">
@@ -441,159 +627,280 @@ export default function SuperTeamPage() {
         </div>
       )}
 
-      {context.locked && (
+      {tab === 'live' && context.locked && (
         <div className="rounded-2xl border border-white/10 bg-white/5">
           <div className="border-b border-white/10 px-4 py-3 text-sm font-semibold text-white">Super Team Standings</div>
           <div className="divide-y divide-white/5">
             {standings.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-white/40">No submitted Super Teams.</div>
             ) : standings.map((row) => (
-              <button
-                key={row.user_id}
-                type="button"
-                onClick={() => setSelectedBreakdownUserId(row.user_id)}
-                className={`flex w-full items-center gap-3 px-4 py-3 text-left transition ${
-                  selectedUserBreakdown?.user_id === row.user_id ? 'bg-cyan-500/10' : 'hover:bg-white/[0.03]'
-                }`}
-              >
-                <div className="w-10 text-center text-sm font-bold text-white/60">#{row.rank}</div>
-                <div className="flex-1 min-w-0">
-                  <p className="truncate text-sm font-semibold text-white">{row.name}</p>
-                  <p className="text-[11px] text-white/35">
-                    M71 {row.match_points?.['71'] || 0} | M72 {row.match_points?.['72'] || 0} | M73 {row.match_points?.['73'] || 0} | M74 {row.match_points?.['74'] || 0}
-                    {row.penalty?.total ? ` | Penalty -${row.penalty.total}` : ''}
-                  </p>
-                </div>
-                <div className="text-sm font-bold text-blue-300">{row.points} pts</div>
-              </button>
+              <div key={row.user_id}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedBreakdownUserId(selectedBreakdownUserId === row.user_id ? null : row.user_id)}
+                  className={`flex w-full items-center gap-3 px-4 py-3 text-left transition ${
+                    selectedBreakdownUserId === row.user_id ? 'bg-white/8' : row.user_id === myUserId ? 'bg-amber-500/10 hover:bg-amber-500/15' : 'hover:bg-white/[0.03]'
+                  }`}
+                >
+                  <div className="w-10 text-center text-sm font-bold text-white/60">#{row.rank}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-semibold text-white">{row.name}</p>
+                      {row.user_id === myUserId && (
+                        <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-[10px] font-semibold text-amber-300">You</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-white/35">
+                      M71 {formatPoints(row.match_points?.['71'] || 0)} | M72 {formatPoints(row.match_points?.['72'] || 0)} | M73 {formatPoints(row.match_points?.['73'] || 0)} | M74 {formatPoints(row.match_points?.['74'] || 0)}
+                      {row.penalty?.total ? ` | Penalty -${row.penalty.total}` : ''}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-sm font-bold text-blue-300">{formatPoints(row.points)} pts</div>
+                  <span className={`text-[10px] text-white/40 transition-transform ${selectedBreakdownUserId === row.user_id ? 'rotate-90' : ''}`}>&#9654;</span>
+                </button>
+                {selectedBreakdownUserId === row.user_id && selectedUserBreakdown && (
+                  <div className="border-t border-white/5 bg-black/20 px-4 py-4">
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs uppercase tracking-[0.2em] text-white/35">Team View</p>
+                        <h3 className="truncate text-sm font-semibold text-white">{selectedUserBreakdown.name}</h3>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-bold text-blue-400">{formatPoints(selectedUserBreakdown.points)} pts</p>
+                        {selectedUserBreakdown.penalty?.total ? <p className="text-[10px] text-amber-300">-{selectedUserBreakdown.penalty.total} penalty</p> : null}
+                      </div>
+                    </div>
+                    {renderAggregatedPlayers(selectedAggregatePlayers, 'live-open')}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         </div>
       )}
 
-      {context.locked && selectedUserBreakdown && (
+      {tab === 'live' && context.locked && (
         <div className="rounded-2xl border border-white/10 bg-white/5">
           <div className="border-b border-white/10 px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-white">
-                  #{selectedUserBreakdown.rank} {selectedUserBreakdown.name}
-                </p>
-                <p className="text-xs text-white/35">Selected player points by playoff match</p>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-white">Player Statistics</p>
+                <p className="text-xs text-white/35">Select a playoff match to view player points for that match.</p>
               </div>
-              <div className="text-right">
-                <p className="text-sm font-bold text-cyan-200">{formatPoints(selectedUserBreakdown.points)} pts</p>
-                {selectedUserBreakdown.penalty?.total ? (
-                  <p className="text-[11px] text-amber-300">-{selectedUserBreakdown.penalty.total} penalty</p>
-                ) : null}
-              </div>
-            </div>
-          </div>
-          <div className="border-b border-white/10 p-2">
-            <div className="grid grid-cols-4 gap-1 rounded-xl bg-black/25 p-1">
-              {[71, 72, 73, 74].map((matchId) => {
-                const match = selectedUserBreakdown.matches.find((item) => item.match_id === matchId);
-                return (
+              <div className="grid grid-cols-4 gap-1 rounded-xl bg-black/25 p-1">
+                {[71, 72, 73, 74].map((matchId) => (
                   <button
                     key={matchId}
                     type="button"
-                    onClick={() => setActiveBreakdownMatchId(matchId)}
-                    className={`rounded-lg px-2 py-2 text-xs font-semibold transition ${
-                      activeBreakdownMatchId === matchId ? 'bg-white text-black' : 'text-white/55 hover:bg-white/10'
+                    onClick={() => setActivePlayerStatsMatchId(matchId)}
+                    className={`rounded-lg px-2 py-1.5 text-xs font-semibold transition ${
+                      activePlayerStatsMatchId === matchId ? 'bg-white text-black' : 'text-white/55 hover:bg-white/10'
                     }`}
                   >
-                    M{matchId} <span className="font-bold">{formatPoints(match?.points || 0)}</span>
+                    M{matchId}
                   </button>
-                );
-              })}
+                ))}
+              </div>
             </div>
           </div>
           <div className="divide-y divide-white/5">
-            {(selectedMatchBreakdown?.players || []).map((player) => (
-              <div
-                key={`${selectedMatchBreakdown?.match_id}-${player.player_id}`}
-                className={`flex items-center justify-between gap-3 px-4 py-3 ${player.removed ? 'bg-amber-500/5' : ''}`}
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate text-sm font-semibold text-white">{player.name}</p>
-                    {player.removed && (
-                      <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
-                        Removed
-                      </span>
+            {playerStatsRows.length === 0 ? (
+              <div className="px-4 py-8 text-center text-white/40">Player points will appear once playoff scoring starts.</div>
+            ) : playerStatsRows.map((player) => (
+              <div key={`${activePlayerStatsMatchId}-${player.player_id}`}>
+                <div
+                  onClick={() => setExpandedStatsPlayerId(expandedStatsPlayerId === player.player_id ? null : player.player_id)}
+                  className={`flex cursor-pointer items-center justify-between gap-3 bg-gradient-to-r ${getTeamTheme(player.team).tintClass} px-4 py-3 transition-colors hover:bg-white/5`}
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className={`text-[10px] text-white/40 transition-transform ${expandedStatsPlayerId === player.player_id ? 'rotate-90' : ''}`}>&#9654;</span>
+                    {renderTeamBadge(player.team, true)}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-white">{player.name}</p>
+                      <p className="text-xs text-white/35">{shortRole(player.role)}</p>
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className={`text-sm font-bold ${player.match_points_value ? 'text-blue-300' : 'text-white/30'}`}>
+                      {formatPoints(player.match_points_value)}
+                    </p>
+                    <p className="text-[10px] text-white/30">M{activePlayerStatsMatchId} pts</p>
+                  </div>
+                </div>
+                {expandedStatsPlayerId === player.player_id && (
+                  <div className="border-t border-white/10 bg-black px-4 py-3">
+                    <p className="mb-2 text-[10px] uppercase tracking-wider text-white/40">Player Analysis</p>
+                    {(player.match_breakdowns?.[String(activePlayerStatsMatchId)] || []).length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {(player.match_breakdowns?.[String(activePlayerStatsMatchId)] || []).map((item, index) => (
+                          <span key={`${player.player_id}-${activePlayerStatsMatchId}-${index}`} className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium ${
+                            item.points > 0 ? 'border-blue-500/20 bg-blue-500/10 text-blue-400' : 'border-red-500/20 bg-red-500/10 text-red-400'
+                          }`}>
+                            {item.label} <span className="font-bold">{item.points > 0 ? '+' : ''}{formatPoints(item.points)}</span>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-white/35">No detailed point breakdown available for this match.</p>
                     )}
                   </div>
-                  <p className="text-xs text-white/35">
-                    {player.team} | {player.role}{player.tag ? ` | ${player.tag} x${player.multiplier}` : ''}
-                  </p>
-                </div>
-                <p className={`text-sm font-bold ${player.points ? 'text-blue-300' : 'text-white/30'}`}>{formatPoints(player.points)}</p>
+                )}
               </div>
             ))}
           </div>
-          {comparison && (
-            <div className="border-t border-white/10 p-4">
-              <p className="text-sm font-semibold text-white">Compare With My Team</p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-4">
-                <CompareMetric label="Common" value={comparison.common.length} />
-                <CompareMetric label="Only Me" value={comparison.onlyMine.length} />
-                <CompareMetric label="Only Them" value={comparison.onlyTheirs.length} />
-                <CompareMetric label="C/VC Diff" value={comparison.roleDiff.length} />
+        </div>
+      )}
+
+      {tab === 'myteam' && !showSelection && myUserBreakdown && (
+        <div className="space-y-4">
+          <div className="rounded-2xl overflow-hidden shadow-2xl max-w-md mx-auto"
+            style={{ background: 'linear-gradient(180deg, #1a5e1a 0%, #2d8a2d 30%, #3da33d 50%, #2d8a2d 70%, #1a5e1a 100%)' }}>
+            <div className="text-center pt-4 pb-2">
+              <p className="text-blue-400 text-lg font-bold">{formatPoints(myUserBreakdown.points)} <span className="text-sm text-blue-200/70">pts</span></p>
+              <p className="text-white/40 text-[10px] uppercase tracking-widest">Team Analysis</p>
+            </div>
+            <div className="relative px-4 pb-5">
+              <div className="absolute inset-x-8 inset-y-4 rounded-[50%] border-2 border-white/15" />
+              {roles.map((role) => {
+                const rolePlayers = myAggregatePlayers.filter((player) => player.role === role);
+                if (rolePlayers.length === 0) return null;
+                const roleLabel = role === 'AllRounder' ? 'All Rounders' : role === 'Wicketkeeper' ? 'Wicketkeeper' : `${role}s`;
+                return (
+                  <div key={role} className="relative z-10 mb-3">
+                    <p className="mb-1.5 text-center text-[9px] uppercase tracking-widest text-white/30">{roleLabel}</p>
+                    <div className="flex flex-wrap justify-center gap-2">
+                      {rolePlayers.map((player) => (
+                        <div key={`ground-${player.player_id}`} className="flex flex-col items-center">
+                          <div className={`flex h-10 w-10 items-center justify-center rounded-full text-[10px] font-bold shadow-lg ${
+                            player.tag === 'C' ? 'bg-amber-400 text-black ring-2 ring-amber-300' :
+                            player.tag === 'VC' ? 'bg-sky-400 text-black ring-2 ring-sky-300' :
+                            player.substituted ? 'bg-amber-200 text-amber-950' : 'bg-white text-blue-900'
+                          }`}>
+                            {player.tag || formatPoints(player.points)}
+                          </div>
+                          <p className="mt-0.5 max-w-[55px] truncate text-center text-[9px] font-medium text-white">{player.name.split(' ').pop()}</p>
+                          <p className="text-[9px] font-bold text-blue-300">{formatPoints(player.points)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-center gap-4 pb-3 text-[9px] text-white/40">
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-amber-400" /> C</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-sky-400" /> VC</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-amber-200" /> Sub</span>
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/5">
+            <div className="border-b border-white/10 px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-white">Player Contributions</h3>
+                  <p className="text-[10px] text-white/35">All selected players with substitution indicators</p>
+                </div>
+                <p className="text-sm font-bold text-blue-400">{formatPoints(myUserBreakdown.points)} pts</p>
               </div>
-              <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                <CompareList title="Only Me" players={comparison.onlyMine} />
-                <CompareList title="Only Them" players={comparison.onlyTheirs} />
-                <CompareList title="C/VC Differences" players={comparison.roleDiff} />
-              </div>
+            </div>
+            <div className="p-3">
+              {renderAggregatedPlayers(myAggregatePlayers, 'myteam')}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'compare' && context.locked && (
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <h2 className="mb-3 text-sm font-semibold text-white">Compare Teams</h2>
+          {compareContestants.length === 0 ? (
+            <p className="text-sm text-white/40">No other Super Teams are available to compare yet.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {compareContestants.map((row) => (
+                <button
+                  key={row.user_id}
+                  type="button"
+                  onClick={() => setSelectedBreakdownUserId(row.user_id)}
+                  className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
+                    selectedBreakdownUserId === row.user_id ? 'bg-white text-black' : 'bg-white/10 text-white/50 hover:bg-white/20'
+                  }`}
+                >
+                  #{row.rank} {row.name}
+                </button>
+              ))}
             </div>
           )}
         </div>
       )}
 
-      {context.locked && (
-        <div className="rounded-2xl border border-white/10 bg-white/5">
-          <div className="border-b border-white/10 px-4 py-3">
-            <p className="text-sm font-semibold text-white">Player Points</p>
-            <p className="text-xs text-white/35">Total points scored by selected Super Team players, broken down match-wise.</p>
+      {tab === 'compare' && context.locked && selectedUserBreakdown && selectedUserBreakdown.user_id !== myUserId && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-2xl border border-white/20 bg-white/10 p-4 text-center">
+              <p className="mb-1 text-xs font-medium text-white/50">You</p>
+              <p className="text-2xl font-bold text-white">{formatPoints(myUserBreakdown?.points || 0)}</p>
+            </div>
+            <div className={`${Number(myUserBreakdown?.points || 0) - Number(selectedUserBreakdown.points || 0) >= 0 ? 'border-blue-500/20 bg-blue-500/10' : 'border-red-500/20 bg-red-500/10'} rounded-2xl border p-4 text-center`}>
+              <p className="mb-1 text-xs font-medium text-white/50">Diff</p>
+              {(() => {
+                const diff = Number(myUserBreakdown?.points || 0) - Number(selectedUserBreakdown.points || 0);
+                return <p className={`text-2xl font-bold ${diff >= 0 ? 'text-blue-400' : 'text-red-400'}`}>{diff > 0 ? '+' : ''}{formatPoints(diff)}</p>;
+              })()}
+            </div>
+            <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-center">
+              <p className="mb-1 truncate text-xs font-medium text-red-300">{selectedUserBreakdown.name}</p>
+              <p className="text-2xl font-bold text-white">{formatPoints(selectedUserBreakdown.points)}</p>
+            </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-white/10 text-xs uppercase tracking-wide text-white/35">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Player</th>
-                  <th className="px-3 py-3 text-right font-semibold">M71</th>
-                  <th className="px-3 py-3 text-right font-semibold">M72</th>
-                  <th className="px-3 py-3 text-right font-semibold">M73</th>
-                  <th className="px-3 py-3 text-right font-semibold">M74</th>
-                  <th className="px-4 py-3 text-right font-semibold">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {playerPointRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-white/40">Player points will appear once playoff scoring starts.</td>
-                  </tr>
-                ) : playerPointRows.map((player) => (
-                  <tr key={player.player_id}>
-                    <td className="px-4 py-3">
-                      <p className="font-semibold text-white">{player.name}</p>
-                      <p className="text-xs text-white/35">{player.team} | {player.role}</p>
-                    </td>
-                    {[71, 72, 73, 74].map((matchId) => (
-                      <td key={matchId} className="px-3 py-3 text-right text-white/70">
-                        {formatPoints(player.match_points?.[String(matchId)] || 0)}
-                      </td>
-                    ))}
-                    <td className="px-4 py-3 text-right font-bold text-blue-300">{formatPoints(player.points)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+
+          {comparison && (
+            <>
+              {renderCompareSection(
+                'Different Players',
+                Array.from({ length: Math.max(comparison.onlyMine.length, comparison.onlyTheirs.length) }, (_, index) => ({
+                  key: `different-${index}`,
+                  left: comparison.onlyMine[index] || null,
+                  right: comparison.onlyTheirs[index] || null,
+                })),
+                comparison.differentPlayersDiff,
+              )}
+
+              {renderCompareSection(
+                'Same Players, Different C/VC',
+                comparison.roleDiff.map((left) => ({
+                  key: `role-${left.player_id}`,
+                  left,
+                  right: comparison.theirs.get(left.player_id) || null,
+                })),
+                comparison.roleDiffTotal,
+              )}
+
+              {renderCompareSection(
+                'Same Players, Different Points',
+                comparison.pointDiff.map((left) => ({
+                  key: `points-${left.player_id}`,
+                  left,
+                  right: comparison.theirs.get(left.player_id) || null,
+                })),
+                comparison.pointDiffTotal,
+              )}
+
+              {renderCompareSection(
+                'Common Players',
+                comparison.commonSame.map((left) => ({
+                  key: `common-${left.player_id}`,
+                  left,
+                  right: comparison.theirs.get(left.player_id) || null,
+                })),
+              )}
+            </>
+          )}
         </div>
       )}
 
-      {showSelection && (
+      {tab === 'myteam' && showSelection && (
         <>
           <div className="-mx-4 overflow-x-auto px-4">
             <div className="flex min-w-max gap-2 rounded-xl border border-white/10 bg-white/5 p-2">
@@ -791,6 +1098,7 @@ export default function SuperTeamPage() {
           </div>
         </>
       )}
+      </main>
 
       {showRules && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 py-6 backdrop-blur-sm">
@@ -882,35 +1190,6 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
           <button onClick={onClose} className="rounded-lg p-2 text-white/50 hover:bg-white/10 hover:text-white">X</button>
         </div>
         {children}
-      </div>
-    </div>
-  );
-}
-
-function CompareMetric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-      <p className="text-[10px] uppercase tracking-wide text-white/35">{label}</p>
-      <p className="text-lg font-bold text-cyan-200">{value}</p>
-    </div>
-  );
-}
-
-function CompareList({ title, players }: { title: string; players: SuperBreakdownPlayer[] }) {
-  return (
-    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-      <p className="mb-2 text-xs font-semibold text-white/70">{title}</p>
-      <div className="space-y-1">
-        {players.length > 0 ? (
-          players.slice(0, 8).map((player) => (
-            <div key={`${title}-${player.player_id}`} className="flex items-center justify-between gap-2 text-xs">
-              <span className="truncate text-white/70">{player.name}{player.tag ? ` (${player.tag})` : ''}</span>
-              <span className="font-semibold text-blue-300">{formatPoints(player.points)}</span>
-            </div>
-          ))
-        ) : (
-          <div className="text-xs text-white/30">None</div>
-        )}
       </div>
     </div>
   );
