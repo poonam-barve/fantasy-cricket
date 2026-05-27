@@ -397,7 +397,7 @@ export default function DashboardPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
               </svg>
             </div>
-            <span className="w-full text-center text-amber-300 text-xs font-medium leading-tight">Leaderboard</span>
+            <span className="w-full text-center text-amber-300 text-xs font-medium leading-tight">Apex</span>
           </Link>
           <Link to="/points-table"
             className="flex flex-col items-center gap-2 p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl transition-all group">
@@ -424,7 +424,7 @@ export default function DashboardPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <span className="w-full text-center text-emerald-300 text-xs font-medium leading-tight">Achievements</span>
+            <span className="w-full text-center text-emerald-300 text-xs font-medium leading-tight">Honors</span>
           </Link>
           {superTeamStatus?.context?.visible && (
             <Link to="/super-team"

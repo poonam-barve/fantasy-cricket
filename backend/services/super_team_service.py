@@ -432,10 +432,13 @@ def _penalty_details(original: dict | None, current: dict | None, *, phase: int 
             "new_player_count": 0,
             "new_player_penalty": 0,
             "new_player_penalties": [],
+            "substitutions": [],
             "captain_changed": False,
             "captain_penalty": 0,
+            "captain_change": None,
             "vice_captain_changed": False,
             "vice_captain_penalty": 0,
+            "vice_captain_change": None,
             "new_player_ids": [],
             "phase": phase,
         }
@@ -443,16 +446,40 @@ def _penalty_details(original: dict | None, current: dict | None, *, phase: int 
     original_ids = {int(pid) for pid in original.get("player_ids", [])}
     current_ids = {int(pid) for pid in current.get("player_ids", [])}
     new_player_ids = sorted(current_ids - original_ids)
+    removed_player_ids = sorted(original_ids - current_ids)
     captain_changed = int(original.get("captain") or 0) != int(current.get("captain") or 0)
     vice_captain_changed = int(original.get("vice_captain") or 0) != int(current.get("vice_captain") or 0)
+    def player_summary(pid: int | None) -> dict | None:
+        if not pid:
+            return None
+        player = players.get(int(pid), {})
+        return {
+            "player_id": int(pid),
+            "name": player.get("Name", ""),
+            "role": player.get("Role", ""),
+            "team": player.get("Team", ""),
+        }
+
     new_player_penalties = []
+    substitutions = []
+    unpaired_removed = list(removed_player_ids)
     for pid in new_player_ids:
         player = players.get(int(pid), {})
         penalty = _sub_penalty_for_role(player.get("Role"), phase)
+        removed_id = next((rid for rid in unpaired_removed if players.get(int(rid), {}).get("Role") == player.get("Role")), None)
+        if removed_id is None and unpaired_removed:
+            removed_id = unpaired_removed[0]
+        if removed_id is not None:
+            unpaired_removed.remove(removed_id)
         new_player_penalties.append({
             "player_id": int(pid),
             "name": player.get("Name", ""),
             "role": player.get("Role", ""),
+            "penalty": penalty,
+        })
+        substitutions.append({
+            "outgoing": player_summary(removed_id),
+            "incoming": player_summary(pid),
             "penalty": penalty,
         })
     new_player_penalty = sum(item["penalty"] for item in new_player_penalties)
@@ -466,10 +493,21 @@ def _penalty_details(original: dict | None, current: dict | None, *, phase: int 
         "new_player_count": len(new_player_ids),
         "new_player_penalty": new_player_penalty,
         "new_player_penalties": new_player_penalties,
+        "substitutions": substitutions,
         "captain_changed": captain_changed,
         "captain_penalty": captain_penalty,
+        "captain_change": {
+            "from": player_summary(int(original.get("captain") or 0)),
+            "to": player_summary(int(current.get("captain") or 0)),
+            "penalty": captain_penalty,
+        } if captain_changed else None,
         "vice_captain_changed": vice_captain_changed,
         "vice_captain_penalty": vice_captain_penalty,
+        "vice_captain_change": {
+            "from": player_summary(int(original.get("vice_captain") or 0)),
+            "to": player_summary(int(current.get("vice_captain") or 0)),
+            "penalty": vice_captain_penalty,
+        } if vice_captain_changed else None,
         "new_player_ids": new_player_ids,
         "phase": phase,
     }
@@ -498,9 +536,12 @@ def _penalty_lookup(submissions: dict[int, dict] | None = None) -> dict[int, dic
             "new_player_penalty": int(phase1.get("new_player_penalty", 0) or 0) + int(phase2.get("new_player_penalty", 0) or 0),
             "captain_changed": bool(phase1.get("captain_changed") or phase2.get("captain_changed")),
             "captain_penalty": int(phase1.get("captain_penalty", 0) or 0) + int(phase2.get("captain_penalty", 0) or 0),
+            "captain_change": phase2.get("captain_change") or phase1.get("captain_change"),
             "vice_captain_changed": bool(phase1.get("vice_captain_changed") or phase2.get("vice_captain_changed")),
             "vice_captain_penalty": int(phase1.get("vice_captain_penalty", 0) or 0) + int(phase2.get("vice_captain_penalty", 0) or 0),
+            "vice_captain_change": phase2.get("vice_captain_change") or phase1.get("vice_captain_change"),
             "new_player_ids": [*phase1.get("new_player_ids", []), *phase2.get("new_player_ids", [])],
+            "substitutions": [*phase1.get("substitutions", []), *phase2.get("substitutions", [])],
         }
     return penalties
 
@@ -876,7 +917,11 @@ def my_team(user_id: int) -> dict:
 def contestants() -> list[dict]:
     return [
         {"user_id": entry["user_id"], "name": entry["name"], "last_team_updated": entry.get("updated_at")}
-        for entry in sorted(get_submissions().values(), key=lambda item: item["name"])
+        for entry in sorted(
+            get_submissions().values(),
+            key=lambda item: (str(item.get("updated_at") or ""), item["name"]),
+            reverse=True,
+        )
     ]
 
 
@@ -972,6 +1017,7 @@ def refresh_super_team_standings_cache() -> dict:
     players = _player_lookup()
     rows = []
     user_breakdowns = []
+    owners_by_player_match: dict[int, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     max_points = None
     for entry in submissions.values():
         match_points: dict[int, float] = defaultdict(float)
@@ -999,6 +1045,11 @@ def refresh_super_team_standings_cache() -> dict:
                 pts = _apply_super_team_multiplier(base_pts, int(pid), match_captain, match_vice_captain)
                 match_points[match_id] += pts
                 total += pts
+                owners_by_player_match[int(pid)][str(match_id)].append({
+                    "user_id": int(entry["user_id"]),
+                    "name": entry["name"],
+                    "tag": tag,
+                })
                 match_players[match_id].append({
                     "player_id": int(pid),
                     "name": player.get("Name", ""),
@@ -1051,6 +1102,11 @@ def refresh_super_team_standings_cache() -> dict:
     for breakdown in user_breakdowns:
         breakdown["rank"] = rank_by_user.get(int(breakdown["user_id"]), 0)
     user_breakdowns.sort(key=lambda item: (int(item.get("rank") or 9999), item["name"]))
+    for match_owners in owners_by_player_match.values():
+        for owners in match_owners.values():
+            for owner in owners:
+                owner["rank"] = rank_by_user.get(int(owner["user_id"]), 0)
+            owners.sort(key=lambda item: (int(item.get("rank") or 9999), item["name"]))
 
     player_ids = sorted({
         int(pid)
@@ -1077,6 +1133,10 @@ def refresh_super_team_standings_cache() -> dict:
             "points": total_points,
             "match_points": match_point_map,
             "match_breakdowns": match_breakdown_map,
+            "owners": {
+                str(match_id): copy.deepcopy(owners_by_player_match.get(pid, {}).get(str(match_id), []))
+                for match_id in SUPER_MATCH_IDS
+            },
         })
     player_points.sort(key=lambda item: (-float(item["points"]), item["team"], item["name"]))
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useToast } from '../components/Toast';
@@ -25,12 +25,30 @@ type SuperContext = {
 };
 type Contestant = { user_id: number; name: string; last_team_updated: string | null };
 type MissingUser = { id: number; name: string };
-type Penalty = { total: number; new_player_count: number; new_player_penalty: number; captain_changed: boolean; captain_penalty: number; vice_captain_changed: boolean; vice_captain_penalty: number; new_player_ids?: number[]; phase1?: Penalty; phase2?: Penalty };
+type PenaltyPlayer = { player_id: number; name: string; role: string; team?: string };
+type PenaltyChange = { from?: PenaltyPlayer | null; to?: PenaltyPlayer | null; penalty: number };
+type PenaltySubstitution = { outgoing?: PenaltyPlayer | null; incoming?: PenaltyPlayer | null; penalty: number };
+type Penalty = {
+  total: number;
+  new_player_count: number;
+  new_player_penalty: number;
+  substitutions?: PenaltySubstitution[];
+  captain_changed: boolean;
+  captain_penalty: number;
+  captain_change?: PenaltyChange | null;
+  vice_captain_changed: boolean;
+  vice_captain_penalty: number;
+  vice_captain_change?: PenaltyChange | null;
+  new_player_ids?: number[];
+  phase1?: Penalty;
+  phase2?: Penalty;
+};
 type Standing = { user_id: number; name: string; points: number; gross_points?: number; penalty?: Penalty; rank: number; match_points: Record<string, number> };
 type SuperBreakdownPlayer = { player_id: number; name: string; team: string; role: Role; base_points?: number; multiplier?: number; tag?: string; points: number; removed?: boolean };
 type SuperBreakdownMatch = { match_id: number; points: number; players: SuperBreakdownPlayer[] };
 type SuperUserBreakdown = Standing & { matches: SuperBreakdownMatch[] };
 type AggregatedBreakdownPlayer = SuperBreakdownPlayer & { match_points: Record<string, number>; substituted: boolean };
+type SuperPlayerOwner = { user_id: number; name: string; tag?: string | null; rank?: number };
 type SuperPlayerPoints = {
   player_id: number;
   name: string;
@@ -39,6 +57,7 @@ type SuperPlayerPoints = {
   points: number;
   match_points: Record<string, number>;
   match_breakdowns?: Record<string, { label: string; points: number }[]>;
+  owners?: Record<string, SuperPlayerOwner[]>;
 };
 type MyTeamPlayer = { player_id: number | string; is_captain?: boolean; is_vice_captain?: boolean };
 
@@ -102,6 +121,7 @@ export default function SuperTeamPage() {
   const [viceCaptain, setViceCaptain] = useState<number | null>(null);
   const [myPenalty, setMyPenalty] = useState<Penalty | null>(null);
   const [projectedPenalty, setProjectedPenalty] = useState<Penalty | null>(null);
+  const projectedPenaltyCacheRef = useRef<Map<string, Penalty>>(new Map());
   const [standings, setStandings] = useState<Standing[]>([]);
   const [myUserId, setMyUserId] = useState<number | null>(null);
   const [userBreakdowns, setUserBreakdowns] = useState<SuperUserBreakdown[]>([]);
@@ -250,6 +270,10 @@ export default function SuperTeamPage() {
     if (captain === viceCaptain) return 'Captain and Vice-Captain must be different.';
     return '';
   })();
+  const projectedPenaltyCacheKey = useMemo(() => {
+    const selectedKey = [...selected].sort((a, b) => a - b).join(',');
+    return `${context?.substitution_phase || 0}|${selectedKey}|${captain || 0}|${viceCaptain || 0}`;
+  }, [captain, context?.substitution_phase, selected, viceCaptain]);
 
   const playerSelectionBlockReason = (player: Player) => {
     if (selected.has(player.id)) return '';
@@ -263,6 +287,11 @@ export default function SuperTeamPage() {
       setProjectedPenalty(null);
       return;
     }
+    const cachedPenalty = projectedPenaltyCacheRef.current.get(projectedPenaltyCacheKey);
+    if (cachedPenalty) {
+      setProjectedPenalty(cachedPenalty);
+      return;
+    }
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
@@ -271,7 +300,11 @@ export default function SuperTeamPage() {
           captain,
           vice_captain: viceCaptain,
         });
-        if (!cancelled) setProjectedPenalty(res.data || null);
+        if (!cancelled) {
+          const penalty = res.data || null;
+          if (penalty) projectedPenaltyCacheRef.current.set(projectedPenaltyCacheKey, penalty);
+          setProjectedPenalty(penalty);
+        }
       } catch {
         if (!cancelled) setProjectedPenalty(null);
       }
@@ -280,7 +313,7 @@ export default function SuperTeamPage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [captain, context?.substitution_open, selected, validationMessage, viceCaptain]);
+  }, [captain, context?.substitution_open, projectedPenaltyCacheKey, selected, validationMessage, viceCaptain]);
 
   const togglePlayer = (playerId: number) => {
     if (!context?.can_edit) return;
@@ -314,6 +347,7 @@ export default function SuperTeamPage() {
     setSaving(true);
     try {
       await client.post('/api/super-team', { players: [...selected], captain, vice_captain: viceCaptain });
+      projectedPenaltyCacheRef.current.clear();
       toast('Super Team saved.');
       await load();
     } catch (err: unknown) {
@@ -400,6 +434,7 @@ export default function SuperTeamPage() {
     .map((player) => ({
       ...player,
       match_points_value: Number(player.match_points?.[String(activePlayerStatsMatchId)] || 0),
+      owners_value: player.owners?.[String(activePlayerStatsMatchId)] || [],
     }))
     .sort((a, b) => b.match_points_value - a.match_points_value || b.points - a.points || a.name.localeCompare(b.name));
   const compareContestants = userBreakdowns.filter((row) => row.user_id !== myUserId);
@@ -413,6 +448,7 @@ export default function SuperTeamPage() {
   };
   const shortRole = (role: string) => role === 'Wicketkeeper' ? 'WK' : role === 'Batter' ? 'BAT' : role === 'AllRounder' ? 'AR' : role === 'Bowler' ? 'BOWL' : role;
   const formatSigned = (value: number) => `${value > 0 ? '+' : ''}${formatPoints(value)}`;
+  const playerChangeText = (player?: PenaltyPlayer | null) => player?.name ? `${player.name} (${shortRole(player.role)})` : 'None';
   const renderAggregatedPlayers = (players: AggregatedBreakdownPlayer[], keyPrefix: string) => (
     <div className="grid grid-cols-2 gap-2">
       {players.map((player) => (
@@ -510,75 +546,76 @@ export default function SuperTeamPage() {
   return (
     <div className="min-h-screen bg-black">
       <header className="mobile-safe-blur sticky top-[56px] z-30 border-b border-white/10 bg-black/80 md:backdrop-blur-lg">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <Link to="/dashboard" className="rounded-xl p-2 transition-all hover:bg-white/10" title="Back" aria-label="Back to dashboard">
-              <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </Link>
-            <div className="min-w-0">
-              <h1 className="text-lg font-bold text-white">Super Team</h1>
-              <p className="truncate text-xs text-white/40">{context.enabled ? context.teams.join(' | ') : context.message}</p>
-            </div>
+        <div className="mx-auto max-w-6xl space-y-3 px-4 py-4">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowRules(true)}
+              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+            >
+              What's this?
+            </button>
+            <button
+              onClick={() => {
+                setContestantsTab('playing');
+                setShowContestants(true);
+              }}
+              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+            >
+              Who's Playing
+            </button>
           </div>
-          <div className="shrink-0 grid w-[12.75rem] max-w-[52vw] grid-cols-3 gap-1 rounded-xl bg-white/5 p-1 sm:w-[15rem]">
-            {SUPER_TABS.map((entry) => (
-              <button
-                key={entry.key}
-                type="button"
-                onClick={() => setTab(entry.key)}
-                className={`w-full min-w-0 whitespace-nowrap rounded-lg px-1.5 py-1 text-[10px] font-medium transition sm:px-2 sm:text-[11px] ${tab === entry.key ? 'bg-white text-black' : 'text-white/50 hover:text-white'}`}
-              >
-                {entry.label}
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <Link to="/dashboard" className="rounded-xl p-2 transition-all hover:bg-white/10" title="Back" aria-label="Back to dashboard">
+                <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </Link>
+              <div className="min-w-0">
+                <h1 className="text-lg font-bold text-white">Super Team</h1>
+                <p className="truncate text-xs text-white/40">{context.enabled ? context.teams.join(' | ') : context.message}</p>
+              </div>
+            </div>
+            <div className="shrink-0 grid w-[12.75rem] max-w-[52vw] grid-cols-3 gap-1 rounded-xl bg-white/5 p-1 sm:w-[15rem]">
+              {SUPER_TABS.map((entry) => (
+                <button
+                  key={entry.key}
+                  type="button"
+                  onClick={() => setTab(entry.key)}
+                  className={`w-full min-w-0 whitespace-nowrap rounded-lg px-1.5 py-1 text-[10px] font-medium transition sm:px-2 sm:text-[11px] ${tab === entry.key ? 'bg-white text-black' : 'text-white/50 hover:text-white'}`}
+                >
+                  {entry.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-6">
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => setShowRules(true)}
-            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
-          >
-            What's this?
-          </button>
-          <button
-            onClick={() => {
-              setContestantsTab('playing');
-              setShowContestants(true);
-            }}
-            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
-          >
-            Who's Playing
-          </button>
-        </div>
-
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <div>
-            <span className="text-sm font-semibold text-white">Playoff Super Team</span>
-            <p className="mt-1 text-xs text-white/35">
-              {context.enabled ? context.teams.join(' | ') : context.message}
-            </p>
-          </div>
-          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${currentStatus.color}`}>
-            {currentStatus.text}
-          </span>
-        </div>
-
-        {leader && context.locked && (
-          <div className="mb-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3">
-            <p className="text-xs text-cyan-300/70">Current Leader</p>
-            <div className="mt-1 flex items-center justify-between gap-3">
-              <p className="truncate text-sm font-bold text-cyan-200">{leader.name}</p>
-              <p className="text-sm font-bold text-cyan-200">{leader.points} pts</p>
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div>
+              <span className="text-sm font-semibold text-white">Playoff Super Team</span>
+              <p className="mt-1 text-xs text-white/35">
+                {context.enabled ? context.teams.join(' | ') : context.message}
+              </p>
             </div>
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${currentStatus.color}`}>
+              {currentStatus.text}
+            </span>
           </div>
-        )}
+
+          {leader && context.locked && (
+            <div className="mb-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3">
+              <p className="text-xs text-cyan-300/70">Current Leader</p>
+              <div className="mt-1 flex items-center justify-between gap-3">
+                <p className="truncate text-sm font-bold text-cyan-200">{leader.name}</p>
+                <p className="text-sm font-bold text-cyan-200">{leader.points} pts</p>
+              </div>
+            </div>
+          )}
 
         {context.substitution_open && (
           <div className="mb-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3">
@@ -602,6 +639,25 @@ export default function SuperTeamPage() {
               {(projectedPenalty || myPenalty)!.captain_penalty ? ` | Captain: -${(projectedPenalty || myPenalty)!.captain_penalty}` : ''}
               {(projectedPenalty || myPenalty)!.vice_captain_penalty ? ` | Vice-Captain: -${(projectedPenalty || myPenalty)!.vice_captain_penalty}` : ''}
             </p>
+            {projectedPenalty && (
+              <div className="mt-2 space-y-1.5 text-[11px] text-amber-100/70">
+                {(projectedPenalty.substitutions || []).map((swap, index) => (
+                  <p key={`${swap.outgoing?.player_id || 'out'}-${swap.incoming?.player_id || 'in'}-${index}`}>
+                    {playerChangeText(swap.outgoing)} &lt;-&gt; {playerChangeText(swap.incoming)} (-{swap.penalty})
+                  </p>
+                ))}
+                {projectedPenalty.captain_change && (
+                  <p>
+                    C: {playerChangeText(projectedPenalty.captain_change.from)} -&gt; {playerChangeText(projectedPenalty.captain_change.to)} (-{projectedPenalty.captain_change.penalty})
+                  </p>
+                )}
+                {projectedPenalty.vice_captain_change && (
+                  <p>
+                    VC: {playerChangeText(projectedPenalty.vice_captain_change.from)} -&gt; {playerChangeText(projectedPenalty.vice_captain_change.to)} (-{projectedPenalty.vice_captain_change.penalty})
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -717,7 +773,9 @@ export default function SuperTeamPage() {
                     {renderTeamBadge(player.team, true)}
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-white">{player.name}</p>
-                      <p className="text-xs text-white/35">{shortRole(player.role)}</p>
+                      <p className="text-xs text-white/35">
+                        {shortRole(player.role)} | {player.owners_value.length} {player.owners_value.length === 1 ? 'team' : 'teams'}
+                      </p>
                     </div>
                   </div>
                   <div className="shrink-0 text-right">
@@ -743,6 +801,31 @@ export default function SuperTeamPage() {
                     ) : (
                       <p className="text-xs text-white/35">No detailed point breakdown available for this match.</p>
                     )}
+                    <div className="mt-3 border-t border-white/5 pt-3">
+                      <p className="mb-2 text-[10px] uppercase tracking-wider text-white/40">
+                        Selected By ({player.owners_value.length})
+                      </p>
+                      {player.owners_value.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {player.owners_value.map((owner) => (
+                            <span
+                              key={`${player.player_id}-${activePlayerStatsMatchId}-${owner.user_id}`}
+                              className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-medium text-white/70"
+                            >
+                              {owner.rank ? `#${owner.rank}` : ''}
+                              <span>{owner.name}</span>
+                              {owner.tag && (
+                                <span className={`rounded-full px-1 py-0.5 text-[8px] font-bold ${owner.tag === 'C' ? 'bg-amber-500 text-black' : 'bg-sky-500 text-black'}`}>
+                                  {owner.tag}
+                                </span>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-white/35">No Super Teams include this player for M{activePlayerStatsMatchId}.</p>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
