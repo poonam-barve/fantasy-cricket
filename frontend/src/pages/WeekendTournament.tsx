@@ -327,7 +327,7 @@ export default function WeekendTournamentPage() {
     'Players are randomly drawn into a knockout bracket. The bracket is fixed from the draw — adjacent winners always play each other.',
     'Each weekend match is one knockout round. Winners advance until the Final decides the Knockout Champion.',
     'Knockout Battle head-to-heads use raw match fantasy points only. Score prediction bonuses do not affect bracket results and are counted separately on the main leaderboard.',
-    'If scores are tied, the higher overall leaderboard rank wins the head-to-head. The Knockout Champion gets +200 bonus points on the leaderboard!',
+    'If scores are tied, the higher overall leaderboard rank wins the head-to-head. The Knockout Champion gets +200 bonus points on the leaderboard, or +400 for the Match 70-74 knockout.',
   ];
 
   const fetchData = async () => {

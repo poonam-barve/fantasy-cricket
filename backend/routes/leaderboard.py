@@ -2,6 +2,7 @@ import threading
 import time
 import copy
 import io
+import json
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,6 +28,41 @@ NON_PARTICIPANT_ADJUSTMENT = {
     "type": "percentage",  # "percentage" or "direct"
     "value": 15.0,
 }
+WEEKEND_WIN_BONUS = 200
+KNOCKOUT_70_74_WIN_BONUS = 400
+
+
+def _weekend_tournament_match_ids(row) -> set[int]:
+    ids = set()
+    try:
+        if row["qualifying_match_id"] is not None:
+            ids.add(int(row["qualifying_match_id"]))
+    except Exception:
+        pass
+    raw = None
+    try:
+        raw = row["weekend_match_ids"]
+    except Exception:
+        raw = None
+    if raw:
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, list):
+                ids.update(int(mid) for mid in parsed if mid is not None)
+        except Exception:
+            pass
+    for suffix in range(1, 5):
+        try:
+            mid = row[f"weekend_match_{suffix}_id"]
+        except Exception:
+            mid = None
+        if mid is not None:
+            ids.add(int(mid))
+    return ids
+
+
+def _weekend_tournament_bonus(row) -> int:
+    return KNOCKOUT_70_74_WIN_BONUS if {70, 71, 72, 73, 74}.issubset(_weekend_tournament_match_ids(row)) else WEEKEND_WIN_BONUS
 
 router = APIRouter(prefix="/api", tags=["leaderboard"])
 LEADERBOARD_CACHE = DoubleBufferCache(lock_name="leaderboard_response")
@@ -404,16 +440,18 @@ def _build_leaderboard(db, effective_match_points: dict[int, list[dict]] | None 
 
     medals_by_user = _compute_medals(effective_match_points)
 
-    # Weekend battle wins — each win awards +200 bonus points
-    WEEKEND_WIN_BONUS = 200
     weekend_wins: dict[int, int] = {}
+    weekend_bonus_by_user: dict[int, int] = defaultdict(int)
     try:
         wt_rows = db.execute(
-            "SELECT winner_user_id, COUNT(*) AS wins FROM weekend_tournaments WHERE status = 'completed' AND winner_user_id IS NOT NULL GROUP BY winner_user_id"
+            "SELECT * FROM weekend_tournaments WHERE status = 'completed' AND winner_user_id IS NOT NULL"
         ).fetchall()
         for r in wt_rows:
-            weekend_wins[r["winner_user_id"]] = r["wins"]
-            totals_by_user[r["winner_user_id"]] += r["wins"] * WEEKEND_WIN_BONUS
+            winner_id = int(r["winner_user_id"])
+            weekend_wins[winner_id] = weekend_wins.get(winner_id, 0) + 1
+            bonus = _weekend_tournament_bonus(r)
+            weekend_bonus_by_user[winner_id] += bonus
+            totals_by_user[winner_id] += bonus
     except Exception:
         pass
 
@@ -463,6 +501,7 @@ def _build_leaderboard(db, effective_match_points: dict[int, list[dict]] | None 
             "silver": user_medals["silver"],
             "bronze": user_medals["bronze"],
             "weekend_wins": weekend_wins.get(uid, 0),
+            "weekend_bonus": int(weekend_bonus_by_user.get(uid, 0)),
             "super_team_bonus": super_team_bonus_map.get(uid, 0),
             "balance": round(balances.get(uid, 0), 2),
         })
@@ -496,13 +535,15 @@ def _build_points_table(db, effective_match_points: dict[int, list[dict]] | None
 def _get_weekend_bonus_map(db) -> dict[int, int]:
     rows = db.execute(
         """
-        SELECT winner_user_id, COUNT(*) AS wins
+        SELECT *
         FROM weekend_tournaments
         WHERE status = 'completed' AND winner_user_id IS NOT NULL
-        GROUP BY winner_user_id
         """
     ).fetchall()
-    return {int(row["winner_user_id"]): int(row["wins"]) * 200 for row in rows}
+    bonus_by_user: dict[int, int] = defaultdict(int)
+    for row in rows:
+        bonus_by_user[int(row["winner_user_id"])] += _weekend_tournament_bonus(row)
+    return dict(bonus_by_user)
 
 
 def _wait_for_leaderboard_cache(timeout_seconds: float = 8.0, poll_seconds: float = 0.25) -> dict | None:
@@ -576,7 +617,7 @@ async def export_points_table(user: dict = Depends(get_current_user)):
             "user_id": int(row["user_id"]),
             "name": row["name"],
             "leaderboard_points": round(float(row["points"]), 2),
-            "weekend_bonus": int(row.get("weekend_wins", 0)) * 200,
+            "weekend_bonus": int(row.get("weekend_bonus", 0) or 0),
             "super_team_bonus": int(row.get("super_team_bonus", 0) or 0),
         }
         for row in cached_snapshot.get("leaderboard", [])

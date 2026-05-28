@@ -25,16 +25,7 @@ class AdminSuperTeamBody(BaseModel):
 
 @router.get("")
 async def super_team_home(user: dict = Depends(get_current_user)):
-    return {
-        "context": super_team_service.get_context(),
-        "my_user_id": user["id"],
-        "players": super_team_service.grouped_player_pool(user["id"]),
-        "my_team": super_team_service.my_team(user["id"]),
-        "standings": super_team_service.standings(),
-        "details": super_team_service.details(),
-        "contestants": super_team_service.contestants(),
-        "missing_users": super_team_service.missing_users(),
-    }
+    return super_team_service.home_payload(user["id"])
 
 
 @router.get("/status")

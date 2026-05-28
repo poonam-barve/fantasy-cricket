@@ -607,7 +607,7 @@ export default function SuperTeamPage() {
             </span>
           </div>
 
-          {leader && context.locked && (
+          {tab === 'live' && leader && context.locked && (
             <div className="mb-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3">
               <p className="text-xs text-cyan-300/70">Current Leader</p>
               <div className="mt-1 flex items-center justify-between gap-3">
@@ -617,18 +617,18 @@ export default function SuperTeamPage() {
             </div>
           )}
 
-        {context.substitution_open && (
+        {tab === 'live' && context.substitution_open && (
           <div className="mb-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3">
             <p className="text-xs font-semibold text-cyan-200">Substitution window open</p>
             <p className="mt-1 text-xs text-cyan-100/60">
               {context.substitution_phase === 2
-                ? 'Changes are compared with your edited team. Final team locks at Match 74 toss.'
-                : 'Changes are compared with your original team. Edited team locks at Match 73 toss.'}
+                ? 'Changes are compared with your edited team. Final team locks at Final match toss.'
+                : 'Changes are compared with your original team. Edited team locks Qualifier 2 toss.'}
             </p>
           </div>
         )}
 
-        {(projectedPenalty || myPenalty) && (projectedPenalty || myPenalty)!.total > 0 && (
+        {tab === 'myteam' && (projectedPenalty || myPenalty) && (projectedPenalty || myPenalty)!.total > 0 && (
           <div className="mb-3 rounded-xl border border-amber-400/20 bg-amber-500/10 p-3">
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-semibold text-amber-200">{projectedPenalty ? 'Projected penalty' : 'Current penalty'}</p>
@@ -763,7 +763,7 @@ export default function SuperTeamPage() {
             {playerStatsRows.length === 0 ? (
               <div className="px-4 py-8 text-center text-white/40">Player points will appear once playoff scoring starts.</div>
             ) : playerStatsRows.map((player) => (
-              <div key={`${activePlayerStatsMatchId}-${player.player_id}`}>
+              <div key={player.player_id}>
                 <div
                   onClick={() => setExpandedStatsPlayerId(expandedStatsPlayerId === player.player_id ? null : player.player_id)}
                   className={`flex cursor-pointer items-center justify-between gap-3 bg-gradient-to-r ${getTeamTheme(player.team).tintClass} px-4 py-3 transition-colors hover:bg-white/5`}
@@ -787,7 +787,26 @@ export default function SuperTeamPage() {
                 </div>
                 {expandedStatsPlayerId === player.player_id && (
                   <div className="border-t border-white/10 bg-black px-4 py-3">
-                    <p className="mb-2 text-[10px] uppercase tracking-wider text-white/40">Player Analysis</p>
+                    <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-[10px] uppercase tracking-wider text-white/40">Player Analysis</p>
+                      <div className="grid grid-cols-4 gap-1 rounded-lg bg-white/5 p-1">
+                        {[71, 72, 73, 74].map((matchId) => (
+                          <button
+                            key={`${player.player_id}-breakdown-${matchId}`}
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setActivePlayerStatsMatchId(matchId);
+                            }}
+                            className={`rounded-md px-2 py-1 text-[10px] font-semibold transition ${
+                              activePlayerStatsMatchId === matchId ? 'bg-white text-black' : 'text-white/55 hover:bg-white/10'
+                            }`}
+                          >
+                            M{matchId}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     {(player.match_breakdowns?.[String(activePlayerStatsMatchId)] || []).length > 0 ? (
                       <div className="flex flex-wrap gap-1.5">
                         {(player.match_breakdowns?.[String(activePlayerStatsMatchId)] || []).map((item, index) => (

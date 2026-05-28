@@ -580,6 +580,20 @@ def prime_and_get_submissions() -> dict[int, dict]:
         return copy.deepcopy(SUPER_TEAM_CACHE)
 
 
+def _ensure_super_team_read_cache(user_id: int | None = None) -> None:
+    with SUPER_TEAM_CACHE_LOCK:
+        cache_loaded = SUPER_TEAM_CACHE_LOADED
+        standings_loaded = bool(SUPER_STANDINGS_CACHE)
+        details_loaded = bool(SUPER_DETAILS_CACHE.get("player_points") or SUPER_DETAILS_CACHE.get("user_breakdowns") or SUPER_STANDINGS_META)
+    if not cache_loaded:
+        prime_super_team_cache()
+        return
+    if not standings_loaded or not details_loaded:
+        refresh_super_team_standings_cache()
+    if user_id is not None:
+        _build_player_pool(user_id)
+
+
 def _original_player_ids_for_user(user_id: int | None) -> set[int]:
     if user_id is None:
         return set()
@@ -625,11 +639,20 @@ def _build_player_pool(user_id: int | None = None) -> list[dict]:
         for row in details_snapshot.get("player_points", [])
         if row.get("player_id") is not None
     }
-    players = []
+    player_rows = []
     for row in data_service.get_cached_data("players"):
         pid = int(row["PlayerID"])
         if row["Team"] not in teams and pid not in snapshot_ids:
             continue
+        player_rows.append(row)
+    recent_history_by_player = _load_recent_history(
+        get_db(),
+        sorted({row["Team"] for row in player_rows if row.get("Team")}),
+        [int(row["PlayerID"]) for row in player_rows],
+    )
+    players = []
+    for row in player_rows:
+        pid = int(row["PlayerID"])
         point_row = points_by_player.get(pid, {})
         match_points = point_row.get("match_points", {}) or {}
         nonzero_points = [float(value or 0) for value in match_points.values() if float(value or 0) != 0]
@@ -649,14 +672,7 @@ def _build_player_pool(user_id: int | None = None) -> list[dict]:
             "matches_played": len(nonzero_points),
             "avg_points": round((sum(nonzero_points) / len(nonzero_points)) if nonzero_points else 0, 2),
             "last_match_points": latest_points,
-            "recent_history": [
-                {
-                    "match_id": int(match_id),
-                    "points": round(float(points or 0), 2),
-                    "did_not_play": float(points or 0) == 0,
-                }
-                for match_id, points in sorted(match_points.items(), key=lambda item: int(item[0]), reverse=True)
-            ],
+            "recent_history": recent_history_by_player.get(pid, []),
         })
     players.sort(key=lambda item: (item["team"], item["role"], -float(item["total_points"]), item["name"]))
     with SUPER_TEAM_CACHE_LOCK:
@@ -691,7 +707,7 @@ def _load_recent_history(db, teams: list[str], player_ids: list[int]) -> dict[in
         FROM matches
         WHERE status = 'completed'
           AND (team1 IN ({team_placeholders}) OR team2 IN ({team_placeholders}))
-        ORDER BY id DESC
+        ORDER BY id ASC
         """,
         [*teams, *teams],
     ).fetchall()
@@ -729,6 +745,7 @@ def _load_recent_history(db, teams: list[str], player_ids: list[int]) -> dict[in
 
 
 def grouped_player_pool(user_id: int | None = None) -> dict[str, list[dict]]:
+    _ensure_super_team_read_cache()
     grouped = {"Wicketkeeper": [], "Batter": [], "AllRounder": [], "Bowler": []}
     for player in _build_player_pool(user_id):
         grouped.setdefault(player["role"], []).append(player)
@@ -885,6 +902,7 @@ def projected_penalty(user_id: int, player_ids: list[int], captain: int, vice_ca
 
 
 def my_team(user_id: int) -> dict:
+    _ensure_super_team_read_cache()
     submissions = get_submissions()
     entry = submissions.get(int(user_id))
     if not entry:
@@ -915,6 +933,7 @@ def my_team(user_id: int) -> dict:
 
 
 def contestants() -> list[dict]:
+    _ensure_super_team_read_cache()
     return [
         {"user_id": entry["user_id"], "name": entry["name"], "last_team_updated": entry.get("updated_at")}
         for entry in sorted(
@@ -937,6 +956,7 @@ def admin_snapshot_payload() -> dict:
 
 
 def missing_users() -> list[dict]:
+    _ensure_super_team_read_cache()
     submitted_user_ids = set(get_submissions().keys())
     users = data_service.get_cached_data("users")
     missing = []
@@ -1112,6 +1132,10 @@ def refresh_super_team_standings_cache() -> dict:
         int(pid)
         for entry in [*submissions.values(), *originals.values(), *edited.values(), *final.values()]
         for pid in entry.get("player_ids", [])
+    } | {
+        int(pid)
+        for pid, player in players.items()
+        if player and player.get("Team") in set(context["teams"])
     })
     player_points = []
     for pid in player_ids:
@@ -1162,13 +1186,29 @@ def refresh_super_team_standings_cache() -> dict:
 
 
 def standings() -> list[dict]:
+    _ensure_super_team_read_cache()
     with SUPER_TEAM_CACHE_LOCK:
         return copy.deepcopy(SUPER_STANDINGS_CACHE)
 
 
 def details() -> dict:
+    _ensure_super_team_read_cache()
     with SUPER_TEAM_CACHE_LOCK:
         return copy.deepcopy(SUPER_DETAILS_CACHE)
+
+
+def home_payload(user_id: int) -> dict:
+    _ensure_super_team_read_cache(int(user_id))
+    return {
+        "context": get_context(),
+        "my_user_id": int(user_id),
+        "players": grouped_player_pool(int(user_id)),
+        "my_team": my_team(int(user_id)),
+        "standings": standings(),
+        "details": details(),
+        "contestants": contestants(),
+        "missing_users": missing_users(),
+    }
 
 
 def bonus_map() -> dict[int, int]:

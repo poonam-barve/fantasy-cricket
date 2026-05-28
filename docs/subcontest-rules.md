@@ -12,7 +12,7 @@ This document is the compact source of truth for fantasy subcontests beyond the 
 - Head-to-head results use raw match fantasy points only.
 - Score prediction bonuses do not affect bracket results; they remain separate leaderboard bonuses.
 - Tie-breaker: higher overall leaderboard rank wins the head-to-head.
-- The Weekend Champion gets `+200` leaderboard bonus points.
+- The Weekend Champion gets `+200` leaderboard bonus points. The Match `70`-`74` Knockout Champion gets `+400`.
 
 ## Super Team
 
