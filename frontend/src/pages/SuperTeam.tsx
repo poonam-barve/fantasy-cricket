@@ -127,7 +127,7 @@ export default function SuperTeamPage() {
   const [userBreakdowns, setUserBreakdowns] = useState<SuperUserBreakdown[]>([]);
   const [playerPointRows, setPlayerPointRows] = useState<SuperPlayerPoints[]>([]);
   const [selectedBreakdownUserId, setSelectedBreakdownUserId] = useState<number | null>(null);
-  const [activePlayerStatsMatchId, setActivePlayerStatsMatchId] = useState(71);
+  const [activePlayerStatsMatchByPlayer, setActivePlayerStatsMatchByPlayer] = useState<Record<number, number>>({});
   const [tab, setTab] = useState<SuperTab>('live');
   const [contestants, setContestants] = useState<Contestant[]>([]);
   const [missingUsers, setMissingUsers] = useState<MissingUser[]>([]);
@@ -433,10 +433,14 @@ export default function SuperTeamPage() {
   const playerStatsRows = playerPointRows
     .map((player) => ({
       ...player,
-      match_points_value: Number(player.match_points?.[String(activePlayerStatsMatchId)] || 0),
-      owners_value: player.owners?.[String(activePlayerStatsMatchId)] || [],
+      total_points_value: Number(player.points || 0),
+      owner_count: Array.from(new Set(
+        Object.values(player.owners || {})
+          .flat()
+          .map((owner) => owner.user_id)
+      )).length,
     }))
-    .sort((a, b) => b.match_points_value - a.match_points_value || b.points - a.points || a.name.localeCompare(b.name));
+    .sort((a, b) => b.total_points_value - a.total_points_value || a.name.localeCompare(b.name));
   const compareContestants = userBreakdowns.filter((row) => row.user_id !== myUserId);
   const renderTeamBadge = (team: string, compact = false) => {
     const theme = getTeamTheme(team);
@@ -738,31 +742,17 @@ export default function SuperTeamPage() {
       {tab === 'live' && context.locked && (
         <div className="rounded-2xl border border-white/10 bg-white/5">
           <div className="border-b border-white/10 px-4 py-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-white">Player Statistics</p>
-                <p className="text-xs text-white/35">Select a playoff match to view player points for that match.</p>
-              </div>
-              <div className="grid grid-cols-4 gap-1 rounded-xl bg-black/25 p-1">
-                {[71, 72, 73, 74].map((matchId) => (
-                  <button
-                    key={matchId}
-                    type="button"
-                    onClick={() => setActivePlayerStatsMatchId(matchId)}
-                    className={`rounded-lg px-2 py-1.5 text-xs font-semibold transition ${
-                      activePlayerStatsMatchId === matchId ? 'bg-white text-black' : 'text-white/55 hover:bg-white/10'
-                    }`}
-                  >
-                    M{matchId}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <p className="text-sm font-semibold text-white">Player Statistics</p>
+            <p className="text-xs text-white/35">Players are ranked by total playoff points. Expand a player to view match-wise breakdown.</p>
           </div>
           <div className="divide-y divide-white/5">
             {playerStatsRows.length === 0 ? (
               <div className="px-4 py-8 text-center text-white/40">Player points will appear once playoff scoring starts.</div>
-            ) : playerStatsRows.map((player) => (
+            ) : playerStatsRows.map((player) => {
+              const activePlayerStatsMatchId = activePlayerStatsMatchByPlayer[player.player_id] || 71;
+              const matchPointsValue = Number(player.match_points?.[String(activePlayerStatsMatchId)] || 0);
+              const ownersValue = player.owners?.[String(activePlayerStatsMatchId)] || [];
+              return (
               <div key={player.player_id}>
                 <div
                   onClick={() => setExpandedStatsPlayerId(expandedStatsPlayerId === player.player_id ? null : player.player_id)}
@@ -774,15 +764,15 @@ export default function SuperTeamPage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-white">{player.name}</p>
                       <p className="text-xs text-white/35">
-                        {shortRole(player.role)} | {player.owners_value.length} {player.owners_value.length === 1 ? 'team' : 'teams'}
+                        {shortRole(player.role)} | {player.owner_count} {player.owner_count === 1 ? 'team' : 'teams'}
                       </p>
                     </div>
                   </div>
                   <div className="shrink-0 text-right">
-                    <p className={`text-sm font-bold ${player.match_points_value ? 'text-blue-300' : 'text-white/30'}`}>
-                      {formatPoints(player.match_points_value)}
+                    <p className={`text-sm font-bold ${player.total_points_value ? 'text-blue-300' : 'text-white/30'}`}>
+                      {formatPoints(player.total_points_value)}
                     </p>
-                    <p className="text-[10px] text-white/30">M{activePlayerStatsMatchId} pts</p>
+                    <p className="text-[10px] text-white/30">Total pts</p>
                   </div>
                 </div>
                 {expandedStatsPlayerId === player.player_id && (
@@ -796,7 +786,7 @@ export default function SuperTeamPage() {
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              setActivePlayerStatsMatchId(matchId);
+                              setActivePlayerStatsMatchByPlayer((current) => ({ ...current, [player.player_id]: matchId }));
                             }}
                             className={`rounded-md px-2 py-1 text-[10px] font-semibold transition ${
                               activePlayerStatsMatchId === matchId ? 'bg-white text-black' : 'text-white/55 hover:bg-white/10'
@@ -806,6 +796,12 @@ export default function SuperTeamPage() {
                           </button>
                         ))}
                       </div>
+                    </div>
+                    <div className="mb-3 flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
+                      <span className="text-xs text-white/45">M{activePlayerStatsMatchId} points</span>
+                      <span className={`text-sm font-bold ${matchPointsValue ? 'text-blue-300' : 'text-white/30'}`}>
+                        {formatPoints(matchPointsValue)}
+                      </span>
                     </div>
                     {(player.match_breakdowns?.[String(activePlayerStatsMatchId)] || []).length > 0 ? (
                       <div className="flex flex-wrap gap-1.5">
@@ -822,11 +818,11 @@ export default function SuperTeamPage() {
                     )}
                     <div className="mt-3 border-t border-white/5 pt-3">
                       <p className="mb-2 text-[10px] uppercase tracking-wider text-white/40">
-                        Selected By ({player.owners_value.length})
+                        Selected By ({ownersValue.length})
                       </p>
-                      {player.owners_value.length > 0 ? (
+                      {ownersValue.length > 0 ? (
                         <div className="flex flex-wrap gap-1.5">
-                          {player.owners_value.map((owner) => (
+                          {ownersValue.map((owner) => (
                             <span
                               key={`${player.player_id}-${activePlayerStatsMatchId}-${owner.user_id}`}
                               className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-medium text-white/70"
@@ -848,7 +844,8 @@ export default function SuperTeamPage() {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
