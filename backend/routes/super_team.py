@@ -30,10 +30,9 @@ async def super_team_home(user: dict = Depends(get_current_user)):
 
 @router.get("/status")
 async def super_team_status(user: dict = Depends(get_current_user)):
-    submissions = super_team_service.get_submissions()
     return {
         "context": super_team_service.get_context(),
-        "has_team": int(user["id"]) in submissions,
+        "has_team": super_team_service.has_submission(user["id"]),
     }
 
 

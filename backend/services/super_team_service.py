@@ -27,6 +27,8 @@ SUPER_TEAM_PHASE2_BOWL_PENALTY = 80
 
 SUPER_TEAM_CACHE_LOCK = threading.Lock()
 SUPER_TEAM_CACHE: dict[int, dict] = {}
+SUPER_SNAPSHOT_CACHE: dict[str, dict[int, dict]] = {phase: {} for phase in SUPER_TEAM_SNAPSHOT_PHASES}
+SUPER_SNAPSHOT_CACHE_LOADED = False
 SUPER_STANDINGS_CACHE: list[dict] = []
 SUPER_DETAILS_CACHE: dict = {"user_breakdowns": [], "player_points": []}
 SUPER_STANDINGS_META: dict = {}
@@ -318,6 +320,30 @@ def _fetch_all_snapshots_from_db() -> dict[str, dict[int, dict]]:
     return {phase: _fetch_snapshot_submissions_from_db(phase) for phase in SUPER_TEAM_SNAPSHOT_PHASES}
 
 
+def _publish_snapshot_cache(snapshots: dict[str, dict[int, dict]]) -> None:
+    global SUPER_SNAPSHOT_CACHE_LOADED
+    with SUPER_TEAM_CACHE_LOCK:
+        SUPER_SNAPSHOT_CACHE.clear()
+        SUPER_SNAPSHOT_CACHE.update({
+            phase: copy.deepcopy(snapshots.get(phase, {}))
+            for phase in SUPER_TEAM_SNAPSHOT_PHASES
+        })
+        SUPER_SNAPSHOT_CACHE_LOADED = True
+
+
+def refresh_snapshot_cache() -> dict[str, dict[int, dict]]:
+    snapshots = _fetch_all_snapshots_from_db()
+    _publish_snapshot_cache(snapshots)
+    return copy.deepcopy(snapshots)
+
+
+def get_snapshots() -> dict[str, dict[int, dict]]:
+    with SUPER_TEAM_CACHE_LOCK:
+        if SUPER_SNAPSHOT_CACHE_LOADED:
+            return copy.deepcopy(SUPER_SNAPSHOT_CACHE)
+    return refresh_snapshot_cache()
+
+
 def _save_snapshot_entry(phase: str, entry: dict, *, replace: bool = False) -> int:
     if phase not in SUPER_TEAM_SNAPSHOT_PHASES:
         raise HTTPException(status_code=400, detail="Invalid Super Team snapshot phase")
@@ -355,39 +381,45 @@ def _save_snapshot_entry(phase: str, entry: dict, *, replace: bool = False) -> i
     return inserted
 
 
-def ensure_original_snapshots() -> int:
+def ensure_original_snapshots(submissions: dict[int, dict] | None = None) -> int:
     """Persist the locked Match 71/72 team as the comparison baseline."""
     db = get_db()
-    existing_rows = db.execute("SELECT DISTINCT user_id FROM super_team_snapshots WHERE phase = 'original'").fetchall()
-    existing_user_ids = {int(row["user_id"]) for row in existing_rows}
+    snapshots = get_snapshots()
+    existing_user_ids = set(snapshots.get("original", {}).keys())
     inserted = 0
-    for uid, entry in _fetch_submissions_from_db().items():
+    for uid, entry in (submissions or get_submissions()).items():
         if int(uid) in existing_user_ids:
             continue
         inserted += _save_snapshot_entry("original", entry)
+    if inserted:
+        refresh_snapshot_cache()
     return inserted
 
 
-def ensure_phase_snapshots(context: dict | None = None) -> int:
+def ensure_phase_snapshots(context: dict | None = None, submissions: dict[int, dict] | None = None) -> int:
     context = context or get_context()
     inserted = 0
-    submissions = _fetch_submissions_from_db()
+    submissions = submissions or get_submissions()
     if context.get("locked"):
-        inserted += ensure_original_snapshots()
-    snapshots = _fetch_all_snapshots_from_db()
+        inserted += ensure_original_snapshots(submissions)
+    snapshots = get_snapshots()
     originals = snapshots.get("original", {})
     edited = snapshots.get("edited", {})
     if context.get("first_substitution_finalized"):
         for uid, original in originals.items():
             if uid not in edited:
                 inserted += _save_snapshot_entry("edited", submissions.get(uid) or original)
-    snapshots = _fetch_all_snapshots_from_db()
+    if inserted:
+        refresh_snapshot_cache()
+    snapshots = get_snapshots()
     edited = snapshots.get("edited", {})
     final = snapshots.get("final", {})
     if context.get("second_substitution_finalized"):
         for uid, edited_entry in edited.items():
             if uid not in final:
                 inserted += _save_snapshot_entry("final", submissions.get(uid) or edited_entry)
+    if inserted:
+        refresh_snapshot_cache()
     return inserted
 
 
@@ -405,6 +437,7 @@ def replace_snapshot(phase: str, user_id: int, player_ids: list[int], captain: i
         "vice_captain": vice_captain_id,
     }
     _save_snapshot_entry(phase, entry, replace=True)
+    refresh_snapshot_cache()
     refresh_super_team_standings_cache()
     return entry
 
@@ -514,8 +547,8 @@ def _penalty_details(original: dict | None, current: dict | None, *, phase: int 
 
 
 def _penalty_lookup(submissions: dict[int, dict] | None = None) -> dict[int, dict]:
-    current = submissions or _fetch_submissions_from_db()
-    snapshots = _fetch_all_snapshots_from_db()
+    current = submissions or get_submissions()
+    snapshots = get_snapshots()
     originals = snapshots.get("original", {}) or _fetch_original_submissions_from_db()
     edited = snapshots.get("edited", {})
     final = snapshots.get("final", {})
@@ -549,13 +582,14 @@ def _penalty_lookup(submissions: dict[int, dict] | None = None) -> dict[int, dic
 def prime_super_team_cache() -> dict:
     global SUPER_TEAM_CACHE_LOADED
     context = get_context()
-    if context.get("locked"):
-        ensure_phase_snapshots(context)
     submissions = _fetch_submissions_from_db()
     with SUPER_TEAM_CACHE_LOCK:
         SUPER_TEAM_CACHE.clear()
         SUPER_TEAM_CACHE.update(copy.deepcopy(submissions))
         SUPER_TEAM_CACHE_LOADED = True
+    refresh_snapshot_cache()
+    if context.get("locked"):
+        ensure_phase_snapshots(context, submissions)
     refresh_super_team_standings_cache()
     return {"teams": len(submissions), "standings": len(SUPER_STANDINGS_CACHE)}
 
@@ -572,6 +606,17 @@ def get_submissions() -> dict[int, dict]:
         if SUPER_TEAM_CACHE_LOADED:
             return copy.deepcopy(SUPER_TEAM_CACHE)
     return prime_and_get_submissions()
+
+
+def has_submission(user_id: int) -> bool:
+    with SUPER_TEAM_CACHE_LOCK:
+        if SUPER_TEAM_CACHE_LOADED:
+            return int(user_id) in SUPER_TEAM_CACHE
+    row = get_db().execute(
+        "SELECT 1 FROM super_teams WHERE user_id = ? LIMIT 1",
+        (int(user_id),),
+    ).fetchone()
+    return row is not None
 
 
 def prime_and_get_submissions() -> dict[int, dict]:
@@ -628,7 +673,8 @@ def _build_player_pool(user_id: int | None = None) -> list[dict]:
     teams = set(context["teams"])
     if not teams and not snapshot_ids:
         return []
-    cache_key = tuple([str(user_id or 0), *sorted(teams), *[str(pid) for pid in sorted(snapshot_ids)]])
+    stats_source = "super" if context.get("locked") else "overall"
+    cache_key = tuple([stats_source, str(user_id or 0), *sorted(teams), *[str(pid) for pid in sorted(snapshot_ids)]])
     with SUPER_TEAM_CACHE_LOCK:
         if SUPER_PLAYER_POOL_KEY == cache_key:
             return copy.deepcopy(SUPER_PLAYER_POOL_CACHE)
@@ -650,17 +696,28 @@ def _build_player_pool(user_id: int | None = None) -> list[dict]:
         sorted({row["Team"] for row in player_rows if row.get("Team")}),
         [int(row["PlayerID"]) for row in player_rows],
     )
+    overall_stats = _load_overall_player_stats([int(row["PlayerID"]) for row in player_rows]) if not context.get("locked") else {}
     players = []
     for row in player_rows:
         pid = int(row["PlayerID"])
         point_row = points_by_player.get(pid, {})
-        match_points = point_row.get("match_points", {}) or {}
-        nonzero_points = [float(value or 0) for value in match_points.values() if float(value or 0) != 0]
-        latest_points = None
-        for match_id in sorted(SUPER_MATCH_IDS, reverse=True):
-            if str(match_id) in match_points:
-                latest_points = round(float(match_points.get(str(match_id)) or 0), 2)
-                break
+        if context.get("locked"):
+            match_points = point_row.get("match_points", {}) or {}
+            played_points = [float(value or 0) for value in match_points.values()]
+            latest_points = None
+            for match_id in sorted(SUPER_MATCH_IDS, reverse=True):
+                if str(match_id) in match_points:
+                    latest_points = round(float(match_points.get(str(match_id)) or 0), 2)
+                    break
+            total_points = round(float(point_row.get("points") or 0), 2)
+            matches_played = len(played_points)
+            avg_points = round((sum(played_points) / len(played_points)) if played_points else 0, 2)
+        else:
+            stat_row = overall_stats.get(pid, {})
+            total_points = round(float(stat_row.get("total") or 0), 2)
+            matches_played = int(stat_row.get("matches") or 0)
+            avg_points = round(float(stat_row.get("avg") or 0), 2)
+            latest_points = stat_row.get("last_points")
         players.append({
             "id": pid,
             "name": row["Name"],
@@ -668,9 +725,9 @@ def _build_player_pool(user_id: int | None = None) -> list[dict]:
             "role": row["Role"],
             "type": row.get("Type"),
             "aliases": row.get("Aliases", ""),
-            "total_points": round(float(point_row.get("points") or 0), 2),
-            "matches_played": len(nonzero_points),
-            "avg_points": round((sum(nonzero_points) / len(nonzero_points)) if nonzero_points else 0, 2),
+            "total_points": total_points,
+            "matches_played": matches_played,
+            "avg_points": avg_points,
             "last_match_points": latest_points,
             "recent_history": recent_history_by_player.get(pid, []),
         })
@@ -707,7 +764,7 @@ def _load_recent_history(db, teams: list[str], player_ids: list[int]) -> dict[in
         FROM matches
         WHERE status = 'completed'
           AND (team1 IN ({team_placeholders}) OR team2 IN ({team_placeholders}))
-        ORDER BY id ASC
+        ORDER BY id DESC
         """,
         [*teams, *teams],
     ).fetchall()
@@ -891,7 +948,7 @@ def projected_penalty(user_id: int, player_ids: list[int], captain: int, vice_ca
         "vice_captain": vice_captain_id,
     }
     ensure_phase_snapshots(context)
-    snapshots = _fetch_all_snapshots_from_db()
+    snapshots = get_snapshots()
     phase = int(context.get("substitution_phase") or 0)
     if phase == 1:
         return _penalty_details(snapshots.get("original", {}).get(int(user_id)), draft, phase=1)
@@ -945,7 +1002,7 @@ def contestants() -> list[dict]:
 
 
 def admin_snapshot_payload() -> dict:
-    snapshots = _fetch_all_snapshots_from_db()
+    snapshots = get_snapshots()
     current = get_submissions()
     return {
         "current": list(current.values()),
@@ -990,6 +1047,16 @@ def _point_lookup_from_score_cache() -> dict[tuple[int, int], float]:
     return lookup
 
 
+def _completed_super_match_ids(context: dict | None = None) -> list[int]:
+    matches = (context or get_context()).get("matches", {})
+    completed = []
+    for match_id in SUPER_MATCH_IDS:
+        row = matches.get(str(match_id)) or matches.get(match_id)
+        if _status_for_match(row) == "completed":
+            completed.append(match_id)
+    return completed
+
+
 def _player_breakdown_lookup_from_score_cache() -> dict[tuple[int, int], list[dict]]:
     lookup: dict[tuple[int, int], list[dict]] = {}
     try:
@@ -1019,29 +1086,72 @@ def _point_lookup_from_db() -> dict[tuple[int, int], float]:
     return {(int(row["match_id"]), int(row["player_id"])): float(row["points"] or 0) for row in rows}
 
 
+def _load_overall_player_stats(player_ids: list[int] | None = None) -> dict[int, dict]:
+    if player_ids is not None and not player_ids:
+        return {}
+    db = get_db()
+    params: list[int] = []
+    player_filter = ""
+    if player_ids is not None:
+        player_filter = f" AND pp.player_id IN ({','.join('?' * len(player_ids))})"
+        params.extend(int(pid) for pid in player_ids)
+    rows = db.execute(
+        f"""
+        SELECT pp.player_id, pp.match_id, pp.points
+        FROM player_points pp
+        JOIN matches m ON m.id = pp.match_id
+        WHERE LOWER(COALESCE(m.status, '')) = 'completed'
+        {player_filter}
+        ORDER BY pp.player_id, pp.match_id
+        """,
+        params,
+    ).fetchall()
+    stats: dict[int, dict] = {}
+    for row in rows:
+        pid = int(row["player_id"])
+        entry = stats.setdefault(pid, {"total": 0.0, "matches": 0, "last_match_id": None, "last_points": None})
+        points = float(row["points"] or 0)
+        entry["total"] += points
+        entry["matches"] += 1
+        if entry["last_match_id"] is None or int(row["match_id"]) > int(entry["last_match_id"]):
+            entry["last_match_id"] = int(row["match_id"])
+            entry["last_points"] = round(points, 2)
+    for entry in stats.values():
+        entry["total"] = round(float(entry["total"] or 0), 2)
+        entry["avg"] = round((float(entry["total"] or 0) / int(entry["matches"])) if entry["matches"] else 0, 2)
+    return stats
+
+
 def refresh_super_team_standings_cache() -> dict:
     context = get_context()
-    if context.get("locked"):
-        ensure_phase_snapshots(context)
     submissions = _fetch_submissions_from_db()
-    snapshots = _fetch_all_snapshots_from_db()
+    if context.get("locked"):
+        ensure_phase_snapshots(context, submissions)
+    snapshots = get_snapshots()
     originals = snapshots.get("original", {}) or _fetch_original_submissions_from_db()
     edited = snapshots.get("edited", {})
     final = snapshots.get("final", {})
     penalties = _penalty_lookup(submissions)
     penalty_applies = bool(context.get("first_substitution_finalized") or context.get("second_substitution_finalized"))
-    point_lookup = _point_lookup_from_score_cache()
-    if not point_lookup:
-        point_lookup = _point_lookup_from_db()
+    point_lookup = _point_lookup_from_db()
+    point_lookup.update(_point_lookup_from_score_cache())
     breakdown_lookup = _player_breakdown_lookup_from_score_cache()
+    completed_match_ids = _completed_super_match_ids(context)
     players = _player_lookup()
     rows = []
     user_breakdowns = []
     owners_by_player_match: dict[int, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     max_points = None
+    match_teams_by_id = {
+        int(match_id): {
+            str((row or {}).get("Team1") or ""),
+            str((row or {}).get("Team2") or ""),
+        }
+        for match_id, row in ((mid, (context.get("matches", {}) or {}).get(str(mid))) for mid in completed_match_ids)
+    }
     for entry in submissions.values():
         match_points: dict[int, float] = defaultdict(float)
-        match_players: dict[int, list[dict]] = {match_id: [] for match_id in SUPER_MATCH_IDS}
+        match_players: dict[int, list[dict]] = {match_id: [] for match_id in completed_match_ids}
         total = 0.0
         original_entry = originals.get(int(entry["user_id"])) or entry
         edited_entry = edited.get(int(entry["user_id"])) or original_entry
@@ -1053,15 +1163,19 @@ def refresh_super_team_standings_cache() -> dict:
             74: final_entry,
         }
         latest_ids = {int(pid) for pid in final_entry.get("player_ids", [])}
-        for match_id in SUPER_MATCH_IDS:
+        for match_id in completed_match_ids:
             score_entry = score_entries_by_match[match_id]
             match_captain = score_entry.get("captain")
             match_vice_captain = score_entry.get("vice_captain")
             for pid in score_entry["player_ids"]:
+                point_key = (match_id, int(pid))
                 player = players.get(int(pid), {})
+                player_team = str(player.get("Team") or "")
+                if point_key not in point_lookup and player_team not in match_teams_by_id.get(match_id, set()):
+                    continue
                 multiplier = _super_team_multiplier(int(pid), match_captain, match_vice_captain)
                 tag = _super_team_tag(int(pid), match_captain, match_vice_captain)
-                base_pts = float(point_lookup.get((match_id, int(pid)), 0))
+                base_pts = float(point_lookup.get(point_key, 0))
                 pts = _apply_super_team_multiplier(base_pts, int(pid), match_captain, match_vice_captain)
                 match_points[match_id] += pts
                 total += pts
@@ -1104,11 +1218,11 @@ def refresh_super_team_standings_cache() -> dict:
                     "match_id": match_id,
                     "points": round(match_points.get(match_id, 0), 2),
                     "players": sorted(
-                        match_players[match_id],
+                        match_players.get(match_id, []),
                         key=lambda item: (-float(item["points"]), item["name"]),
                     ),
                 }
-                for match_id in SUPER_MATCH_IDS
+                for match_id in completed_match_ids
             ],
         })
     rows.sort(key=lambda item: (-item["points"], item["name"]))
@@ -1140,15 +1254,34 @@ def refresh_super_team_standings_cache() -> dict:
     player_points = []
     for pid in player_ids:
         player = players.get(pid, {})
+        owners = {
+            str(match_id): copy.deepcopy(owners_by_player_match.get(pid, {}).get(str(match_id), []))
+            for match_id in completed_match_ids
+        }
+        owner_match_ids = {
+            int(match_id)
+            for match_id, match_owners in owners.items()
+            if match_owners
+        }
         match_point_map = {
             str(match_id): round(float(point_lookup.get((match_id, pid), 0)), 2)
-            for match_id in SUPER_MATCH_IDS
+            for match_id in completed_match_ids
+            if (match_id, pid) in point_lookup or match_id in owner_match_ids
         }
         match_breakdown_map = {
             str(match_id): copy.deepcopy(breakdown_lookup.get((match_id, pid), []))
-            for match_id in SUPER_MATCH_IDS
+            for match_id in completed_match_ids
+            if (match_id, pid) in point_lookup or match_id in owner_match_ids
         }
         total_points = round(sum(match_point_map.values()), 2)
+        owner_count = len({
+            int(owner["user_id"])
+            for match_owners in owners.values()
+            for owner in match_owners
+            if owner.get("user_id") is not None
+        })
+        if total_points == 0 and owner_count == 0:
+            continue
         player_points.append({
             "player_id": pid,
             "name": player.get("Name", ""),
@@ -1157,10 +1290,7 @@ def refresh_super_team_standings_cache() -> dict:
             "points": total_points,
             "match_points": match_point_map,
             "match_breakdowns": match_breakdown_map,
-            "owners": {
-                str(match_id): copy.deepcopy(owners_by_player_match.get(pid, {}).get(str(match_id), []))
-                for match_id in SUPER_MATCH_IDS
-            },
+            "owners": owners,
         })
     player_points.sort(key=lambda item: (-float(item["points"]), item["team"], item["name"]))
 

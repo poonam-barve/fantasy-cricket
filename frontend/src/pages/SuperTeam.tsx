@@ -76,6 +76,17 @@ const formatPoints = (value: number | null | undefined) => {
   const rounded = Math.round(value * 2) / 2;
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 };
+const sortedMatchIds = (matchPoints: Record<string, number> | null | undefined) => (
+  Object.keys(matchPoints || {})
+    .map((key) => Number(key))
+    .filter((matchId) => Number.isFinite(matchId))
+    .sort((a, b) => a - b)
+);
+const matchPointSummary = (matchPoints: Record<string, number> | null | undefined) => {
+  const ids = sortedMatchIds(matchPoints);
+  if (ids.length === 0) return 'No completed appearances';
+  return ids.map((matchId) => `M${matchId} ${formatPoints(matchPoints?.[String(matchId)])}`).join(' | ');
+};
 
 function statText(player: Player) {
   const bits = [
@@ -477,7 +488,7 @@ export default function SuperTeamPage() {
                 <span>{shortRole(player.role)}</span>
               </div>
               <p className="mt-1 text-[10px] text-white/30">
-                M71 {formatPoints(player.match_points['71'] || 0)} | M72 {formatPoints(player.match_points['72'] || 0)} | M73 {formatPoints(player.match_points['73'] || 0)} | M74 {formatPoints(player.match_points['74'] || 0)}
+                {matchPointSummary(player.match_points)}
               </p>
             </div>
             <div className="shrink-0 text-right">
@@ -511,7 +522,7 @@ export default function SuperTeamPage() {
               <span>{shortRole(player.role)}</span>
             </div>
             <p className="mt-1 text-[10px] text-white/30">
-              M71 {formatPoints(player.match_points['71'] || 0)} | M72 {formatPoints(player.match_points['72'] || 0)} | M73 {formatPoints(player.match_points['73'] || 0)} | M74 {formatPoints(player.match_points['74'] || 0)}
+              {matchPointSummary(player.match_points)}
             </p>
           </div>
           <p className="shrink-0 text-sm font-bold text-blue-300">{formatPoints(player.points)}</p>
@@ -711,7 +722,7 @@ export default function SuperTeamPage() {
                       )}
                     </div>
                     <p className="text-[11px] text-white/35">
-                      M71 {formatPoints(row.match_points?.['71'] || 0)} | M72 {formatPoints(row.match_points?.['72'] || 0)} | M73 {formatPoints(row.match_points?.['73'] || 0)} | M74 {formatPoints(row.match_points?.['74'] || 0)}
+                      {matchPointSummary(row.match_points)}
                       {row.penalty?.total ? ` | Penalty -${row.penalty.total}` : ''}
                     </p>
                   </div>
@@ -749,7 +760,10 @@ export default function SuperTeamPage() {
             {playerStatsRows.length === 0 ? (
               <div className="px-4 py-8 text-center text-white/40">Player points will appear once playoff scoring starts.</div>
             ) : playerStatsRows.map((player) => {
-              const activePlayerStatsMatchId = activePlayerStatsMatchByPlayer[player.player_id] || 71;
+              const playerMatchIds = sortedMatchIds(player.match_points);
+              const activePlayerStatsMatchId = playerMatchIds.includes(activePlayerStatsMatchByPlayer[player.player_id])
+                ? activePlayerStatsMatchByPlayer[player.player_id]
+                : playerMatchIds[0];
               const matchPointsValue = Number(player.match_points?.[String(activePlayerStatsMatchId)] || 0);
               const ownersValue = player.owners?.[String(activePlayerStatsMatchId)] || [];
               return (
@@ -779,8 +793,9 @@ export default function SuperTeamPage() {
                   <div className="border-t border-white/10 bg-black px-4 py-3">
                     <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <p className="text-[10px] uppercase tracking-wider text-white/40">Player Analysis</p>
-                      <div className="grid grid-cols-4 gap-1 rounded-lg bg-white/5 p-1">
-                        {[71, 72, 73, 74].map((matchId) => (
+                      {playerMatchIds.length > 0 && (
+                      <div className="flex flex-wrap gap-1 rounded-lg bg-white/5 p-1">
+                        {playerMatchIds.map((matchId) => (
                           <button
                             key={`${player.player_id}-breakdown-${matchId}`}
                             type="button"
@@ -796,13 +811,16 @@ export default function SuperTeamPage() {
                           </button>
                         ))}
                       </div>
+                      )}
                     </div>
-                    <div className="mb-3 flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
-                      <span className="text-xs text-white/45">M{activePlayerStatsMatchId} points</span>
-                      <span className={`text-sm font-bold ${matchPointsValue ? 'text-blue-300' : 'text-white/30'}`}>
-                        {formatPoints(matchPointsValue)}
-                      </span>
-                    </div>
+                    {activePlayerStatsMatchId ? (
+                      <div className="mb-3 flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
+                        <span className="text-xs text-white/45">M{activePlayerStatsMatchId} points</span>
+                        <span className={`text-sm font-bold ${matchPointsValue ? 'text-blue-300' : 'text-white/30'}`}>
+                          {formatPoints(matchPointsValue)}
+                        </span>
+                      </div>
+                    ) : null}
                     {(player.match_breakdowns?.[String(activePlayerStatsMatchId)] || []).length > 0 ? (
                       <div className="flex flex-wrap gap-1.5">
                         {(player.match_breakdowns?.[String(activePlayerStatsMatchId)] || []).map((item, index) => (
@@ -813,10 +831,12 @@ export default function SuperTeamPage() {
                           </span>
                         ))}
                       </div>
-                    ) : (
+                    ) : activePlayerStatsMatchId ? (
                       <p className="text-xs text-white/35">No detailed point breakdown available for this match.</p>
+                    ) : (
+                      <p className="text-xs text-white/35">No completed appearances yet.</p>
                     )}
-                    <div className="mt-3 border-t border-white/5 pt-3">
+                    {activePlayerStatsMatchId ? <div className="mt-3 border-t border-white/5 pt-3">
                       <p className="mb-2 text-[10px] uppercase tracking-wider text-white/40">
                         Selected By ({ownersValue.length})
                       </p>
@@ -840,7 +860,7 @@ export default function SuperTeamPage() {
                       ) : (
                         <p className="text-xs text-white/35">No Super Teams include this player for M{activePlayerStatsMatchId}.</p>
                       )}
-                    </div>
+                    </div> : null}
                   </div>
                 )}
               </div>
@@ -977,7 +997,7 @@ export default function SuperTeamPage() {
               )}
 
               {renderCompareSection(
-                'Same Players, Different Points',
+                'Same Players, Different Matches',
                 comparison.pointDiff.map((left) => ({
                   key: `points-${left.player_id}`,
                   left,
