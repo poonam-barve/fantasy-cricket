@@ -1304,7 +1304,7 @@ def refresh_super_team_standings_cache() -> dict:
         owner_match_ids = {
             int(match_id)
             for match_id, match_owners in owners.items()
-            if match_owners
+            if match_owners and str(match_id).isdigit()
         }
         match_point_map = {
             str(match_id): round(float(point_lookup.get((match_id, pid), 0)), 2)
