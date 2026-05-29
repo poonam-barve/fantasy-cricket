@@ -442,6 +442,15 @@ def replace_snapshot(phase: str, user_id: int, player_ids: list[int], captain: i
     return entry
 
 
+def admin_phase_for_context(context: dict | None = None) -> str:
+    context = context or get_context()
+    if context.get("second_substitution_finalized"):
+        return "final"
+    if context.get("first_substitution_finalized"):
+        return "edited"
+    return "current"
+
+
 def _batting_sub_penalty_for_phase(phase: int) -> int:
     return SUPER_TEAM_PHASE2_BAT_PENALTY if phase == 2 else SUPER_TEAM_PHASE1_BAT_PENALTY
 
@@ -1141,6 +1150,7 @@ def refresh_super_team_standings_cache() -> dict:
     rows = []
     user_breakdowns = []
     owners_by_player_match: dict[int, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    owners_by_player_roster: dict[int, list[dict]] = defaultdict(list)
     max_points = None
     match_teams_by_id = {
         int(match_id): {
@@ -1162,6 +1172,17 @@ def refresh_super_team_standings_cache() -> dict:
             73: edited_entry,
             74: final_entry,
         }
+        active_roster_entry = final_entry if context.get("second_substitution_finalized") else edited_entry if context.get("first_substitution_finalized") else original_entry
+        added_player_ids = (
+            ({int(pid) for pid in edited_entry.get("player_ids", [])} - {int(pid) for pid in original_entry.get("player_ids", [])})
+            | ({int(pid) for pid in final_entry.get("player_ids", [])} - {int(pid) for pid in edited_entry.get("player_ids", [])})
+        )
+        for pid in active_roster_entry.get("player_ids", []):
+            owners_by_player_roster[int(pid)].append({
+                "user_id": int(entry["user_id"]),
+                "name": entry["name"],
+                "tag": _super_team_tag(int(pid), active_roster_entry.get("captain"), active_roster_entry.get("vice_captain")),
+            })
         latest_ids = {int(pid) for pid in final_entry.get("player_ids", [])}
         for match_id in completed_match_ids:
             score_entry = score_entries_by_match[match_id]
@@ -1194,6 +1215,7 @@ def refresh_super_team_standings_cache() -> dict:
                     "tag": tag,
                     "points": round(pts, 2),
                     "removed": int(pid) not in latest_ids,
+                    "added": int(pid) in added_player_ids,
                 })
         gross_points = round(total, 2)
         penalty = penalties.get(int(entry["user_id"]), _penalty_details(None, None))
@@ -1213,6 +1235,21 @@ def refresh_super_team_standings_cache() -> dict:
         rows.append(row)
         user_breakdowns.append({
             **row,
+            "roster_players": [
+                {
+                    "player_id": int(pid),
+                    "name": players.get(int(pid), {}).get("Name", ""),
+                    "team": players.get(int(pid), {}).get("Team", ""),
+                    "role": players.get(int(pid), {}).get("Role", ""),
+                    "base_points": 0,
+                    "multiplier": _super_team_multiplier(int(pid), active_roster_entry.get("captain"), active_roster_entry.get("vice_captain")),
+                    "tag": _super_team_tag(int(pid), active_roster_entry.get("captain"), active_roster_entry.get("vice_captain")),
+                    "points": 0,
+                    "removed": False,
+                    "added": int(pid) in added_player_ids,
+                }
+                for pid in active_roster_entry.get("player_ids", [])
+            ],
             "matches": [
                 {
                     "match_id": match_id,
@@ -1241,6 +1278,10 @@ def refresh_super_team_standings_cache() -> dict:
             for owner in owners:
                 owner["rank"] = rank_by_user.get(int(owner["user_id"]), 0)
             owners.sort(key=lambda item: (int(item.get("rank") or 9999), item["name"]))
+    for owners in owners_by_player_roster.values():
+        for owner in owners:
+            owner["rank"] = rank_by_user.get(int(owner["user_id"]), 0)
+        owners.sort(key=lambda item: (int(item.get("rank") or 9999), item["name"]))
 
     player_ids = sorted({
         int(pid)
@@ -1258,6 +1299,8 @@ def refresh_super_team_standings_cache() -> dict:
             str(match_id): copy.deepcopy(owners_by_player_match.get(pid, {}).get(str(match_id), []))
             for match_id in completed_match_ids
         }
+        if owners_by_player_roster.get(pid):
+            owners["roster"] = copy.deepcopy(owners_by_player_roster.get(pid, []))
         owner_match_ids = {
             int(match_id)
             for match_id, match_owners in owners.items()

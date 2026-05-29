@@ -44,10 +44,17 @@ type Penalty = {
   phase2?: Penalty;
 };
 type Standing = { user_id: number; name: string; points: number; gross_points?: number; penalty?: Penalty; rank: number; match_points: Record<string, number> };
-type SuperBreakdownPlayer = { player_id: number; name: string; team: string; role: Role; base_points?: number; multiplier?: number; tag?: string; points: number; removed?: boolean };
+type SuperBreakdownPlayer = { player_id: number; name: string; team: string; role: Role; base_points?: number; multiplier?: number; tag?: string; points: number; removed?: boolean; added?: boolean };
 type SuperBreakdownMatch = { match_id: number; points: number; players: SuperBreakdownPlayer[] };
-type SuperUserBreakdown = Standing & { matches: SuperBreakdownMatch[] };
-type AggregatedBreakdownPlayer = SuperBreakdownPlayer & { match_points: Record<string, number>; substituted: boolean };
+type SuperUserBreakdown = Standing & { matches: SuperBreakdownMatch[]; roster_players?: SuperBreakdownPlayer[] };
+type AggregatedBreakdownPlayer = SuperBreakdownPlayer & {
+  match_points: Record<string, number>;
+  match_multipliers: Record<string, number>;
+  match_tags: Record<string, string>;
+  substituted: boolean;
+  added: boolean;
+  from_roster?: boolean;
+};
 type SuperPlayerOwner = { user_id: number; name: string; tag?: string | null; rank?: number };
 type SuperPlayerPoints = {
   player_id: number;
@@ -82,10 +89,20 @@ const sortedMatchIds = (matchPoints: Record<string, number> | null | undefined) 
     .filter((matchId) => Number.isFinite(matchId))
     .sort((a, b) => a - b)
 );
-const matchPointSummary = (matchPoints: Record<string, number> | null | undefined) => {
+const matchPointSummary = (
+  matchPoints: Record<string, number> | null | undefined,
+  matchMultipliers?: Record<string, number>,
+  matchTags?: Record<string, string>,
+) => {
   const ids = sortedMatchIds(matchPoints);
   if (ids.length === 0) return 'No completed appearances';
-  return ids.map((matchId) => `M${matchId} ${formatPoints(matchPoints?.[String(matchId)])}`).join(' | ');
+  return ids.map((matchId) => {
+    const key = String(matchId);
+    const multiplier = Number(matchMultipliers?.[key] || 1);
+    const tag = matchTags?.[key] || '';
+    const multiplierText = multiplier > 1 ? ` ${tag ? `${tag} ` : ''}x${formatPoints(multiplier)}` : '';
+    return `M${matchId} ${formatPoints(matchPoints?.[key])}${multiplierText}`;
+  }).join(' | ');
 };
 
 function statText(player: Player) {
@@ -395,21 +412,39 @@ export default function SuperTeamPage() {
   const myUserBreakdown = myUserId ? userBreakdowns.find((row) => row.user_id === myUserId) || null : null;
   const aggregateBreakdownPlayers = (entry: SuperUserBreakdown | null | undefined): AggregatedBreakdownPlayer[] => {
     const players = new Map<number, AggregatedBreakdownPlayer>();
+    (entry?.roster_players || []).forEach((player) => {
+      players.set(player.player_id, {
+        ...player,
+        points: 0,
+        match_points: {},
+        match_multipliers: {},
+        match_tags: {},
+        substituted: Boolean(player.removed),
+        added: Boolean(player.added),
+        from_roster: true,
+      });
+    });
     (entry?.matches || []).forEach((match) => {
       match.players.forEach((player) => {
         const existing = players.get(player.player_id);
         if (existing) {
           existing.points += Number(player.points || 0);
           existing.match_points[String(match.match_id)] = Number(player.points || 0);
+          existing.match_multipliers[String(match.match_id)] = Number(player.multiplier || 1);
+          existing.match_tags[String(match.match_id)] = player.tag || '';
           existing.substituted = existing.substituted || Boolean(player.removed);
-          if (player.tag) existing.tag = player.tag;
-          if (player.multiplier) existing.multiplier = player.multiplier;
+          existing.added = existing.added || Boolean(player.added);
+          if (!existing.from_roster && player.tag) existing.tag = player.tag;
+          if (!existing.from_roster && player.multiplier) existing.multiplier = player.multiplier;
         } else {
           players.set(player.player_id, {
             ...player,
             points: Number(player.points || 0),
             match_points: { [String(match.match_id)]: Number(player.points || 0) },
+            match_multipliers: { [String(match.match_id)]: Number(player.multiplier || 1) },
+            match_tags: { [String(match.match_id)]: player.tag || '' },
             substituted: Boolean(player.removed),
+            added: Boolean(player.added),
           });
         }
       });
@@ -467,7 +502,7 @@ export default function SuperTeamPage() {
   const renderAggregatedPlayers = (players: AggregatedBreakdownPlayer[], keyPrefix: string) => (
     <div className="grid grid-cols-2 gap-2">
       {players.map((player) => (
-        <div key={`${keyPrefix}-${player.player_id}`} className={`rounded-xl border border-white/10 bg-gradient-to-r ${getTeamTheme(player.team).tintClass} px-2.5 py-2 ${player.substituted ? 'ring-1 ring-amber-400/25' : ''}`}>
+        <div key={`${keyPrefix}-${player.player_id}`} className={`rounded-xl border border-white/10 bg-gradient-to-r ${getTeamTheme(player.team).tintClass} px-2.5 py-2 ${player.substituted ? 'ring-1 ring-amber-400/25' : player.added ? 'ring-1 ring-emerald-400/25' : ''}`}>
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
@@ -479,7 +514,12 @@ export default function SuperTeamPage() {
                 )}
                 {player.substituted && (
                   <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-200">
-                    Sub
+                    Out
+                  </span>
+                )}
+                {player.added && (
+                  <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-200">
+                    In
                   </span>
                 )}
               </div>
@@ -488,7 +528,7 @@ export default function SuperTeamPage() {
                 <span>{shortRole(player.role)}</span>
               </div>
               <p className="mt-1 text-[10px] text-white/30">
-                {matchPointSummary(player.match_points)}
+                {matchPointSummary(player.match_points, player.match_multipliers, player.match_tags)}
               </p>
             </div>
             <div className="shrink-0 text-right">
@@ -515,14 +555,15 @@ export default function SuperTeamPage() {
                   {player.tag}
                 </span>
               )}
-              {player.substituted && <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-amber-200">Sub</span>}
+              {player.substituted && <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-amber-200">Out</span>}
+              {player.added && <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-200">In</span>}
             </div>
             <div className="mt-1 flex items-center gap-1.5 text-[11px] text-white/45">
               {renderTeamBadge(player.team, true)}
               <span>{shortRole(player.role)}</span>
             </div>
             <p className="mt-1 text-[10px] text-white/30">
-              {matchPointSummary(player.match_points)}
+              {matchPointSummary(player.match_points, player.match_multipliers, player.match_tags)}
             </p>
           </div>
           <p className="shrink-0 text-sm font-bold text-blue-300">{formatPoints(player.points)}</p>

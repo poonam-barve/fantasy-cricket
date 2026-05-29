@@ -24,6 +24,22 @@ function apiErrorDetail(error: unknown, fallback: string) {
   return typeof response?.data?.detail === 'string' ? response.data.detail : fallback;
 }
 
+function fallbackPhases(phase: SnapshotPhase): SnapshotPhase[] {
+  if (phase === 'final') return ['final', 'edited', 'original', 'current'];
+  if (phase === 'edited') return ['edited', 'original', 'current'];
+  if (phase === 'original') return ['original', 'current'];
+  return ['current'];
+}
+
+function findTeamForPhase(snapshots: SnapshotMap, teams: Submission[], phase: SnapshotPhase, userId: number) {
+  const snapshotMap = { ...snapshots, current: snapshots.current?.length ? snapshots.current : teams };
+  for (const candidatePhase of fallbackPhases(phase)) {
+    const existing = (snapshotMap[candidatePhase] || []).find((team) => team.user_id === userId);
+    if (existing) return existing;
+  }
+  return null;
+}
+
 export default function AdminSuperTeam() {
   const [users, setUsers] = useState<User[]>([]);
   const [playersByRole, setPlayersByRole] = useState<Record<Role, Player[]>>({
@@ -63,6 +79,11 @@ export default function AdminSuperTeam() {
       });
       setStandings(superRes.data.standings || []);
       setUsers(usersRes.data || []);
+      const effectivePhase = superRes.data.effective_admin_phase as SnapshotPhase | undefined;
+      if (effectivePhase && snapshotPhases.some((phase) => phase.key === effectivePhase)) {
+        setActivePhase(effectivePhase);
+        setViewPhase(effectivePhase);
+      }
     } finally {
       setLoading(false);
     }
@@ -79,8 +100,7 @@ export default function AdminSuperTeam() {
       setViceCaptain(null);
       return;
     }
-    const phaseTeams = snapshots[activePhase] || teams;
-    const existing = phaseTeams.find((team) => team.user_id === Number(selectedUserId));
+    const existing = findTeamForPhase(snapshots, teams, activePhase, Number(selectedUserId));
     setSelected(new Set(existing?.player_ids || []));
     setCaptain(existing?.captain ? Number(existing.captain) : null);
     setViceCaptain(existing?.vice_captain ? Number(existing.vice_captain) : null);

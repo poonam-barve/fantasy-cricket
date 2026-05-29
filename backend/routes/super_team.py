@@ -75,6 +75,7 @@ async def admin_super_team(user: dict = Depends(require_admin)):
     super_team_service.refresh_super_team_standings_cache()
     return {
         "context": super_team_service.get_context(),
+        "effective_admin_phase": super_team_service.admin_phase_for_context(),
         "players": super_team_service.grouped_player_pool(),
         "teams": list(super_team_service.get_submissions().values()),
         "snapshots": super_team_service.admin_snapshot_payload(),
@@ -84,7 +85,10 @@ async def admin_super_team(user: dict = Depends(require_admin)):
 
 @admin_router.put("")
 async def admin_update_super_team(body: AdminSuperTeamBody, user: dict = Depends(require_admin)):
-    if body.phase == "current":
+    phase = body.phase
+    if phase == "current":
+        phase = super_team_service.admin_phase_for_context()
+    if phase == "current":
         entry = super_team_service.save_team(
             body.user_id,
             body.players,
@@ -95,7 +99,7 @@ async def admin_update_super_team(body: AdminSuperTeamBody, user: dict = Depends
         )
     else:
         entry = super_team_service.replace_snapshot(
-            body.phase,
+            phase,
             body.user_id,
             body.players,
             body.captain,
@@ -108,7 +112,7 @@ async def admin_update_super_team(body: AdminSuperTeamBody, user: dict = Depends
         refresh_leaderboard_cache_once()
     except Exception:
         pass
-    return {"success": True, "team": entry}
+    return {"success": True, "team": entry, "phase": phase}
 
 
 @admin_router.post("/recalculate")
