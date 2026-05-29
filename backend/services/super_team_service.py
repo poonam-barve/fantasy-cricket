@@ -1146,6 +1146,12 @@ def refresh_super_team_standings_cache() -> dict:
     point_lookup.update(_point_lookup_from_score_cache())
     breakdown_lookup = _player_breakdown_lookup_from_score_cache()
     completed_match_ids = _completed_super_match_ids(context)
+    scored_match_ids = sorted({
+        int(match_id)
+        for match_id in SUPER_MATCH_IDS
+        if int(match_id) in completed_match_ids
+        or any(int(point_match_id) == int(match_id) for point_match_id, _pid in point_lookup.keys())
+    })
     players = _player_lookup()
     rows = []
     user_breakdowns = []
@@ -1157,11 +1163,11 @@ def refresh_super_team_standings_cache() -> dict:
             str((row or {}).get("Team1") or ""),
             str((row or {}).get("Team2") or ""),
         }
-        for match_id, row in ((mid, (context.get("matches", {}) or {}).get(str(mid))) for mid in completed_match_ids)
+        for match_id, row in ((mid, (context.get("matches", {}) or {}).get(str(mid))) for mid in scored_match_ids)
     }
     for entry in submissions.values():
         match_points: dict[int, float] = defaultdict(float)
-        match_players: dict[int, list[dict]] = {match_id: [] for match_id in completed_match_ids}
+        match_players: dict[int, list[dict]] = {match_id: [] for match_id in scored_match_ids}
         total = 0.0
         original_entry = originals.get(int(entry["user_id"])) or entry
         edited_entry = edited.get(int(entry["user_id"])) or original_entry
@@ -1184,7 +1190,7 @@ def refresh_super_team_standings_cache() -> dict:
                 "tag": _super_team_tag(int(pid), active_roster_entry.get("captain"), active_roster_entry.get("vice_captain")),
             })
         latest_ids = {int(pid) for pid in final_entry.get("player_ids", [])}
-        for match_id in completed_match_ids:
+        for match_id in scored_match_ids:
             score_entry = score_entries_by_match[match_id]
             match_captain = score_entry.get("captain")
             match_vice_captain = score_entry.get("vice_captain")
@@ -1259,7 +1265,7 @@ def refresh_super_team_standings_cache() -> dict:
                         key=lambda item: (-float(item["points"]), item["name"]),
                     ),
                 }
-                for match_id in completed_match_ids
+                for match_id in scored_match_ids
             ],
         })
     rows.sort(key=lambda item: (-item["points"], item["name"]))
@@ -1297,7 +1303,7 @@ def refresh_super_team_standings_cache() -> dict:
         player = players.get(pid, {})
         owners = {
             str(match_id): copy.deepcopy(owners_by_player_match.get(pid, {}).get(str(match_id), []))
-            for match_id in completed_match_ids
+            for match_id in scored_match_ids
         }
         if owners_by_player_roster.get(pid):
             owners["roster"] = copy.deepcopy(owners_by_player_roster.get(pid, []))
@@ -1308,12 +1314,12 @@ def refresh_super_team_standings_cache() -> dict:
         }
         match_point_map = {
             str(match_id): round(float(point_lookup.get((match_id, pid), 0)), 2)
-            for match_id in completed_match_ids
+            for match_id in scored_match_ids
             if (match_id, pid) in point_lookup or match_id in owner_match_ids
         }
         match_breakdown_map = {
             str(match_id): copy.deepcopy(breakdown_lookup.get((match_id, pid), []))
-            for match_id in completed_match_ids
+            for match_id in scored_match_ids
             if (match_id, pid) in point_lookup or match_id in owner_match_ids
         }
         total_points = round(sum(match_point_map.values()), 2)
